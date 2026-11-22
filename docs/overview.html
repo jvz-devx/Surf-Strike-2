@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Surf Strike 2 Overview</title>
+<style>
+:root{--background:#ffffff;--foreground:#18181b;--muted-foreground:#71717a;--card:#fafafa;--secondary:#f1f1f3;--secondary-foreground:#18181b;--border:#e4e4e7;--primary:#2563eb;--primary-foreground:#ffffff;--accent:#dbe7ff;--code-background:#f4f4f5;--warning:#b45309;--warning-surface:#fef3c7;--success:#15803d;--chart-1:#2563eb;--chart-2:#059669;--chart-3:#d97706;--chart-4:#dc2626;--chart-5:#7c3aed;--radius:8px;--font-sans:system-ui,-apple-system,"Segoe UI",sans-serif;--font-mono:ui-monospace,"SF Mono",Consolas,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--background:#0f0f11;--foreground:#ececef;--muted-foreground:#9a9aa3;--card:#17171a;--secondary:#232327;--secondary-foreground:#ececef;--border:#2e2e33;--primary:#3b82f6;--primary-foreground:#ffffff;--accent:#1e3a6e;--code-background:#1d1d21;--warning:#f59e0b;--warning-surface:#2a2110;--success:#22c55e;--chart-1:#3b82f6;--chart-2:#10b981;--chart-3:#f59e0b;--chart-4:#ef4444;--chart-5:#8b5cf6}}
+:root[data-theme="dark"]{--background:#0f0f11;--foreground:#ececef;--muted-foreground:#9a9aa3;--card:#17171a;--secondary:#232327;--secondary-foreground:#ececef;--border:#2e2e33;--primary:#3b82f6;--primary-foreground:#ffffff;--accent:#1e3a6e;--code-background:#1d1d21;--warning:#f59e0b;--warning-surface:#2a2110;--success:#22c55e;--chart-1:#3b82f6;--chart-2:#10b981;--chart-3:#f59e0b;--chart-4:#ef4444;--chart-5:#8b5cf6}
+:root{--c1:var(--chart-1);--c2:var(--chart-2);--c3:var(--chart-3);--c4:var(--chart-4);--c5:var(--chart-5)}
+*{box-sizing:border-box}
+html{background:var(--background)}
+body{margin:0 auto;max-width:860px;padding:24px 16px;background:var(--background);font-family:var(--font-sans);color:var(--foreground)}
+h1{font-size:20px;margin:0 0 4px}.lead{margin:0 0 16px;font-size:13px;color:var(--muted-foreground)}
+code{font-family:var(--font-mono);font-size:.92em}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px}
+.tabs button{font:inherit;font-size:13px;padding:6px 12px;border-radius:var(--radius);border:1px solid var(--border);background:transparent;color:var(--muted-foreground);cursor:pointer}
+.tabs button.on{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary)}
+.pane{display:none}.pane.on{display:block}
+.box{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+h3{margin:0 0 4px;font-size:15px}p.sub{margin:0 0 12px;font-size:12.5px;color:var(--muted-foreground)}
+svg text{fill:var(--foreground);font-family:var(--font-sans)}
+.node rect{fill:var(--secondary);stroke:var(--muted-foreground);stroke-opacity:.45;stroke-width:1.5;rx:8;transition:.2s}
+.node.hot rect{stroke:var(--primary);stroke-opacity:1;stroke-width:3;fill:var(--accent)}
+.node{cursor:pointer}
+.edge{stroke:var(--muted-foreground);stroke-opacity:.5;stroke-width:2;fill:none;transition:.2s}
+.edge.hot{stroke:var(--primary);stroke-opacity:1;stroke-width:3.5;stroke-dasharray:6 4;animation:flow .6s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-10}}
+.elab{font-size:10.5px;fill:var(--muted-foreground)!important}
+.zone{fill:none;stroke:var(--muted-foreground);stroke-opacity:.35;stroke-dasharray:4 4;rx:12}
+.zl{font-size:11px;font-weight:600;fill:var(--muted-foreground)!important;letter-spacing:.06em}
+.ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.ctrl button,.seg button{font:inherit;font-size:12.5px;padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:var(--secondary);color:var(--secondary-foreground);cursor:pointer}
+.ctrl button:disabled{opacity:.45;cursor:default}
+.seg{display:inline-flex}.seg button{border-radius:0}.seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0}
+.seg button.on{background:var(--primary);color:var(--primary-foreground)}
+.step{font-size:13px;min-height:40px;padding:10px 12px;border-left:3px solid var(--primary);background:var(--code-background);border-radius:0 6px 6px 0}
+.info{font-size:12.5px;margin-top:10px;color:var(--muted-foreground);min-height:34px}
+.info b{color:var(--foreground)}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+td,th{padding:5px 8px;border-bottom:1px solid var(--border);text-align:left}
+th{color:var(--muted-foreground);font-weight:500}
+td.v{font-family:var(--font-mono);text-align:right}
+td.diff{color:var(--warning);font-weight:600}
+.cvg{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));column-gap:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.map{border-radius:var(--radius);padding:12px;color:#fff;min-height:150px;font-size:12px;position:relative;overflow:hidden}
+.map h4{margin:0 0 2px;font-family:var(--font-mono);font-size:13px}
+.map .tag{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:99px;background:rgba(255,255,255,.2);margin-right:4px}
+.map ul{padding-left:16px;margin:8px 0 0}
+.rm{display:grid;gap:6px}
+.ms{display:grid;grid-template-columns:28px 1fr;gap:8px;align-items:start;font-size:12.5px;cursor:pointer}
+.ms .n{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:11.5px;font-weight:700;background:var(--secondary);border:1px solid var(--border)}
+.ms .t{padding-top:4px}.ms .d{display:none;color:var(--muted-foreground);margin-top:2px}
+.ms.open .d{display:block}.ms.open .n{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary)}
+.phase{font-size:10.5px;padding:1px 6px;border-radius:99px;margin-left:6px;border:1px solid var(--border);color:var(--muted-foreground)}
+.bar{height:22px;border-radius:4px;display:flex;align-items:center;padding:0 8px;font-size:11.5px;color:#fff;font-weight:600;white-space:nowrap;overflow:hidden}
+.rate{display:grid;grid-template-columns:110px 1fr;gap:8px;align-items:center;margin:6px 0;font-size:12.5px}
+.warn{border-left:3px solid var(--warning);padding:8px 12px;font-size:12.5px;margin-top:8px;background:var(--warning-surface);border-radius:0 6px 6px 0}
+input[type=range]{width:160px}
+</style></head><body>
+<h1>Surf Strike 2</h1>
+<p class="lead">Interactive overview of the design docs in this folder. Source of truth: the <code>.md</code> files.</p>
+<div class="tabs" id="tabs">
+ <button data-t="arch" class="on">Architecture</button><button data-t="net">Netcode</button><button data-t="phys">Physics</button><button data-t="maps">Maps</button><button data-t="game">Map vote</button><button data-t="road">Roadmap</button>
+</div>
+<div class="pane on" id="arch"><div class="box">
+<h3>System topology</h3><p class="sub">Click a node for details, or step through a flow.</p>
+<svg viewBox="0 0 700 300" width="100%">
+ <rect class="zone" x="5" y="20" width="170" height="270"/><text class="zl" x="15" y="38">FRIENDS' BROWSERS</text>
+ <rect class="zone" x="200" y="20" width="200" height="140"/><text class="zl" x="210" y="38">VERCEL</text>
+ <rect class="zone" x="430" y="20" width="265" height="270"/><text class="zl" x="440" y="38">HOST PC</text>
+ <path class="edge" id="e-static" d="M165 90 L215 75"/>
+ <path class="edge" id="e-get" d="M165 110 L215 125"/>
+ <path class="edge" id="e-post" d="M670 257 L685 257 L685 125 L385 125" />
+ <path class="edge" id="e-wss" d="M165 197 L450 197"/>
+ <path class="edge" id="e-tun" d="M560 215 L560 235"/>
+ <text class="elab" x="300" y="190" text-anchor="middle">wss://*.trycloudflare.com/ws</text>
+ <text class="elab" x="555" y="115" text-anchor="middle">POST /api/server</text>
+ <text class="elab" x="555" y="143" text-anchor="middle">Bearer HOST_SECRET · heartbeat 60 s</text>
+ <g class="node" id="n-client" data-k="client"><rect x="20" y="60" width="145" height="170"/><text x="92" y="130" text-anchor="middle" font-weight="600" font-size="13">SvelteKit client</text><text x="92" y="148" text-anchor="middle" font-size="11">Three.js · physics</text><text x="92" y="163" text-anchor="middle" font-size="11">HUD · console · solo</text></g>
+ <g class="node" id="n-static" data-k="static"><rect x="215" y="55" width="170" height="40"/><text x="300" y="80" text-anchor="middle" font-size="12.5">Static client</text></g>
+ <g class="node" id="n-api" data-k="api"><rect x="215" y="105" width="170" height="40"/><text x="300" y="130" text-anchor="middle" font-size="12.5">Discovery API · Blob</text></g>
+ <g class="node" id="n-cf" data-k="cf"><rect x="450" y="180" width="220" height="35"/><text x="560" y="202" text-anchor="middle" font-size="12.5">cloudflared tunnel</text></g>
+ <g class="node" id="n-srv" data-k="srv"><rect x="450" y="235" width="220" height="45"/><text x="560" y="254" text-anchor="middle" font-size="12.5" font-weight="600">Game server</text><text x="560" y="270" text-anchor="middle" font-size="11">Node · ws · SQLite · :27015</text></g>
+</svg>
+<div class="ctrl"><div class="seg" id="flowSel"><button data-f="host" class="on">Host start-up</button><button data-f="conn">Client connect</button></div>
+ <button id="prev" aria-label="Previous step">◀</button><button id="next">Next ▶</button><span id="stepN" style="font-size:12px;color:var(--muted-foreground)"></span></div>
+<div class="step" id="stepTxt"></div>
+<div class="info" id="nodeInfo">Click a node.</div>
+</div></div>
+<div class="pane" id="net"><div class="box">
+<h3>Netcode: client-authoritative movement, server-validated runs</h3><p class="sub">Message rates per connected player.</p>
+<div class="rate"><span>C→S state</span><div class="bar" style="width:64%;background:var(--c1)">64 Hz binary · pos, vel, angles, flags, tick</div></div>
+<div class="rate"><span>S→C snapshot</span><div class="bar" style="width:32%;background:var(--c2)">32 Hz binary · all players</div></div>
+<div class="rate"><span>Rate limit</span><div class="bar" style="width:70%;background:var(--c4)">70 msg/s state cap</div></div>
+<div class="rate"><span>Chat limit</span><div class="bar" style="width:6%;background:var(--c3);min-width:110px">2 msg/s</div></div>
+<div class="ctrl" style="margin-top:14px"><span style="font-size:12.5px">Players:</span><input type="range" id="pl" min="1" max="32" value="12"><b id="plv"></b></div>
+<div class="info" id="bw"></div>
+<h3 style="margin-top:14px">Run validation checklist</h3>
+<table><tr><th>Check</th><th>Rejects</th></tr>
+<tr><td>Zones in order (start → stages → end)</td><td>Skipped stages</td></tr>
+<tr><td>Ticks vs wall-clock within ±5%</td><td>Timescale hacks</td></tr>
+<tr><td>Horizontal speed ≤ <code>sv_maxvelocity</code></td><td>Speed hacks</td></tr>
+<tr><td>No position jump beyond speed (except known teleports)</td><td>Teleporting</td></tr></table>
+<p class="sub" style="margin-top:8px">Remote players render ~100 ms in the past, interpolated between snapshots. Failed runs are not saved; the player gets a chat notice.</p>
+</div></div>
+<div class="pane" id="phys"><div class="box">
+<h3>Source movement port · 128 tick (7.8125 ms)</h3>
+<div class="ctrl"><div class="seg" id="pSel"><button class="on" data-p="0">Surf profile</button><button data-p="1">Bhop profile</button></div><span style="font-size:12px;color:var(--muted-foreground)">Highlighted = differs between profiles</span></div>
+<div class="cvg" id="cv"></div>
+<h3 style="margin-top:14px">Ground vs surf ramp</h3><p class="sub">Drag the slope. Ground only when normal z ≥ 0.7 (≈45.6°).</p>
+<div class="ctrl"><input type="range" id="ang" min="0" max="80" value="55" aria-label="Slope angle"><b id="angv"></b></div>
+<svg viewBox="0 0 400 130" width="100%" style="max-width:480px"><line x1="0" y1="120" x2="400" y2="120" stroke="var(--border)"/>
+ <polygon id="ramp" fill="var(--c1)" opacity=".75"/><rect id="ply" width="14" height="30" fill="var(--c3)" rx="3"/></svg>
+<div class="info" id="angInfo"></div>
+</div></div>
+<div class="pane" id="maps"><div class="grid">
+ <div class="map" style="background:linear-gradient(160deg,#10204a,#1d5a7a 60%,#7fd3e6)"><h4>surf_aurora</h4><span class="tag">surf</span><span class="tag">easy</span><span class="tag">linear</span><ul><li>Dusk snowy valley, aurora sky</li><li>6 ramp pairs, 50–55°</li><li>3 checkpoints</li><li>Fall → start, timer reset</li><li>Target 1:30–2:00</li><li>Default map</li></ul></div>
+ <div class="map" style="background:linear-gradient(160deg,#120a08,#4a1a0a 55%,#e2561a)"><h4>surf_ember</h4><span class="tag">surf</span><span class="tag">hard</span><span class="tag">staged</span><ul><li>Volcanic canyon, lava sea</li><li>6 stages, 60–65° ramps</li><li>Air turns, up-ramp, long gap</li><li>Fall → stage start</li><li>Target 4:00+</li></ul></div>
+ <div class="map" style="background:linear-gradient(160deg,#2f7fc0,#5aa65a 60%,#2d5e2a)"><h4>bhop_meadow</h4><span class="tag">bhop</span><span class="tag">easy</span><ul><li>Floating grass islands</li><li>~40 blocks, 5 sections</li><li>128×128 blocks, 96–160 gaps</li><li>Fall → last checkpoint</li><li>Target 1:00–1:30</li></ul></div>
+ <div class="map" style="background:linear-gradient(160deg,#05060f,#1a0b3a 55%,#0a8896)"><h4>bhop_circuit</h4><span class="tag">bhop</span><span class="tag">hard</span><ul><li>Neon circuit board, night</li><li>~60 blocks, 6 sections</li><li>64×64 blocks, gaps ≤240</li><li>Sharp turns, narrow strips</li><li>Target 2:30+</li></ul></div>
+</div>
+<div class="warn"><b>Doc inconsistency:</b> gameplay.md says a teleport keeps the timer running, but linear surf (aurora) resets the timer on fall.</div>
+</div>
+<div class="pane" id="game"><div class="box">
+<h3>Map timeline · 15:00 per map</h3><p class="sub">Simulate extends to see how the vote shifts.</p>
+<div class="ctrl"><button id="ext">Vote "Extend 10 min"</button><button id="rst">Reset</button><span id="extN" style="font-size:12px;color:var(--muted-foreground)"></span></div>
+<svg viewBox="0 0 700 90" width="100%" id="tl"></svg>
+<table style="margin-top:10px"><tr><th>Rule</th><th>Value</th></tr>
+<tr><td>Vote opens</td><td>0:30 left, lasts 20 s, keys 1–4</td></tr>
+<tr><td>Options</td><td>Other 3 maps + Extend (max 2 extends)</td></tr>
+<tr><td>Tie / no votes</td><td>Random / random other map</td></tr>
+<tr><td><code>!rtv</code></td><td>60% of non-spectators; blocked first 2:00; no extend option</td></tr>
+<tr><td>After vote</td><td>5 s countdown, timers cancelled</td></tr></table>
+</div></div>
+<div class="pane" id="road"><div class="box">
+<h3>Roadmap · 12 milestones</h3><p class="sub">Click a milestone for its "done when".</p>
+<div class="rm" id="rm"></div>
+<div class="warn"><b>Before M0:</b> host Node is v20.20.1 (EOL April 2026) → upgrade to 22/24. Also docs use <code>npm run host</code> in a pnpm workspace.</div>
+</div></div>
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+$$('#tabs button').forEach(b=>b.onclick=()=>{$$('#tabs button').forEach(x=>x.classList.toggle('on',x===b));$$('.pane').forEach(p=>p.classList.toggle('on',p.id===b.dataset.t))});
+const info={client:'<b>Client</b> — renders, simulates own movement (zero input lag), HUD, console. Starts solo instantly; joins server when found.',
+static:'<b>Static client</b> — SvelteKit with adapter-vercel. No game logic server-side.',
+api:'<b>Discovery API</b> — <code>+server.ts</code> + <code>@vercel/blob</code>. POST stores <code>{url, startedAt, lastSeen}</code> (needs HOST_SECRET); GET returns it.',
+cf:'<b>cloudflared quick tunnel</b> — public HTTPS/WSS URL, no port forwarding. URL changes every start, hence discovery.',
+srv:'<b>Game server</b> — Node 22+, ws, better-sqlite3. Lobby (32 max), relay, run validation, map timer + vote, PBs/top-10.'};
+$$('.node').forEach(n=>n.onclick=()=>{$('#nodeInfo').innerHTML=info[n.dataset.k];hl([n.id],[])});
+const flows={host:[
+['Start game server on localhost:27015',['n-srv'],[]],
+['Spawn cloudflared, parse *.trycloudflare.com URL',['n-srv','n-cf'],['e-tun']],
+['POST URL to /api/server with Bearer HOST_SECRET → Blob',['n-srv','n-api'],['e-post']],
+['Heartbeat re-POST every 60 s (lastSeen)',['n-srv','n-api'],['e-post']],
+['SIGINT/SIGTERM → POST {url:null}',['n-srv','n-api'],['e-post']]],
+conn:[
+['Load page from Vercel, start solo on default map immediately',['n-client','n-static'],['e-static']],
+['GET /api/server. url null or lastSeen > 3 min → stay solo ("Offline — solo")',['n-client','n-api'],['e-get']],
+['Open wss://<tunnel>/ws → switch to server map + state',['n-client','n-cf','n-srv'],['e-wss','e-tun']],
+['Disconnect → solo on same map, retry discovery every 10 s',['n-client','n-api'],['e-get']],
+['?server=<url> overrides discovery (local testing)',['n-client','n-srv'],['e-wss']]]};
+let fk='host',si=0;
+function hl(ns,es){$$('.node').forEach(n=>n.classList.toggle('hot',ns.includes(n.id)));$$('.edge').forEach(e=>e.classList.toggle('hot',es.includes(e.id)))}
+function show(){const s=flows[fk][si];$('#stepTxt').textContent=(si+1)+'. '+s[0];$('#stepN').textContent=`step ${si+1} / ${flows[fk].length}`;hl(s[1],s[2])}
+$$('#flowSel button').forEach(b=>b.onclick=()=>{$$('#flowSel button').forEach(x=>x.classList.toggle('on',x===b));fk=b.dataset.f;si=0;show()});
+$('#next').onclick=()=>{si=(si+1)%flows[fk].length;show()};$('#prev').onclick=()=>{si=(si-1+flows[fk].length)%flows[fk].length;show()};show();
+function bw(){const n=+$('#pl').value;$('#plv').textContent=n;const st=40,up=64*st,down=32*(8+n*st);
+$('#bw').innerHTML=`Rough per-client bandwidth (assuming ~40 B/player state): up <b>${(up/1024).toFixed(1)} KB/s</b>, down <b>${(down/1024).toFixed(1)} KB/s</b>. Host upload total ≈ <b>${(down*n/1024).toFixed(0)} KB/s</b>. <i>Estimate, not in docs.</i>`}
+$('#pl').oninput=bw;bw();
+const cv=[['sv_airaccelerate',150,1000],['sv_accelerate',10,10],['sv_friction',4,4],['sv_stopspeed',75,75],['sv_gravity',800,800],['sv_maxspeed',250,250],['sv_maxvelocity',3500,3500],['sv_autobunnyhopping',0,1],['sv_enablebunnyhopping',1,1],['sv_staminamax',0,0],['sv_jump_impulse',301.993,301.993],['sv_stepsize',18,18]];
+function cvt(p){const row=r=>`<tr><td><code>${r[0]}</code></td><td class="v ${r[1]!==r[2]?'diff':''}">${r[1+p]}</td></tr>`;$('#cv').innerHTML=`<table>${cv.slice(0,6).map(row).join('')}</table><table>${cv.slice(6).map(row).join('')}</table>`}
+$$('#pSel button').forEach(b=>b.onclick=()=>{$$('#pSel button').forEach(x=>x.classList.toggle('on',x===b));cvt(+b.dataset.p)});cvt(0);
+function ang(){const a=+$('#ang').value,r=a*Math.PI/180,len=110,h=Math.min(110,Math.tan(r)*len);const x0=140,y0=120;
+$('#ramp').setAttribute('points',`${x0},${y0} ${x0+len},${y0} ${x0+len},${y0-h}`);
+const t=.5,px=x0+len*t,py=y0-h*t;$('#ply').setAttribute('x',px-7);$('#ply').setAttribute('y',py-30);
+const nz=Math.cos(r),g=nz>=.7;$('#angv').textContent=a+'°';
+$('#angInfo').innerHTML=`normal z = <b>${nz.toFixed(3)}</b> → ${g?'<b style="color:var(--success)">ground</b>: walk, friction, jump':'<b style="color:var(--c1)">surf ramp</b>: air-move, ClipVelocity slides player along plane'}`;
+$('#ply').setAttribute('fill',g?'var(--c2)':'var(--c3)')}
+$('#ang').oninput=ang;ang();
+let ex=0;function tl(){const tot=15+ex*10,W=680,sx=W/35;let s='';
+s+=`<rect x="10" y="30" width="${15*sx}" height="22" rx="4" fill="var(--c1)"/><text x="${10+7.5*sx}" y="45" text-anchor="middle" font-size="11" style="fill:#fff">15:00 base</text>`;
+for(let i=0;i<ex;i++){const x=10+(15+i*10)*sx;s+=`<rect x="${x}" y="30" width="${10*sx}" height="22" rx="4" fill="var(--c2)"/><text x="${x+5*sx}" y="45" text-anchor="middle" font-size="11" style="fill:#fff">+10:00 extend</text>`}
+const vx=10+(tot-.5)*sx;s+=`<line x1="${vx}" y1="20" x2="${vx}" y2="62" stroke="var(--c4)" stroke-width="2"/><text x="${vx}" y="14" text-anchor="middle" font-size="10.5">vote @ ${tot-1}:30</text>`;
+s+=`<rect x="10" y="58" width="${2*sx}" height="6" fill="var(--c3)"/><text x="12" y="78" font-size="10.5">!rtv blocked first 2:00</text>`;
+s+=`<text x="${W}" y="78" text-anchor="end" font-size="10.5">total ${tot}:00</text>`;
+$('#tl').innerHTML=s;$('#ext').disabled=ex>=2;$('#extN').textContent=ex>=2?'Max 2 extends — option no longer offered':`${ex} / 2 extends used`}
+$('#ext').onclick=()=>{if(ex<2){ex++;tl()}};$('#rst').onclick=()=>{ex=0;tl()};tl();
+const rm=[['Setup','Node 22+ via fnm; pnpm monorepo (apps/web, apps/server, packages/shared); SvelteKit + Three.js empty scene','client'],
+['Collision + physics core','Brush planes, AABB trace, grid broadphase, full CGameMovement port; all vitest physics tests pass','core'],
+['Solo sandbox','Test map: flat ground, steps, surf ramp pair, bhop blocks; mouse look, fixed-tick loop + interpolation','client'],
+['HUD, console, settings','Speed/timer HUD, console with cvars + binds, Esc panel, name prompt, localStorage','client'],
+['Zones + timer','Start/end/stage/checkpoint/teleport zones, prespeed cap, splits, !r, !back (solo)','core'],
+['Four maps','aurora, ember, meadow, circuit with themes, procedural materials, zone outlines','content'],
+['Audio','All WebAudio-synthesised sounds','content'],
+['Server + netcode','Server, protocol, interpolation, join/leave, 32 cap, solo fallback + reconnect','online'],
+['Hosting','npm run host → server + cloudflared + URL registration; /api/server with Blob + HOST_SECRET','online'],
+['Multiplayer features','Run validation, SQLite PBs + top-10, chat + commands, Tab scoreboard, spectate','online'],
+['Rotation + voting','15-min timer, vote panel, extend, !rtv, countdown (online + solo)','online'],
+['Deploy + polish','Vercel prod deploy, playtest with friends, tune cvars and maps','ship']];
+$('#rm').innerHTML=rm.map((m,i)=>`<div class="ms" data-i="${i}"><div class="n">${i}</div><div class="t"><b>${m[0]}</b><span class="phase">${m[2]}</span><div class="d">${m[1]}</div></div></div>`).join('');
+$$('.ms').forEach(m=>m.onclick=()=>m.classList.toggle('open'));$('.ms').classList.add('open');
+</script></body></html>

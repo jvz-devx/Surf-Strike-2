@@ -1,0 +1,95 @@
+{
+	"_comment": "Trim points (seconds in the original Freesound HQ preview MP3, named <freesound id>.mp3 in the raw folder), fades and level targets for tools/audio/process.py. snapDb: the start is moved to the first millisecond within -40..+100 ms whose peak reaches snapDb relative to the loudest millisecond of that window (minus 2 ms pre-roll), so every take starts on its transient. Sources and licences: CREDITS.md.",
+	"sampleRate": 48000,
+	"truePeakCeiling": -1.5,
+	"eventTargetLufs": -18,
+	"loopTargetLufs": -20,
+	"groups": {
+		"step": {
+			"src": "205748",
+			"takes": [
+				{ "start": 0.925, "dur": 0.3 },
+				{ "start": 1.66, "dur": 0.3 },
+				{ "start": 2.4, "dur": 0.3 },
+				{ "start": 3.195, "dur": 0.3 },
+				{ "start": 8.705, "dur": 0.3 },
+				{ "start": 9.485, "dur": 0.3 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.08
+		},
+		"jump": {
+			"src": "558477",
+			"takes": [
+				{ "start": 1.52, "dur": 0.46 },
+				{ "start": 4.38, "dur": 0.55 },
+				{ "start": 6.02, "dur": 0.44 },
+				{ "start": 7.47, "dur": 0.39 }
+			],
+			"fadeIn": 0.012,
+			"fadeOut": 0.06
+		},
+		"land": {
+			"src": "558477",
+			"takes": [
+				{ "start": 2.0, "dur": 0.4 },
+				{ "start": 4.96, "dur": 0.36 },
+				{ "start": 6.5, "dur": 0.38 },
+				{ "start": 7.88, "dur": 0.38 }
+			],
+			"snapDb": -12,
+			"fadeIn": 0.002,
+			"fadeOut": 0.12
+		},
+		"zone": {
+			"src": "347139",
+			"takes": [{ "start": 0.305, "dur": 1.4 }],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.7
+		},
+		"record": {
+			"src": "693718",
+			"takes": [{ "start": 1.55, "dur": 3.8 }],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 1.6
+		},
+		"vote": {
+			"src": "618138",
+			"takes": [{ "start": 0.01, "dur": 1.5 }],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.25
+		},
+		"click": {
+			"src": "347544",
+			"takes": [{ "start": 1.84, "dur": 0.09 }],
+			"snapDb": -20,
+			"fadeIn": 0.001,
+			"fadeOut": 0.03
+		}
+	},
+	"loops": {
+		"wind": { "src": "454092", "start": 2.5, "len": 16.5, "xfade": 1.5, "channels": 2, "bitrate": "128k" },
+		"slide": { "src": "612665", "start": 0.2, "len": 10.5, "xfade": 1.0, "channels": 1, "bitrate": "96k" }
+	},
+	"ir": { "src": "423866", "out": "ir-hall", "dur": 2.0, "fadeOut": 0.4, "channels": 2, "bitrate": "160k" },
+	"abOnly": {
+		"_comment": "Rendered to the A/B scratch folder by demo.py only, never shipped.",
+		"landWood": {
+			"src": "438309",
+			"takes": [
+				{ "start": 2.0, "dur": 0.6 },
+				{ "start": 4.105, "dur": 0.6 },
+				{ "start": 6.215, "dur": 0.6 },
+				{ "start": 8.325, "dur": 0.6 }
+			],
+			"snapDb": -12,
+			"fadeIn": 0.002,
+			"fadeOut": 0.2
+		},
+		"irGarage": { "src": "568064", "dur": 3.0, "fadeOut": 0.8, "channels": 2, "bitrate": "160k" }
+	}
+}

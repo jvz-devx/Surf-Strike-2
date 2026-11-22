@@ -1,0 +1,25 @@
+{
+	"name": "server",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "tsx watch src/index.ts",
+		"start": "tsx src/index.ts",
+		"host": "tsx src/host.ts",
+		"check": "tsc --noEmit",
+		"test": "node --import tsx --test src/*.test.ts"
+	},
+	"dependencies": {
+		"@surf/shared": "workspace:*",
+		"better-sqlite3": "^13.2.0",
+		"ws": "^8.23.0"
+	},
+	"devDependencies": {
+		"@types/better-sqlite3": "^9.6.0",
+		"@types/node": "^24.0.0",
+		"@types/ws": "^8.18.2",
+		"tsx": "^4.23.15",
+		"typescript": "^6.0.3"
+	}
+}

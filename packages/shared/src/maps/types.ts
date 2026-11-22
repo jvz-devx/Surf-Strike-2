@@ -1,0 +1,165 @@
+import type { Cvars } from '../cvars.ts';
+import type { GameModeId } from '../modes/index.ts';
+import type { Plane, Vec3 } from '../types.ts';
+
+/** Map definition. See docs/maps.md. */
+export interface MapDef {
+	id: string; // "surf_aurora"
+	title: string; // "Aurora"
+	/** The map's gamemode (docs/modes.md). Race modes (surf, bhop) use start/end zones. */
+	kind: GameModeId;
+	difficulty: 'easy' | 'hard';
+	/** Race maps: 'linear' (checkpoints) or 'staged'. Tag maps: 'open'. Zombies maps: 'linear'. */
+	layout: 'linear' | 'staged' | 'open';
+	/** Physics overrides on top of the mode's profile (GAME_MODES[kind].cvars). */
+	cvars: Partial<Cvars>;
+	/** Race: start position (inside the start zone). Tag: fallback spawn. */
+	spawn: Spawn;
+	/**
+	 * Tag (required, >= 8): random spawn points for joins, round starts and fall-outs.
+	 * Zombies (required, >= 4): the team's start positions.
+	 */
+	spawns?: Spawn[];
+	/** Zombies maps (required there): the route zombies follow and where they spawn (docs/maps.md). */
+	zombies?: ZombieRoute;
+	brushes: BrushDef[];
+	zones: Zone[];
+	theme: Theme;
+}
+
+/**
+ * Zombies route (docs/modes.md#zombies). The players' escape path is marked by
+ * the map's checkpoint zones (1..N, each with a respawn) and its end zone.
+ */
+export interface ZombieRoute {
+	/**
+	 * Ordered waypoints (feet positions on the floor) from the start to the
+	 * evac point. The straight line between consecutive waypoints is walkable
+	 * for the player hull (map tests walk it with the real collision).
+	 */
+	path: Vec3[];
+	/**
+	 * Zombie spawn areas: boxes standing on walkable floor (min.z = floor top).
+	 * `node` is the path waypoint the area feeds; the spawner only uses areas
+	 * near the team's progress and away from players.
+	 */
+	spawnZones: ZombieSpawnZone[];
+	/**
+	 * Gates between the route's zones, in route order. A closed gate is a solid
+	 * box (not in `brushes`: the mode adds and removes its collision). When at
+	 * least half of the living survivors stand in its `unlock` area at once, a
+	 * countdown starts; when it ends the gate opens. The last gate leads to the
+	 * evac zone.
+	 */
+	gates: ZombieGate[];
+}
+
+export interface ZombieGate {
+	min: Vec3;
+	max: Vec3;
+	/** Unlock area on the near side of the gate. */
+	unlock: { min: Vec3; max: Vec3 };
+	/**
+	 * Path segment the gate sits on (between waypoints `node` and `node + 1`).
+	 * While it is closed, only spawn areas with `node <= this` are used.
+	 */
+	node: number;
+}
+
+export interface ZombieSpawnZone {
+	min: Vec3;
+	max: Vec3;
+	node: number;
+}
+
+export interface Spawn {
+	pos: Vec3; // feet position (player origin), Source convention
+	yaw: number; // degrees, 0 = +X, 90 = +Y
+}
+
+/**
+ * Brush descriptions. The collision module turns each into a convex solid
+ * (planes + bevels + face polygons); the renderer draws the face polygons.
+ */
+export type BrushDef =
+	| { type: 'box'; min: Vec3; max: Vec3; material: string }
+	| {
+			/**
+			 * Triangular prism surf ramp. The peak line runs from `from` to `to`
+			 * (may descend or ascend). The cross-section is perpendicular to the
+			 * peak line in the XY plane. `height` is the vertical drop from the
+			 * peak to the base, `halfWidth` the horizontal distance from peak to
+			 * each sloped base edge. side: 'both' = two sloped faces (A-frame),
+			 * 'left' / 'right' = one sloped face on that side (seen looking from
+			 * `from` towards `to`) and a vertical back face under the peak.
+			 */
+			type: 'ramp';
+			from: Vec3;
+			to: Vec3;
+			height: number;
+			halfWidth: number;
+			side: 'both' | 'left' | 'right';
+			material: string;
+	  }
+	| { type: 'convex'; planes: Plane[]; material: string };
+
+export type Zone =
+	| { type: 'start' | 'end'; min: Vec3; max: Vec3 }
+	| {
+			type: 'stage' | 'checkpoint';
+			index: number; // stages: 2..N (stage 1 = start zone); checkpoints: 1..N
+			min: Vec3;
+			max: Vec3;
+			respawn: Spawn;
+	  }
+	| { type: 'teleport'; min: Vec3; max: Vec3; to: 'stage' | 'start' };
+
+export interface MaterialDef {
+	/** Base albedo, hex (0xRRGGBB). */
+	color: number;
+	/** Albedo used on faces whose normal z >= 0.7 (tops). Defaults to color. */
+	topColor?: number;
+	/** Emissive edge lines colour (neon edges). */
+	edgeColor?: number;
+	/** Emissive noise-crack colour (glowing seams). */
+	seamColor?: number;
+	/** Procedural noise world scale in units (default 256). */
+	noiseScale?: number;
+	/** 0..1 noise contrast (default 0.15). */
+	noise?: number;
+	/** Surface roughness hint 0..1 (default 0.8). */
+	roughness?: number;
+	/**
+	 * Glass: drawn see-through (blended, both sides, after opaque geometry,
+	 * bright fresnel rim) but fully solid in collision, like any brush.
+	 * Defaults `opacity` to 0.3 when set.
+	 */
+	glass?: boolean;
+	/** 0..1, default 1 (0.3 for glass). Below 1 the material is drawn transparent; collision is unchanged. */
+	opacity?: number;
+}
+
+export interface Theme {
+	skyTop: number;
+	skyHorizon: number;
+	skyBottom: number;
+	fogColor: number;
+	fogNear: number;
+	fogFar: number;
+	sunColor: number;
+	sunIntensity: number;
+	sunDir: Vec3; // direction towards the sun, Source axes
+	ambientSky: number;
+	ambientGround: number;
+	ambientIntensity: number;
+	materials: Record<string, MaterialDef>;
+	/** Decorative effects the renderer knows how to draw. */
+	effects: Array<
+		| { type: 'aurora'; colors: number[]; height: number }
+		| { type: 'embers'; color: number; count: number; area: { min: Vec3; max: Vec3 } }
+		| { type: 'clouds'; color: number; count: number; height: number }
+		| { type: 'gridFloor'; color: number; z: number; size: number }
+		| { type: 'lavaSea'; color: number; z: number; size: number }
+		| { type: 'snowFloor'; color: number; z: number; size: number }
+	>;
+}

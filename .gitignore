@@ -1,0 +1,55 @@
+node_modules/
+.svelte-kit/
+.vercel/
+build/
+dist/
+.env
+.env.*
+!.env.example
+*.db
+.DS_Store
+.playwright-mcp/
+.vercel
+.env*
+# Dependencies
+node_modules/
+vendor/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Build output
+dist/
+build/
+out/
+target/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Temporary files
+tmp/
+temp/
+.cache/

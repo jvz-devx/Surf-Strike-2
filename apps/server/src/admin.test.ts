@@ -1,0 +1,314 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as pathJoin } from 'node:path';
+import { after, before, describe, it } from 'node:test';
+import type { AdminAction } from '@surf/shared';
+import { ADMIN_EXTEND, RTV_BLOCK } from '@surf/shared';
+import { clientIp, parseAdminUsernames } from './admin.ts';
+import type { GameServer } from './server.ts';
+import { startServer } from './server.ts';
+import { TestClient, testMap } from './test-helpers.ts';
+
+const MAPS = [testMap('surf_a', 'Alpha'), testMap('surf_b', 'Bravo'), testMap('surf_c', 'Charlie')];
+
+let clock = 2_000_000_000;
+let server: GameServer;
+let dir: string;
+let dbPath: string;
+const clients: TestClient[] = [];
+
+function start() {
+	return startServer({
+		port: 0,
+		host: '127.0.0.1',
+		dbPath,
+		maps: MAPS,
+		initialMap: 'surf_a',
+		now: () => clock,
+		rng: () => 0,
+		log: () => {},
+		adminUsernames: parseAdminUsernames('Tim, other_admin')
+	});
+}
+
+function client(headers?: Record<string, string>) {
+	const c = new TestClient(server.port, headers);
+	clients.push(c);
+	return c;
+}
+
+async function join(name: string, opts: { playerId?: string; token?: string; headers?: Record<string, string> } = {}) {
+	const c = client(opts.headers);
+	const welcome = await c.hello(name, opts.playerId, opts.token);
+	return { c, welcome };
+}
+
+/** Send an admin action; wait for its adminResult (and the adminState that follows, for admins). */
+async function admin(c: TestClient, action: AdminAction) {
+	const n = c.messages.length;
+	c.send({ type: 'admin', action });
+	const result = await c.waitFor('adminResult', () => true, n);
+	return result;
+}
+
+async function adminState(c: TestClient, from = 0) {
+	return c.waitFor('adminState', () => true, from);
+}
+
+/** Hello that is expected to be refused (banned). */
+async function bannedHello(name: string, opts: { playerId?: string; token?: string; headers?: Record<string, string> } = {}) {
+	const c = client(opts.headers);
+	await c.open();
+	c.send({ type: 'hello', playerId: opts.playerId ?? crypto.randomUUID(), name, version: 1, ...(opts.token ? { token: opts.token } : {}) });
+	await c.until(() => c.closed, 3000);
+	return c;
+}
+
+let timToken = '';
+let tim: TestClient;
+
+before(async () => {
+	dir = mkdtempSync(pathJoin(tmpdir(), 'surf-admin-'));
+	dbPath = pathJoin(dir, 'admin.db');
+	server = await start();
+});
+
+after(async () => {
+	for (const c of clients) c.close();
+	await server.close();
+	rmSync(dir, { recursive: true, force: true });
+});
+
+describe('admin', () => {
+	it('parses ADMIN_USERNAMES (default tim, case-insensitive)', () => {
+		assert.deepEqual(parseAdminUsernames(undefined), ['tim']);
+		assert.deepEqual(parseAdminUsernames(''), []);
+		assert.deepEqual(parseAdminUsernames(' Tim ,BOB,, '), ['tim', 'bob']);
+	});
+
+	it('clientIp: CF-Connecting-IP only via loopback; never a loopback address', () => {
+		const req = (remoteAddress: string, cf?: string) =>
+			({ socket: { remoteAddress }, headers: cf ? { 'cf-connecting-ip': cf } : {} }) as Parameters<typeof clientIp>[0];
+		assert.equal(clientIp(req('127.0.0.1', '203.0.113.7')), '203.0.113.7');
+		assert.equal(clientIp(req('::ffff:127.0.0.1', '2001:db8::1')), '2001:db8::1');
+		assert.equal(clientIp(req('127.0.0.1')), null);
+		assert.equal(clientIp(req('127.0.0.1', 'not-an-ip')), null);
+		assert.equal(clientIp(req('127.0.0.1', '127.0.0.1')), null);
+		assert.equal(clientIp(req('192.168.1.20', '203.0.113.7')), '192.168.1.20', 'header ignored off loopback');
+		assert.equal(clientIp(req('::ffff:192.168.1.20')), '192.168.1.20');
+	});
+
+	it('admin is decided by the logged-in account only', async () => {
+		const { c: guest, welcome } = await join('Tim');
+		assert.equal(welcome.account, null);
+		const denied = await admin(guest, { action: 'listBans' });
+		assert.deepEqual(denied, { type: 'adminResult', ok: false, error: 'You are not an admin.' });
+		assert.equal(guest.of('adminState').length, 0, 'non-admins never get admin state');
+
+		const reg = await guest.auth('register', 'Tim', 'secret1');
+		assert.ok(reg.ok && reg.admin === true && reg.token);
+		timToken = reg.ok ? reg.token! : '';
+		const state = await adminState(guest);
+		assert.deepEqual(
+			state.maps.map((m) => [m.id, m.enabled]),
+			[
+				['surf_a', true],
+				['surf_b', true],
+				['surf_c', true]
+			]
+		);
+		guest.close();
+
+		// Token auto-login: welcome says admin.
+		const { c, welcome: w } = await join('whatever', { token: timToken });
+		assert.deepEqual(w.account, { username: 'Tim', admin: true });
+		tim = c;
+		assert.equal((await admin(tim, { action: 'listBans' })).ok, true);
+	});
+
+	it('guests cannot use a registered username (any casing); falls back to Guest-xxxx', async () => {
+		const { c, welcome } = await join('tIM', { playerId: 'abcd1234-0000-4000-8000-000000000000' });
+		const self = welcome.players.find((p) => p.id === welcome.selfId)!;
+		assert.equal(self.name, 'Guest-abcd');
+		await c.waitFor('chat', (m) => m.system === true && m.text.includes('belongs to a registered account'));
+		assert.equal((await admin(c, { action: 'forceMap', mapId: 'surf_b' })).ok, false);
+		assert.equal(server.lobby.currentMap.id, 'surf_a', 'non-admin force ignored');
+
+		const n = c.messages.length;
+		c.send({ type: 'chat', text: '!name TIM' });
+		await c.waitFor('chat', (m) => m.system === true && m.text.includes('belongs to a registered account'), n);
+		c.send({ type: 'name', name: 'tim' });
+		await c.barrier();
+		assert.equal(server.lobby.scoreRows().find((r) => r.id === welcome.selfId)?.name, 'Guest-abcd');
+		// Real admin is marked on the scoreboard and in chat; the guest is not.
+		assert.equal(server.lobby.scoreRows().find((r) => r.name === 'Tim')?.admin, true);
+		assert.equal(server.lobby.scoreRows().find((r) => r.id === welcome.selfId)?.admin, undefined);
+		const m = c.messages.length;
+		tim.send({ type: 'chat', text: 'hello all' });
+		const line = await c.waitFor('chat', (x) => x.text === 'hello all', m);
+		assert.equal(line.admin, true);
+		c.close();
+	});
+
+	it('disabled maps leave votes and lone changeMap; the last map cannot be disabled', async () => {
+		const { c: watcher } = await join('Watcher');
+		const n = watcher.messages.length;
+		const r = await admin(tim, { action: 'setMapEnabled', mapId: 'surf_b', enabled: false });
+		assert.equal(r.ok, true);
+		const maps = await watcher.waitFor('maps', () => true, n);
+		assert.deepEqual(maps.enabled, ['surf_a', 'surf_c']);
+		const last = await admin(tim, { action: 'setMapEnabled', mapId: 'surf_c', enabled: false });
+		assert.equal(last.ok, true);
+		// Only surf_a (current) left enabled: it cannot be disabled too.
+		const none = await admin(tim, { action: 'setMapEnabled', mapId: 'surf_a', enabled: false });
+		assert.deepEqual(none, { type: 'adminResult', ok: false, error: 'At least one map must stay enabled.' });
+		assert.equal((await admin(tim, { action: 'setMapEnabled', mapId: 'surf_c', enabled: true })).ok, true);
+
+		// rtv vote: surf_b never offered.
+		clock += (RTV_BLOCK + 1) * 1000;
+		const k = watcher.messages.length;
+		tim.send({ type: 'rtv' });
+		watcher.send({ type: 'rtv' });
+		const vs = await watcher.waitFor('voteStart', () => true, k);
+		assert.deepEqual(vs.options, [{ kind: 'map', mapId: 'surf_c' }]);
+
+		// A newcomer gets the enabled list after welcome.
+		const { c: late } = await join('Late');
+		assert.deepEqual((await late.waitFor('maps')).enabled, ['surf_a', 'surf_c']);
+		late.close();
+		watcher.close();
+	});
+
+	it('force map works for any map, disabled ones too; extend adds time', async () => {
+		const n = tim.messages.length;
+		assert.equal((await admin(tim, { action: 'forceMap', mapId: 'surf_b' })).ok, true);
+		const ch = await tim.waitFor('mapChange', () => true, n);
+		assert.equal(ch.map, 'surf_b');
+		assert.equal(server.lobby.currentMap.id, 'surf_b');
+		assert.equal(server.lobby.rotation.vote, null, 'the rtv vote was cancelled');
+		const before = server.lobby.timeLeft();
+		assert.equal((await admin(tim, { action: 'extend' })).ok, true);
+		assert.equal(server.lobby.timeLeft(), before + ADMIN_EXTEND);
+		assert.equal((await admin(tim, { action: 'forceMap', mapId: 'nope' })).ok, false);
+
+		// Lone non-admin: changeMap to a disabled map is refused.
+		tim.close();
+		await new Promise((r) => setTimeout(r, 100));
+		const { c } = await join('Solo');
+		const m = c.messages.length;
+		c.send({ type: 'changeMap', mapId: 'surf_b' });
+		await c.waitFor('chat', (x) => x.system === true && x.text === 'That map is disabled by an admin.', m);
+		c.send({ type: 'changeMap', mapId: 'surf_c' });
+		await c.waitFor('mapChange', (x) => x.map === 'surf_c', m);
+		c.close();
+		tim = (await join('x', { token: timToken })).c;
+	});
+
+	it('ban a connected account: kicked with 4009, login and token refused; unban restores', async () => {
+		const { c: bob } = await join('BobGuest');
+		const reg = await bob.auth('register', 'Bob', 'secret1');
+		assert.ok(reg.ok);
+		const bobToken = reg.ok ? reg.token! : '';
+		const bobId = server.lobby.scoreRows().find((r) => r.name === 'Bob')!.id;
+
+		// Admins cannot be banned (by id or username), nor themselves.
+		const timId = server.lobby.scoreRows().find((r) => r.name === 'Tim')!.id;
+		assert.equal((await admin(tim, { action: 'ban', targetId: timId })).ok, false);
+		assert.deepEqual(await admin(tim, { action: 'ban', username: 'OTHER_ADMIN' }), {
+			type: 'adminResult',
+			ok: false,
+			error: 'No account named "OTHER_ADMIN".'
+		});
+		server.db.createAccount('other_admin', 'x');
+		assert.deepEqual(await admin(tim, { action: 'ban', username: 'Other_Admin' }), {
+			type: 'adminResult',
+			ok: false,
+			error: 'Admins cannot be banned.'
+		});
+
+		const r = await admin(tim, { action: 'ban', targetId: bobId, reason: 'griefing' });
+		assert.equal(r.ok, true);
+		await bob.until(() => bob.closed);
+		assert.equal(bob.closeCode, 4009);
+		assert.deepEqual(bob.of('banned'), [{ type: 'banned', reason: 'griefing' }]);
+		const st = await adminState(tim, tim.messages.length - 1);
+		const ban = st.bans.find((b) => b.username === 'Bob')!;
+		assert.equal(ban.kind, 'account');
+		assert.equal(ban.reason, 'griefing');
+		assert.equal(ban.createdBy, 'Tim');
+
+		// Token auto-login refused.
+		const t = await bannedHello('Bob?', { token: bobToken });
+		assert.equal(t.closeCode, 4009);
+		assert.equal(t.of('welcome').length, 0);
+		// Password login refused (from a fresh guest connection).
+		const { c: g } = await join('Fresh');
+		const login = await g.auth('login', 'bob', 'secret1');
+		assert.deepEqual(login, { type: 'auth', ok: false, error: 'This account is banned.' });
+		await g.until(() => g.closed);
+		assert.equal(g.closeCode, 4009);
+
+		assert.equal((await admin(tim, { action: 'unban', banId: ban.id })).ok, true);
+		assert.equal((await admin(tim, { action: 'unban', banId: ban.id })).ok, false);
+		const { c: back, welcome } = await join('Bob again', { token: bobToken });
+		assert.deepEqual(welcome.account, { username: 'Bob', admin: false });
+		back.close();
+	});
+
+	it('offline account ban by username', async () => {
+		const { c } = await join('Carol0');
+		const reg = await c.auth('register', 'Carol', 'secret1');
+		const token = reg.ok ? reg.token! : '';
+		c.close();
+		await new Promise((r) => setTimeout(r, 50));
+		assert.equal((await admin(tim, { action: 'ban', username: 'carol' })).ok, true);
+		assert.equal((await admin(tim, { action: 'ban', username: 'carol' })).ok, false, 'already banned');
+		const t = await bannedHello('x', { token });
+		assert.equal(t.closeCode, 4009);
+	});
+
+	it('ban a guest: player key and CF-Connecting-IP are blocked; admins on that IP are not', async () => {
+		const headers = { 'cf-connecting-ip': '198.51.100.23' };
+		const key = crypto.randomUUID();
+		const { c: g, welcome } = await join('Griefer', { playerId: key, headers });
+		const r = await admin(tim, { action: 'ban', targetId: welcome.selfId });
+		assert.equal(r.ok, true);
+		await g.until(() => g.closed);
+		assert.equal(g.closeCode, 4009);
+		assert.equal((await bannedHello('Again', { playerId: key })).closeCode, 4009, 'same key');
+		assert.equal((await bannedHello('NewKey', { headers })).closeCode, 4009, 'same IP, new key');
+		const { welcome: ok } = await join('Elsewhere', { headers: { 'cf-connecting-ip': '198.51.100.99' } });
+		assert.equal(ok.account, null);
+		const { welcome: adminSameIp } = await join('t', { token: timToken, headers });
+		assert.deepEqual(adminSameIp.account, { username: 'Tim', admin: true });
+		tim = clients[clients.length - 1];
+	});
+
+	it('writes admin_log rows', () => {
+		const rows = server.db.db.prepare('SELECT admin_username, action, target FROM admin_log ORDER BY id').all() as {
+			admin_username: string;
+			action: string;
+			target: string | null;
+		}[];
+		const actions = rows.map((r) => r.action);
+		for (const a of ['disable-map', 'enable-map', 'force-map', 'extend', 'ban', 'unban']) assert.ok(actions.includes(a), a);
+		assert.ok(rows.every((r) => r.admin_username === 'Tim'));
+		assert.ok(rows.some((r) => r.action === 'ban' && r.target === 'account Bob'));
+	});
+
+	it('map settings and bans persist across a restart (same DB file)', async () => {
+		for (const c of clients) c.close();
+		await server.close();
+		server = await start();
+		const { c } = await join('Again');
+		assert.deepEqual((await c.waitFor('maps')).enabled, ['surf_a', 'surf_c']);
+		const { c: t } = await join('t', { token: timToken });
+		const st = await admin(t, { action: 'listBans' }).then(() => adminState(t));
+		assert.ok(st.bans.some((b) => b.username === 'Carol' && b.kind === 'account'));
+		assert.ok(st.bans.some((b) => b.username === 'Griefer' && b.kind === 'guest'));
+		assert.ok(st.players.some((p) => p.name === 'Tim' && p.admin && p.account === 'Tim'));
+		assert.ok(st.players.some((p) => p.name === 'Again' && p.guest && !p.admin));
+		assert.equal((await bannedHello('Again', { headers: { 'cf-connecting-ip': '198.51.100.23' } })).closeCode, 4009);
+	});
+});

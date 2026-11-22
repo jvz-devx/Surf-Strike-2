@@ -1,0 +1,9 @@
+# Only the web app and shared code are needed for the Vercel build.
+apps/server/data
+apps/server/.env
+**/*.db
+**/.env
+**/.env.*
+!**/.env.example
+.playwright-mcp
+tools/audio/raw

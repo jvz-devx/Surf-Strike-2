@@ -1,0 +1,127 @@
+import { describe, expect, it } from 'vitest';
+import { parseChatCommand } from './chat.js';
+import { cleanName, loadPlayerId, uuidV4 } from './identity.js';
+import { FixedStep } from './loop.js';
+import { loadSoloPb, saveSoloPb, splitDelta } from './records.js';
+import { cycleTarget, findTargetByName, specTargets } from './spectate.js';
+import { memoryStore } from './storage.js';
+import { routeVoteKey, voteLabel } from './vote.js';
+import { horizontalFov, verticalFovFromHorizontal43 } from '../render/fov.js';
+
+describe('fov', () => {
+	it('90 at 4:3 is 73.74 vertical and 106.26 at 16:9', () => {
+		const v = verticalFovFromHorizontal43(90);
+		expect(v).toBeCloseTo(73.7398, 3);
+		expect(horizontalFov(v, 16 / 9)).toBeCloseTo(106.26, 2);
+		expect(horizontalFov(v, 4 / 3)).toBeCloseTo(90, 6);
+	});
+});
+
+describe('FixedStep', () => {
+	it('runs 64 ticks per second regardless of frame rate', () => {
+		for (const fps of [60, 144, 240]) {
+			const s = new FixedStep(64, 8);
+			let ticks = 0;
+			for (let i = 0; i < fps; i++) ticks += s.advance(1000 / fps);
+			expect(Math.abs(ticks - 64)).toBeLessThanOrEqual(1);
+		}
+	});
+	it('caps ticks per frame and drops the backlog', () => {
+		const s = new FixedStep(64, 8);
+		expect(s.advance(500)).toBe(8);
+		expect(s.advance(1)).toBeLessThanOrEqual(1);
+		expect(s.alpha).toBeGreaterThanOrEqual(0);
+		expect(s.alpha).toBeLessThan(1);
+	});
+});
+
+describe('chat commands', () => {
+	it('parses commands', () => {
+		expect(parseChatCommand('hello')).toBeNull();
+		expect(parseChatCommand('!r')).toEqual({ kind: 'restart' });
+		expect(parseChatCommand('!RESTART')).toEqual({ kind: 'restart' });
+		expect(parseChatCommand('!spec  bob ')).toEqual({ kind: 'spec', target: 'bob' });
+		expect(parseChatCommand('!name New Name')).toEqual({ kind: 'name', name: 'New Name' });
+		expect(parseChatCommand('!wat x')).toEqual({ kind: 'unknown', name: 'wat', args: 'x' });
+	});
+});
+
+describe('records', () => {
+	it('keeps only better solo PBs', () => {
+		const st = memoryStore();
+		expect(loadSoloPb(st, 'm')).toBeNull();
+		expect(saveSoloPb(st, 'm', { ticks: 1000, splits: [100, 500] })).toBe(true);
+		expect(saveSoloPb(st, 'm', { ticks: 1200, splits: [] })).toBe(false);
+		expect(saveSoloPb(st, 'm', { ticks: 900, splits: [90] })).toBe(true);
+		expect(loadSoloPb(st, 'm')).toEqual({ ticks: 900, splits: [90] });
+	});
+	it('computes split deltas', () => {
+		expect(splitDelta([100, 200], 1, 180)).toBe(-20);
+		expect(splitDelta([100], 1, 180)).toBeNull();
+		expect(splitDelta(null, 0, 1)).toBeNull();
+	});
+});
+
+describe('identity', () => {
+	it('generates v4 UUIDs and keeps them', () => {
+		expect(uuidV4()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+		const st = memoryStore();
+		expect(loadPlayerId(st)).toBe(loadPlayerId(st));
+		expect(cleanName('  \u0001 ')).toBeNull();
+	});
+});
+
+describe('spectate targets', () => {
+	const players = [
+		{ id: 5, name: 'Zed', spectating: false },
+		{ id: 1, name: 'me', spectating: false },
+		{ id: 3, name: 'Alice', spectating: false },
+		{ id: 4, name: 'Spec', spectating: true }
+	];
+	const t = specTargets(players, 1);
+	it('excludes self and spectators', () => expect(t.map((p) => p.id)).toEqual([3, 5]));
+	it('cycles with wrap', () => {
+		expect(cycleTarget(t, null, 1)).toBe(3);
+		expect(cycleTarget(t, 3, 1)).toBe(5);
+		expect(cycleTarget(t, 5, 1)).toBe(3);
+		expect(cycleTarget(t, 3, -1)).toBe(5);
+		expect(cycleTarget([], null, 1)).toBeNull();
+	});
+	it('finds by name', () => {
+		expect(findTargetByName(t, 'ali')).toBe(3);
+		expect(findTargetByName(t, 'ED')).toBe(5);
+		expect(findTargetByName(t, 'x')).toBeNull();
+	});
+});
+
+describe('vote labels', () => {
+	it('labels maps and extend', () => {
+		expect(voteLabel({ kind: 'extend' })).toBe('Extend 10 min');
+		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Title', kind: 'bhop' }))).toBe('Bhop · Title');
+		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Quay', kind: 'tag' }))).toBe('Tag · Quay');
+		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Lab', kind: 'zombies' }))).toBe('Zombies · Lab');
+		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => undefined)).toBe('x');
+	});
+});
+
+describe('vote key routing', () => {
+	const none = { mapVoteOptions: 0, rtvRequestOpen: false };
+	it('map vote open: 1-7 vote, ahead of binds', () => {
+		const s = { mapVoteOptions: 7, rtvRequestOpen: false };
+		for (let k = 1; k <= 7; k++) expect(routeVoteKey(String(k), s)).toEqual({ kind: 'mapVote', option: k });
+		expect(routeVoteKey('8', s)).toBeNull();
+		expect(routeVoteKey('w', s)).toBeNull();
+		// Fewer options: higher keys are still swallowed (no weapon switch mid-vote).
+		expect(routeVoteKey('6', { mapVoteOptions: 4, rtvRequestOpen: false })).toEqual({ kind: 'mapVote', option: 6 });
+	});
+	it('rtv request open: 1 = yes, 2 = no, other keys keep their binds', () => {
+		const s = { mapVoteOptions: 0, rtvRequestOpen: true };
+		expect(routeVoteKey('1', s)).toEqual({ kind: 'rtv', yes: true });
+		expect(routeVoteKey('2', s)).toEqual({ kind: 'rtv', yes: false });
+		expect(routeVoteKey('3', s)).toBeNull();
+		expect(routeVoteKey('4', s)).toBeNull();
+	});
+	it('nothing open: binds run (zombies weapon slots)', () => {
+		for (const k of ['1', '2', '3', '4', '5']) expect(routeVoteKey(k, none)).toBeNull();
+	});
+});

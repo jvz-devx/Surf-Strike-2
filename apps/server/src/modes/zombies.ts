@@ -1,0 +1,234 @@
+/**
+ * Zombies gamemode (docs/modes.md#zombies). Server-authoritative: the shared
+ * `ZombiesGame` (round flow, zombie AI on the real movement code, weapons,
+ * lag-compensated hits, player health) runs here on the latest state packets;
+ * clients send `fire`/`reload`/`loadout` and display the results.
+ */
+import type { MapRecordInfo, NetState, ScoreRow, ServerMessage, ZmEvent } from '@surf/shared';
+import {
+	buildCollisionWorld,
+	encodeZombies,
+	FLAG_DUCKED,
+	mapCvars,
+	Status,
+	WEAPONS,
+	WEAPON_IDS,
+	ZombiesGame,
+	ZOMBIE_HP,
+	zmEventRoute,
+	type ZombieNet,
+	type ZombiesGameOptions
+} from '@surf/shared';
+import type { Command } from '../commands.ts';
+import type { ModeClientMessage, ModeHost, ModePlayer, ServerMode } from './types.ts';
+import { EMPTY_RECORDS } from './types.ts';
+
+/** Mode state is re-sent at least this often (ms), and at most this often on changes. */
+export const ZM_STATE_MS = 1000;
+export const ZM_STATE_MIN_MS = 250;
+
+export type ZombiesModeOptions = Pick<ZombiesGameOptions, 'countdownSecs' | 'endSecs' | 'maxZombies' | 'spawnIntervalScale'>;
+
+
+const LOADOUT_HINT = WEAPON_IDS.map((w) => `${WEAPONS[w].slot} ${WEAPONS[w].label}`).join(' · ');
+
+function clock(secs: number): string {
+	const m = Math.floor(secs / 60);
+	const s = secs - m * 60;
+	return `${m}:${s.toFixed(1).padStart(4, '0')}`;
+}
+
+export class ZombiesMode implements ServerMode {
+	readonly id = 'zombies' as const;
+	readonly game: ZombiesGame;
+	private lastSent = -Infinity;
+	private dirty = true;
+
+	constructor(
+		private readonly host: ModeHost,
+		opts: ZombiesModeOptions = {}
+	) {
+		const map = host.map;
+		this.game = new ZombiesGame({
+			...opts,
+			map,
+			world: buildCollisionWorld(map),
+			cvars: mapCvars(map),
+			now: host.now(),
+			rng: () => host.rng(),
+			lenient: true
+		});
+	}
+
+	join(p: ModePlayer): void {
+		this.tick();
+		this.host.send(p, this.stateMessage());
+		this.host.systemTo(
+			p,
+			`Zombies: open the gates zone by zone (half the survivors in the glowing area starts a 30 s countdown) and reach the evac boat. If you go down you turn into a zombie. Weapon (while the loadout is open): ${LOADOUT_HINT}. R reloads.`
+		);
+	}
+
+	leave(): void {
+		this.tick();
+	}
+
+	spectate(): void {
+		this.tick();
+	}
+
+	state(p: ModePlayer, s: NetState): void {
+		this.game.setPlayerPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0, yaw: s.yaw });
+	}
+
+	zone(): void {}
+
+	records(): MapRecordInfo {
+		return { ...EMPTY_RECORDS };
+	}
+
+	/** fire / reload / loadout from a player. */
+	message(p: ModePlayer, msg: ModeClientMessage): void {
+		if (p.spectating || !this.game.hasPlayer(p.id)) return;
+		const now = this.host.now();
+		switch (msg.type) {
+			case 'fire': {
+				const res = this.game.fire(p.id, { weapon: msg.weapon, origin: msg.origin, dir: msg.dir, tick: Number(msg.tick) }, now);
+				this.dispatch(res.events);
+				return;
+			}
+			case 'reload':
+				this.game.reload(p.id, now);
+				return;
+			case 'loadout':
+				this.dispatch(this.game.loadout(p.id, msg.weapon, now));
+				this.dirty = true;
+				return;
+		}
+	}
+
+	command(p: ModePlayer, cmd: Command): boolean {
+		if (cmd.cmd !== 'top' && cmd.cmd !== 'pb') return false;
+		const v = this.game.playerView(p.id);
+		this.host.systemTo(p, `No leaderboard in zombies. This round: ${v?.kills ?? 0} kills, ${v?.deaths ?? 0} downs.`);
+		return true;
+	}
+
+	scoreRows(): ScoreRow[] {
+		const rows: ScoreRow[] = [];
+		for (const p of this.host.players()) {
+			const v = p.spectating ? null : this.game.playerView(p.id);
+			rows.push({
+				id: p.id,
+				name: p.name,
+				rank: null,
+				pbTicks: null,
+				status: p.spectating || !v ? Status.Spectating : v.team === 'survivor' ? Status.Alive : Status.Down,
+				stage: this.game.checkpoint,
+				ping: Math.round(p.ping),
+				spectating: p.spectating,
+				kills: v?.kills ?? 0,
+				deaths: v?.deaths ?? 0
+			});
+		}
+		rows.sort((a, b) => (b.kills ?? 0) - (a.kills ?? 0) || a.name.localeCompare(b.name));
+		return rows;
+	}
+
+	tick(): void {
+		const now = this.host.now();
+		const ids: number[] = [];
+		for (const p of this.host.players()) if (!p.spectating) ids.push(p.id);
+		this.game.syncPlayers(ids, now);
+		this.dispatch(this.game.update(now));
+		if ((this.dirty && now - this.lastSent >= ZM_STATE_MIN_MS) || now - this.lastSent >= ZM_STATE_MS) {
+			this.lastSent = now;
+			this.dirty = false;
+			this.host.broadcast(this.stateMessage());
+		}
+		this.sendZombies();
+	}
+
+	/** BIN_ZOMBIES snapshot (every mode tick, 32 Hz; droppable under backlog like player snapshots). */
+	sendZombies(): void {
+		const g = this.game;
+		if (g.zombies.size === 0 && g.phase !== 'playing' && g.phase !== 'ended') return;
+		const list: ZombieNet[] = [];
+		for (const z of g.zombies.values()) {
+			const o = z.body.origin;
+			list.push({ id: z.id, x: o.x, y: o.y, z: o.z, yaw: z.yaw, flags: g.zombieFlags(z), hp: Math.max(0, z.hp) / ZOMBIE_HP });
+		}
+		this.host.broadcastBinary(encodeZombies(g.tick, list), true);
+	}
+
+	stateMessage(): Extract<ServerMessage, { type: 'modeState' }> {
+		return { type: 'modeState', mode: 'zombies', ...this.game.view(this.host.now()) };
+	}
+
+	private name(id: number): string {
+		for (const p of this.host.players()) if (p.id === id) return p.name;
+		return `Player ${id}`;
+	}
+
+	private dispatch(events: ZmEvent[]): void {
+		const h = this.host;
+		for (const ev of events) {
+			const route = zmEventRoute(ev);
+			const msg: ServerMessage = { type: 'zm', ev };
+			if (route.to !== undefined) {
+				for (const p of h.players()) if (p.id === route.to) h.send(p, msg);
+			} else if (route.except !== undefined) {
+				for (const p of h.players()) if (p.id !== route.except) h.send(p, msg);
+			} else h.broadcast(msg);
+			this.announce(ev);
+		}
+	}
+
+	private announce(ev: ZmEvent): void {
+		const h = this.host;
+		const g = this.game;
+		switch (ev.e) {
+			case 'phase':
+				this.dirty = true;
+				if (ev.phase === 'countdown')
+					h.system(`Round ${ev.round} starts in ${Math.round(g.view(h.now()).timeLeft)} s. Pick a weapon: ${LOADOUT_HINT}.`);
+				else if (ev.phase === 'playing')
+					h.system(`Round ${ev.round}: reach the evac point at the end of the route (${g.checkpoints.length} checkpoints). Go!`);
+				break;
+			case 'checkpoint':
+				this.dirty = true;
+				h.system(`${this.name(ev.by)} reached checkpoint ${ev.index}/${g.checkpoints.length}. Survivors healed and resupplied.`);
+				break;
+			case 'down':
+				this.dirty = true;
+				h.system(
+					`${this.name(ev.id)} ${ev.by !== undefined ? `was caught by ${this.name(ev.by)} and ` : ''}turned! They hunt the survivors for the rest of the round.`
+				);
+				break;
+			case 'gate':
+				this.dirty = true;
+				if (ev.state === 'counting') h.system(`Gate ${ev.index + 1} opens in ${ev.secs} s. Hold out!`);
+				else if (ev.state === 'open')
+					h.system(ev.index === g.view(h.now()).gates.length - 1 ? `Gate ${ev.index + 1} is open: get to the evac boat!` : `Gate ${ev.index + 1} is open!`);
+				break;
+			case 'hurt':
+			case 'kill':
+				this.dirty = true;
+				break;
+			case 'end': {
+				this.dirty = true;
+				const top = ev.topId !== null ? `, top killer ${this.name(ev.topId)} (${ev.topKills})` : '';
+				h.system(
+					ev.won
+						? `Evacuated! ${ev.by !== null ? `${this.name(ev.by)} reached the boat. ` : ''}Round ${ev.round} won in ${clock(ev.secs)}: ${ev.kills} kills${top}.`
+						: `Overrun! Round ${ev.round} lost after ${clock(ev.secs)}: ${ev.kills} kills${top}.`
+				);
+				h.log(`zombies round ${ev.round} ${ev.won ? 'won' : 'lost'} ${ev.secs}s kills=${ev.kills}`);
+				break;
+			}
+		}
+	}
+
+	dispose(): void {}
+}
+
