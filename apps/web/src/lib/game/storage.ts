@@ -72,5 +72,9 @@ export const STORAGE_KEYS = {
 	account: 'surf.account',
 	/** '1' once the player chose "Play as guest" (the account panel stays closed on load). */
 	guest: 'surf.guest',
+	/** Map last played: shown first after a reload, until the server (if any) names its map. */
+	lastMap: 'surf.lastMap',
+	/** '1' once the fullscreen / Ctrl+W hint was shown. */
+	fullscreenHint: 'surf.hint.fullscreen',
 	pb: (mapId: string) => `surf.pb.${mapId}`
 } as const;

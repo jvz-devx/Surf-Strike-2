@@ -68,6 +68,8 @@ import {
 	type VoteOption
 } from '@surf/shared';
 import { GameAudio } from '../audio/audio.js';
+import { GameFullscreen } from '../input/fullscreen.js';
+import { isBrowserShortcut } from '../input/guard.js';
 import { Input } from '../input/input.js';
 import { isMoveAction, SubtickSampler } from '../input/subtick.js';
 import type { NetClient } from '../net/client.js';
@@ -99,7 +101,7 @@ import { chooseGhost, ghostLabel, GhostPlayback, type GhostSource } from './ghos
 import { browserGhostStore, type GhostStore } from './ghost-store.js';
 import { loadSoloPb, mergeRecordsPush, recordFields, saveSoloPb, splitDelta, type LocalPb } from './records.js';
 import { cycleTarget, findTargetByName, specTargets } from './spectate.js';
-import { browserStore, type KeyValueStore } from './storage.js';
+import { browserStore, STORAGE_KEYS, type KeyValueStore } from './storage.js';
 import { mapLabel, routeVoteKey, voteLabel } from './vote.js';
 import { HnsClient, type HnsHost } from './hns.js';
 import { hnsTagVisible } from './hns-view.js';
@@ -162,14 +164,14 @@ function statusPhase(s: number): RunTrackerPhase {
  * First solo map: `?map=<id>` when it names a known map (rotation or sandbox),
  * else DEFAULT_MAP_ID. A server's welcome still switches to the server's map.
  */
-export function initialMapId(search: string): string {
+export function initialMapId(search: string, lastMap: string | null = null): string {
 	try {
 		const id = new URLSearchParams(search).get('map')?.trim();
 		if (id && getMap(id)) return id;
 	} catch {
-		// malformed query: default map
+		// malformed query: last or default map
 	}
-	return DEFAULT_MAP_ID;
+	return lastMap && getMap(lastMap) ? lastMap : DEFAULT_MAP_ID;
 }
 
 export class Game implements CommandContext {
@@ -180,6 +182,9 @@ export class Game implements CommandContext {
 	private store: KeyValueStore = browserStore;
 	private con: DevConsole;
 	private input: Input;
+	private fullscreen: GameFullscreen;
+	/** The refused-keyboard-lock notice was shown. */
+	private lockRefused = false;
 	private renderer: GameRenderer | null = null;
 	private audio = new GameAudio();
 	private conn: Connection;
@@ -322,10 +327,13 @@ export class Game implements CommandContext {
 				if (!this.overlayOpen()) this.lockPointer();
 			},
 			gesture: () => this.audio.resume(),
-			blur: () => this.releaseAll()
+			blur: () => this.releaseAll(),
+			overlayOpen: () => this.overlayOpen()
 		});
+		this.fullscreen = new GameFullscreen((ok) => this.onKeyboardLock(ok));
+		this.hud.fullscreenSupported = this.fullscreen.supported;
 
-		this.loadMap(initialMapId(typeof location !== 'undefined' ? location.search : ''));
+		this.loadMap(initialMapId(typeof location !== 'undefined' ? location.search : '', this.store.get(STORAGE_KEYS.lastMap)));
 		this.startSoloRotation();
 
 		this.conn = new Connection(
@@ -422,6 +430,10 @@ export class Game implements CommandContext {
 			case 'cl_hideplayers':
 				this.renderer?.players.setHidden(Number(value) !== 0);
 				break;
+			case 'cl_fullscreen':
+				if (Number(value) !== 0) this.fullscreen.enter();
+				else this.fullscreen.exit();
+				break;
 			case 'name':
 				saveName(this.store, String(value));
 				// Logged in: the username is the display name; this stays the guest name.
@@ -481,6 +493,7 @@ export class Game implements CommandContext {
 			return;
 		}
 		this.map = def;
+		this.store.set(STORAGE_KEYS.lastMap, def.id);
 		this.world = buildCollisionWorld(def);
 		this.player = createPlayer({ ...def.spawn.pos });
 		this.tracker = new RunTracker(def);
@@ -604,11 +617,20 @@ export class Game implements CommandContext {
 		const t = e.target as HTMLElement | null;
 		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return false;
 		if (name === 'escape') {
-			if (down && !this.input.locked) this.openSettings();
-			return false;
+			// A repeat is a held Esc (leaves fullscreen): the first press already did its work.
+			if (!down || e.repeat) return false;
+			// Fullscreen keyboard lock hands us Esc with the pointer still locked; the menu opens
+			// when the lock is gone (onPointerLock), as it does when the browser handles Esc.
+			if (this.input.locked) this.input.exitLock();
+			else this.openSettings();
+			return true;
 		}
 		if (down) {
-			if (e.ctrlKey && name !== 'ctrl' && (name === 'w' || name === 't' || name === 'n')) return false;
+			// Crouch on Ctrl turns game keys into browser shortcuts (Ctrl+W above all). Swallow every
+			// one the browser lets us see while playing; with a free cursor, close/new stay with it.
+			const shortcut = isBrowserShortcut(name, e);
+			if (shortcut && !this.input.locked && (name === 'w' || name === 't' || name === 'n')) return false;
+			const swallow = shortcut && this.input.locked;
 			// Number keys go to an open map vote (1-7) or RTV request (1/2) instead of their binds.
 			const route = routeVoteKey(name, this.voteKeyState());
 			if (route) {
@@ -618,7 +640,7 @@ export class Game implements CommandContext {
 				}
 				return true;
 			}
-			if (!cmd) return false;
+			if (!cmd) return swallow;
 			if (e.repeat) return true;
 			this.pressedKeys.set(name, cmd);
 			this.inputTime = e.timeStamp;
@@ -724,6 +746,21 @@ export class Game implements CommandContext {
 		if (!locked) {
 			this.releaseAll();
 			if (!this.overlayOpen()) this.hud.settingsOpen = true;
+			return;
+		}
+		// After the pointer lock, not with it: requestFullscreen uses up the click that both need.
+		if (this.cvars.num('cl_fullscreen') !== 0) this.fullscreen.enter();
+	}
+
+	private onKeyboardLock(ok: boolean): void {
+		if (this.disposed) return;
+		if (!ok) {
+			if (!this.lockRefused) this.notice('The browser refused the keyboard lock, so Ctrl+W can still close the tab.');
+			this.lockRefused = true;
+		} else if (!this.store.get(STORAGE_KEYS.fullscreenHint)) {
+			// Once per browser.
+			this.store.set(STORAGE_KEYS.fullscreenHint, '1');
+			this.notice('Fullscreen blocks Ctrl+W (forward + crouch). Esc: menu, hold Esc: leave fullscreen. Turn it off under Settings › Video.');
 		}
 	}
 
@@ -2280,6 +2317,7 @@ export class Game implements CommandContext {
 		this.inf = null;
 		this.conn.dispose();
 		this.input.dispose();
+		this.fullscreen.dispose();
 		this.audio.dispose();
 		this.renderer?.dispose();
 		this.renderer = null;

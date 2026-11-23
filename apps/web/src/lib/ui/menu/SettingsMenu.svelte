@@ -17,10 +17,13 @@
 	let {
 		cvars,
 		api,
+		fullscreenSupported = false,
 		section = $bindable('mouse')
 	}: {
 		cvars: Record<string, number | string>;
 		api: GameApi;
+		/** Fullscreen can block Ctrl+W here (Keyboard Lock API, Chromium). */
+		fullscreenSupported?: boolean;
 		section?: SettingsSectionId;
 	} = $props();
 
@@ -115,6 +118,16 @@
 			onset={set('fov')}
 		/>
 		<p class="note">Horizontal FOV at 4:3, scaled for widescreen as in CS.</p>
+		{#if fullscreenSupported}
+			<Toggle
+				label="Fullscreen (blocks Ctrl+W)"
+				hint="Starts when you click to play; hold Esc to leave"
+				checked={on('cl_fullscreen')}
+				onset={flag('cl_fullscreen')}
+			/>
+		{:else}
+			<p class="note">This browser cannot block Ctrl+W; it asks before closing while you play.</p>
+		{/if}
 		<Toggle label="Show FPS" checked={on('cl_showfps')} onset={flag('cl_showfps')} />
 		<Toggle
 			label="Show position"

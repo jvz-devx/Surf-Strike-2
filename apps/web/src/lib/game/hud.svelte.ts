@@ -71,6 +71,7 @@ export class HudState implements HudStateShape {
 	settingsOpen = $state(false);
 	authPanelOpen = $state(false);
 	pointerLocked = $state(false);
+	fullscreenSupported = $state(false);
 	desktopOnly = $state(false);
 
 	fps = $state(0);

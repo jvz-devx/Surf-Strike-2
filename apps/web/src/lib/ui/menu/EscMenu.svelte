@@ -27,7 +27,8 @@
 		online = false,
 		adminState = null,
 		adminNotice = null,
-		blocked = false
+		blocked = false,
+		fullscreenSupported = false
 	}: {
 		cvars: Record<string, number | string>;
 		api: GameApi;
@@ -46,6 +47,8 @@
 		adminNotice?: { ok: boolean; text: string; at: number } | null;
 		/** Another overlay (console) owns the keyboard: ignore Esc and arrows. */
 		blocked?: boolean;
+		/** Fullscreen can block Ctrl+W here (Chromium). */
+		fullscreenSupported?: boolean;
 	} = $props();
 
 	/** Dev mock only (`?mockhud&open=maps` or `&view=settings&tab=hud`): start on a submenu. */
@@ -124,6 +127,8 @@
 	function keydown(e: KeyboardEvent) {
 		if (blocked || e.defaultPrevented) return;
 		if (e.key === 'Escape') {
+			// Held Esc leaves fullscreen: only the first press navigates.
+			if (e.repeat) return e.preventDefault();
 			const t = e.target as HTMLInputElement | null;
 			// Esc first clears a non-empty search box.
 			if (t?.type === 'search' && t.value) return;
@@ -197,7 +202,7 @@
 			bind:this={content}
 		>
 			{#if view === 'settings'}
-				<SettingsMenu {cvars} {api} bind:section />
+				<SettingsMenu {cvars} {api} {fullscreenSupported} bind:section />
 			{:else if view === 'maps'}
 				<MapMenu
 					{maps}

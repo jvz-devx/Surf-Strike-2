@@ -69,6 +69,7 @@ Opened with `` ` `` or `~`. A CS-style panel in the top half of the screen: scro
 | `m_yaw`, `m_pitch` | 0.022 | Degrees per mouse count |
 | `fov` | 90 | Horizontal FOV at 4:3, scaled for widescreen as in CS (106.26° at 16:9) |
 | `volume` | 0.5 | Master volume 0–1 |
+| `cl_fullscreen` | 1 | Play in fullscreen, where `Ctrl+W` cannot close the tab (Chromium only, [Platform](#platform)) |
 | `cl_showfps` | 0 | FPS counter |
 | `cl_showpos` | 0 | Position, angles, velocity readout |
 | `cl_showkeys` | 0 | Pressed-keys display |
@@ -95,7 +96,7 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
 - **Change map**: tabs **All** plus one per gamemode with maps, in `GAME_MODES` registry order and labels (Surf, Bhop, Tag, …), so new modes appear without UI changes. Opens on the current map's mode. Within a mode, maps sort by difficulty (easy first), then title, then size. Each row shows title, id, an easy/hard badge (Medium/Large for maps that come in sizes, `mapTag` in `menu.ts`), and marks the current map. A filter box matches title, id or size. Picking a map switches at once and resumes in solo or when you are alone on the server (`canChangeMap`). With others online every map stays clickable (button tooltip and tag "Request map vote"): picking one starts an RTV request nominating it and resumes, so the modal is visible. The notice above the list says so, or, when requests are not possible, why and for how long: "Map vote declined — try again in 45 s", "Map vote requests open in 12 s" (first 20 s of a map), "A map vote is in progress", "A map vote request is open", or "Spectators cannot request a map vote" (rows read-only then). The current map and admin-disabled maps ("Disabled by admin") cannot be nominated. State logic: `mapMenuState` / `mapRowPickable` in `menu.ts`.
 - **Settings**: tabs
   - Mouse: sensitivity (slider + number), `m_yaw`, `m_pitch`
-  - Video: FOV, show FPS, show position
+  - Video: FOV, **Fullscreen (blocks Ctrl+W)** (`cl_fullscreen`; in browsers without the Keyboard Lock API a note instead), show FPS, show position
   - HUD: crosshair colour, size, gap, thickness, centre dot with a live 1:1 preview; show keys, show ghost (`cl_ghost`), hide players (`cl_hideplayers`)
   - Audio: master volume
 
@@ -133,7 +134,7 @@ The race ghost ([gameplay.md](gameplay.md#ghosts)) is the remote-player humanoid
 | `` ` `` / `~` | Console |
 | `Esc` | Esc menu |
 
-Binds added after a player first saved their table (`E` → `beacon`, `N` → `moab`) are offered once: they are filled in when the key is free and the command is not bound elsewhere, and the offered list is stored in `surf.binds.offered` so a later `unbind` sticks. `Ctrl`+`N` stays with the browser, so `N` does nothing while crouching.
+Binds added after a player first saved their table (`E` → `beacon`, `N` → `moab`) are offered once: they are filled in when the key is free and the command is not bound elsewhere, and the offered list is stored in `surf.binds.offered` so a later `unbind` sticks. In a window, `Ctrl`+`N` stays with the browser, so `N` does nothing while crouching; in fullscreen with the keyboard lock it works ([Platform](#platform)).
 
 ## Audio
 
@@ -163,4 +164,17 @@ Rules:
 
 ## Platform
 
-Desktop browsers (Chrome, Firefox, Edge, Safari) with mouse and keyboard. Pointer lock is required. On touch-only devices, show a "Desktop only" message. Browsers do not let a page cancel `Ctrl+W` (an easy slip with `W` + crouch on `Ctrl`), so while the pointer is locked, and for 2 s after it is released, the page arms a `beforeunload` "Leave site?" prompt (`apps/web/src/lib/input/input.ts`). Closing the tab from the Esc menu or after 2 s unlocked asks nothing.
+Desktop browsers (Chrome, Firefox, Edge, Safari) with mouse and keyboard. Pointer lock is required. On touch-only devices, show a "Desktop only" message.
+
+### Accidental Ctrl+W
+
+Crouch on `Ctrl` plus forward on `W` is an easy slip that closes the tab. Pure rules are in `apps/web/src/lib/input/guard.ts` (unit tests in `guard.test.ts`).
+
+1. **Block (Chromium, `fullscreen.ts`).** With `cl_fullscreen 1` (default) the click that locks the pointer also puts the page in fullscreen and calls `navigator.keyboard.lock()` for `Escape`, `W`, `T`, `N` and `Q`. `Ctrl` combinations then reach the page and are swallowed while the pointer is locked (`isBrowserShortcut`; developer tools, AltGr and Cmd combinations are left alone). F11 fullscreen does not count, and fullscreen without the keyboard lock does not block `Ctrl+W`.
+   - Short `Esc` releases the pointer and opens the menu, still in fullscreen; hold `Esc` (about 1.5 s) to leave fullscreen. `Ctrl+W` does nothing in the menu either while fullscreen is on.
+   - Leaving fullscreen releases the keyboard lock. The next click that locks the pointer enters fullscreen again. Resuming with `Esc` is not a user gesture, so it stays windowed. Switching the setting off leaves fullscreen at once.
+   - One-time prompts outside our control: some Chromium versions ask "Override some keys on your keyboard" (if refused, a chat notice says that `Ctrl+W` is not blocked), and GNOME on Wayland asks "Allow inhibiting shortcuts" (either answer is fine). Both take the pointer lock, so the Esc menu opens: answer, then Resume.
+   - A chat hint explains this once per browser, after the first successful lock.
+   - Firefox and Safari have no keyboard lock: the setting is replaced by a note and the game stays windowed.
+2. **Ask.** Otherwise a `beforeunload` "Leave site?" prompt is armed while the pointer is locked, for 2 s after it is released, and, with no menu or other overlay open, for 10 s after the last game key or resume (`leaveGuardArmed`; "Click to play" with keys still moving the player). Closing the tab from the Esc menu after 2 s asks nothing.
+3. **Recover.** Session, guest name, player id, settings and binds are saved on change, so a reopened page reconnects at once under the same name; the server sends its current map. The last map (`surf.lastMap`) is loaded first (after `?map=`), so solo play returns to it. A run in progress is lost.

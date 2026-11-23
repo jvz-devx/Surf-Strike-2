@@ -348,6 +348,8 @@ export interface HudStateShape {
 	 */
 	authPanelOpen: boolean;
 	pointerLocked: boolean;
+	/** Fullscreen can block Ctrl+W here (Keyboard Lock API, Chromium). */
+	fullscreenSupported: boolean;
 	desktopOnly: boolean; // touch-only device detected
 	// Debug readouts (only meaningful when the matching cvar is on)
 	fps: number;

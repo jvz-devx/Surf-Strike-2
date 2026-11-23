@@ -149,6 +149,7 @@
 			adminState={hud.adminState}
 			adminNotice={hud.adminNotice}
 			blocked={hud.consoleOpen}
+			fullscreenSupported={hud.fullscreenSupported}
 		/>{/if}
 	{#if hud.authPanelOpen}<AuthPanel
 			{api}

@@ -2,10 +2,8 @@
  * Raw input: keyboard, mouse buttons, wheel and pointer-locked mouse motion.
  * Translates DOM events into bind key names; the game decides what to do.
  */
+import { leaveGuardArmed } from './guard.js';
 import { keyNameFromCode, mouseButtonName } from './keys.js';
-
-/** Keep the leave-page prompt armed this long after the pointer lock ends (Ctrl+W also drops the lock). */
-const LEAVE_GUARD_MS = 2000;
 
 export interface InputHandlers {
 	/** Return true if the event was consumed (preventDefault). */
@@ -19,6 +17,8 @@ export interface InputHandlers {
 	gesture(): void;
 	/** Window lost focus: release all held keys. */
 	blur(): void;
+	/** Menu, console, chat or account panel open (leave-page prompt). */
+	overlayOpen(): boolean;
 }
 
 export class Input {
@@ -28,6 +28,8 @@ export class Input {
 	locked = false;
 	/** performance.now() when the pointer lock was last released. */
 	private unlockedAt = -Infinity;
+	/** performance.now() of the last game key other than Ctrl, or return to the game (leave-page prompt). */
+	private gameKeyAt = -Infinity;
 	private off: Array<() => void> = [];
 
 	constructor(
@@ -76,11 +78,18 @@ export class Input {
 			if (this.locked || e.target === this.canvas) e.preventDefault();
 		});
 		on(canvas, 'click', () => this.h.canvasClick());
-		// Ctrl+W (forward + crouch on a slip) closes the tab, and pages cannot cancel that
-		// shortcut. While playing, ask "Leave site?" instead. "Playing" = pointer locked now or
-		// within LEAVE_GUARD_MS, so a deliberate close after Esc leaves without a prompt.
+		// Ctrl+W (forward + crouch on a slip) closes the tab, and a windowed page cannot cancel
+		// that shortcut (fullscreen can, see fullscreen.ts). While playing, ask "Leave site?"
+		// instead. A deliberate close from a menu leaves without a prompt.
 		on(window, 'beforeunload', (e: BeforeUnloadEvent) => {
-			if (!this.locked && performance.now() - this.unlockedAt > LEAVE_GUARD_MS) return;
+			const now = performance.now();
+			const armed = leaveGuardArmed({
+				locked: this.locked,
+				sinceUnlock: now - this.unlockedAt,
+				sinceGameKey: now - this.gameKeyAt,
+				overlay: this.h.overlayOpen()
+			});
+			if (!armed) return;
 			e.preventDefault();
 			e.returnValue = ''; // older Chromium/Safari need returnValue set
 		});
@@ -99,7 +108,9 @@ export class Input {
 		if (down) this.h.gesture();
 		const name = keyNameFromCode(e.code, e.key);
 		if (!name) return;
-		if (this.h.key(name, down, e)) e.preventDefault();
+		if (!this.h.key(name, down, e)) return;
+		e.preventDefault();
+		if (down && name !== 'ctrl' && name !== 'escape' && !this.h.overlayOpen()) this.gameKeyAt = performance.now();
 	}
 
 	consumeMouse(out: { dx: number; dy: number }): void {
@@ -110,6 +121,8 @@ export class Input {
 
 	requestLock(): void {
 		if (this.locked) return;
+		// Back to playing, even if the browser refuses the lock (leave-page prompt).
+		this.gameKeyAt = performance.now();
 		const c = this.canvas as HTMLCanvasElement & {
 			requestPointerLock(opts?: { unadjustedMovement?: boolean }): Promise<void> | void;
 		};

@@ -140,6 +140,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		settingsOpen: open === 'settings' || open === 'maps',
 		authPanelOpen: open === 'auth' || open === 'name',
 		pointerLocked: false,
+		fullscreenSupported: true,
 		desktopOnly: open === 'desktop',
 		fps: 144,
 		pos: { x: 1024.5, y: -332.25, z: 512, pitch: 4.2, yaw: 91.3, vx: 1200, vy: -460, vz: -88 },

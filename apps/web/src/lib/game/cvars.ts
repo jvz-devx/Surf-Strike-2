@@ -27,6 +27,7 @@ export const CLIENT_CVARS: readonly CvarDef[] = [
 	{ name: 'm_pitch', default: 0.022, min: -1, max: 1, help: 'Degrees per mouse count, vertical' },
 	{ name: 'fov', default: 90, min: 60, max: 130, help: 'Horizontal FOV at 4:3 (CS scaling for widescreen)' },
 	{ name: 'volume', default: 0.5, min: 0, max: 1, help: 'Master volume 0-1' },
+	{ name: 'cl_fullscreen', default: 1, bool: true, help: 'Play in fullscreen, where Ctrl+W cannot close the tab (Chromium browsers)' },
 	{ name: 'cl_showfps', default: 0, bool: true, help: 'Show FPS counter' },
 	{ name: 'cl_showpos', default: 0, bool: true, help: 'Show position, angles and velocity' },
 	{ name: 'cl_showkeys', default: 0, bool: true, help: 'Show pressed keys' },
