@@ -969,7 +969,6 @@ export class Game implements CommandContext {
 		this.zm = new ZombiesClient(host, this.map, this.sv, performance.now());
 		// Closed gates are solid for the local player too.
 		this.world = this.zm.world;
-		if (import.meta.env.DEV) (globalThis as { __zmDebug?: unknown }).__zmDebug = { zm: this.zm, game: this }; // TEMP-ZM-DEBUG
 		this.hud.zombies = this.zm.frame(performance.now(), false, 0);
 	}
 

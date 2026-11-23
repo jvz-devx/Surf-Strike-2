@@ -103,6 +103,10 @@ Theme: derelict orbital station at night, one neon colour per module. Each stage
 
 Theme: desert canyon at golden hour. Checkpoints are splits; any fall resets to the start. Nine hard moments: a narrow slot in a canyon fin, low arches over a bend, a 450° sinkhole spiral, a glass floor hole onto a ramp below it, hoodoo pillars to strafe around, two glass tubes over switch transfers (one switch ramp is glass), a far speed window off a wave, an up-ramp into a high window followed by a 130° air turn, and arches over the final descent.
 
+## zombies_lowtide — zombies, linear
+
+Theme: an abandoned seaside town at dusk in sea fog. Beach car park (start) → main street with side pockets and a barricade → narrow alley → promenade and a bridge over a creek → cannery yard → harbour road → pier with the evac boat. Five gates split it into six zones, each with a checkpoint and an unlock area before its gate. Zombies maps add `zombies: { path, spawnZones, gates }` (`ZombieRoute` in `maps/types.ts`): the waypoint route the AI follows, zombie spawn areas tagged with the route node they feed, and the gates (solid boxes outside `brushes`, an `unlock` area and a route `node`). Map tests check spawns, checkpoint respawns, waypoints and spawn areas stand free, and walk the whole route with the real movement at the slowest weapon speed; shared tests send a zombie from every spawn area to the evac point.
+
 ## Default map
 
 The server and solo mode start on `surf_aurora`.

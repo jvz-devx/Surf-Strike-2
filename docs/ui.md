@@ -22,6 +22,10 @@ The HUD is Svelte components layered over the Three.js canvas.
 
 The speed number turns green while gaining speed and red while losing speed, as on surf servers.
 
+## Zombies HUD
+
+Shown on zombies maps (`ZombiesHud.svelte`, [modes.md](modes.md#zombies)): a round banner under the map name (countdown; Survivor/Zombie, round clock, zone, zombies alive, your kills / team kills; result summary), route progress bar and the gate line ("Gate 2/5: get half the survivors into the green area" or "Gate 2/5 opens in 23 s"), short flash banners (checkpoint, gate, turned), kill feed top right, health (5 pips; a bar as a zombie) and weapon / ammo / reload bar bottom right, a loadout list (keys 1-4) while it is open, hit markers (white, yellow for headshots, red for kills), a red vignette when hit, and the sniper scope overlay. Binds in zombies: mouse1 fire, mouse2 scope, R reload, 1-4 weapon (map vote while one is open).
+
 ## Account panel
 
 Replaces the first-visit name prompt ([gameplay.md](gameplay.md#accounts-and-identity)). A small centred panel in the same style (`AuthPanel.svelte`):
