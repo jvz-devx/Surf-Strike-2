@@ -165,6 +165,8 @@ Rules for the build:
 | Clip-through (`solid: false`) brushes | ≥ 25 | 123 in the arena |
 | Teleporters (zones with `dest`) | ≥ 10, ≥ 5 hidden, ≥ 2 visible pairs | 16, 12 hidden, 2 visible pairs |
 | Crawlspaces/vents (stand hull blocked, duck passes) | ≥ 5 | 5 |
+| Crawlspaces crawled end to end both ways with the real movement (`playerMove`) | all | 5 / 5 |
+| Inside-a-prop spots and the arcade teleporter entered with the real movement (a solid floor lip under a low lid blocks the Source step-up, which needs hull + 18 headroom) | all | 12 / 12 + arcade |
 | Chase loops (cycles through ≥ 2 doors/levels) | ≥ 8 (documented) | 17 |
 | Hider spawns / seeker spawns | ≥ 12 / ≥ 4 (seekers inside the cage) | 16 / 4 |
 | Every secret spot reachable from hider spawns and from the cage | yes (nav graph) | yes |

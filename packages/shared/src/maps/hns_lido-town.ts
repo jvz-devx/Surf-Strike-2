@@ -352,7 +352,7 @@ function alleys(b: MapBuilder): void {
 		put(b, bin('plastic_blue'), -3700, HOUSE_Y0(0) + 468, 0);
 		put(b, crate(40), -3600, HOUSE_Y0(0) + 460, 0);
 	});
-	b.spot('town-dumpster', 'Old town back yard: inside the dumpster', v(-4100 + 28, dy + 48, 4), 'prop', 'fake', 'crawl');
+	b.spot('town-dumpster', 'Old town back yard: inside the dumpster', v(-4100 + 28, dy + 48, 0), 'prop', 'fake', 'crawl');
 }
 
 function yards(b: MapBuilder, holes: Rect[]): void {
@@ -466,13 +466,14 @@ function chapel(b: MapBuilder, holes: Rect[]): void {
 	// Sarcophagus x [-2196, -2132] y [-200, -72]: 4-thick shell, fake west side, 60 tall inside.
 	const sx = -2196;
 	const sy = -200;
-	b.box(sx, sy, CRYPT_Z, sx + 64, sy + 128, CRYPT_Z + 4, 'marble');
+	// Clip-through base slab so the duck hull can step in at floor level.
+	b.fake(sx, sy, CRYPT_Z, sx + 64, sy + 128, CRYPT_Z + 4, 'marble');
 	b.box(sx, sy, CRYPT_Z + 4, sx + 64, sy + 4, CRYPT_Z + 64, 'marble');
 	b.box(sx, sy + 124, CRYPT_Z + 4, sx + 64, sy + 128, CRYPT_Z + 64, 'marble');
 	b.box(sx + 60, sy + 4, CRYPT_Z + 4, sx + 64, sy + 124, CRYPT_Z + 64, 'marble');
 	b.fake(sx, sy + 4, CRYPT_Z + 4, sx + 4, sy + 124, CRYPT_Z + 64, 'marble');
 	b.box(sx - 4, sy - 4, CRYPT_Z + 64, sx + 68, sy + 132, CRYPT_Z + 72, 'marble');
-	b.spot('crypt-sarcophagus', 'Chapel crypt: inside the sarcophagus', v(sx + 32, sy + 64, CRYPT_Z + 4), 'prop', 'fake', 'crawl');
+	b.spot('crypt-sarcophagus', 'Chapel crypt: inside the sarcophagus', v(sx + 32, sy + 64, CRYPT_Z), 'prop', 'fake', 'crawl');
 	b.spot('crypt', 'Chapel crypt: behind the tombs', v(-1980, -400, CRYPT_Z), 'room');
 
 	// Tower: base room (door from the nave), belfry at 480 (teleport destination).

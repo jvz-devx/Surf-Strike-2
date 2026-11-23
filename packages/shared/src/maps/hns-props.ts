@@ -731,7 +731,9 @@ export const poolTable = (): Prop =>
 export function arcade(screen = 'screen', hollow = false): Prop {
 	return prop(40, 44, (f) => {
 		if (hollow) {
-			f.box(0, 0, 0, 40, 44, 2, 'plastic_black');
+			// Clip-through floor: a solid 2-unit step under the 88 lintel would need
+			// 18 more headroom for the Source step-up, so nobody could walk in.
+			f.fake(0, 0, 0, 40, 44, 2, 'plastic_black');
 			f.box(0, 40, 2, 40, 44, 88, 'plastic_black');
 			f.box(0, 0, 2, 2, 40, 88, 'plastic_black');
 			f.box(38, 0, 2, 40, 40, 88, 'plastic_black');
@@ -809,7 +811,9 @@ export const bin = (mat = 'plastic_green'): Prop =>
 export function dumpster(hollow = false, mat = 'dumpster'): Prop {
 	return prop(96, 56, (f) => {
 		if (hollow) {
-			f.box(0, 0, 0, 96, 56, 4, mat);
+			// Clip-through floor: duck in at ground level (a solid 4-unit step under
+			// the 60 lid would need 18 more headroom for the step-up).
+			f.fake(0, 0, 0, 96, 56, 4, mat);
 			f.box(0, 52, 4, 96, 56, 60, mat);
 			f.box(0, 4, 4, 4, 52, 60, mat);
 			f.box(92, 4, 4, 96, 52, 60, mat);

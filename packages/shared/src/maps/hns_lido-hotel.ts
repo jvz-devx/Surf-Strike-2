@@ -616,6 +616,6 @@ function grounds(b: MapBuilder): void {
 		for (let k = 0; k < 6; k++) put(b, tree(112 + (k % 2) * 32, 72), -4500 + k * 560, 3660, 0);
 		put(b, fence(512, 56), -1700, 3500, 0);
 	});
-	b.spot('hotel-dumpster', 'Hotel service yard: inside the dumpster', v(-3032, 3768, 4), 'prop', 'fake', 'crawl');
+	b.spot('hotel-dumpster', 'Hotel service yard: inside the dumpster', v(-3032, 3768, 0), 'prop', 'fake', 'crawl');
 	b.spot('hotel-container', 'Hotel service yard: inside the open container', v(-3520, 3448, 4), 'prop');
 }
