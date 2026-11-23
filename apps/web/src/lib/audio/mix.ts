@@ -24,7 +24,11 @@ export const MIX_LUFS = {
 	zone: -29,
 	record: -24,
 	vote: -27,
-	click: -31
+	click: -31,
+	/** Hide and seek knife swing (own swing, or a seeker right next to you). */
+	swing: -30,
+	/** Hide and seek knife hit (you found someone, or were found). */
+	hit: -24
 } as const;
 
 /** Reverb send relative to the dry signal (dB), through the measured IR. */
@@ -108,8 +112,23 @@ export function stepAdvance(speed: number, dt: number): number {
 }
 
 /** Single-take event level (dB). */
-export function eventDb(group: 'jump' | 'zone' | 'record' | 'vote' | 'click'): number {
+export function eventDb(group: 'jump' | 'zone' | 'record' | 'vote' | 'click' | 'swing' | 'hit'): number {
 	return levelDb(group, MIX_LUFS[group]);
+}
+
+/** Another player's knife swing is heard at full level up to this distance (units)… */
+export const SWING_NEAR = 128;
+/** …and not at all beyond this one (no map-wide cue for hiders). */
+export const SWING_FAR = 1024;
+
+/**
+ * Level change (dB) of a sound `dist` units away: 0 up to SWING_NEAR, then
+ * −6 dB per doubling of distance (inverse distance), null (silent) beyond
+ * SWING_FAR.
+ */
+export function distanceDb(dist: number): number | null {
+	if (!Number.isFinite(dist) || dist > SWING_FAR) return null;
+	return dist <= SWING_NEAR ? 0 : -20 * Math.log10(dist / SWING_NEAR);
 }
 
 /**

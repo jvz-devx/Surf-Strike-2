@@ -137,7 +137,7 @@ Binds added after a player first saved their table (`E` → `beacon`, `N` → `m
 
 ## Audio
 
-All sounds are real recordings released under CC0, sourced from Freesound and listed with their trims in [CREDITS.md](../CREDITS.md). Nothing is synthesised: code only selects, places, levels, filters and convolves the recordings. Files live in `apps/web/static/sfx/` (AAC `.m4a`, 48 kHz, mono events, about 0.6 MB in total) and are fetched after the first user gesture. A file that fails to load only silences that sound.
+All sounds are real recordings released under CC0, sourced from Freesound and listed with their trims in [CREDITS.md](../CREDITS.md). Nothing is synthesised: code only selects, places, levels, filters and convolves the recordings. Files live in `apps/web/static/sfx/` (AAC `.m4a`, 48 kHz, mono events, about 0.65 MB in total) and are fetched after the first user gesture. A file that fails to load only silences that sound.
 
 | Sound | Trigger | Recording |
 | --- | --- | --- |
@@ -150,6 +150,8 @@ All sounds are real recordings released under CC0, sourced from Freesound and li
 | Record | New PB or map record | Large church bell, one strike |
 | Vote | Vote opens; hide and seek seeker release | Two gavel knocks on a wooden desk |
 | Click | New chat message (the only click voice) | Computer mouse button |
+| Knife swing | Hide and seek: your knife swing; another seeker's swing within 1024 units (−6 dB per doubling of distance beyond 128) | Bamboo stick whooshes, pool of 4 |
+| Knife hit | Hide and seek: you found a hider, or you were found | Knife stabbing a foam block, pool of 4 |
 
 Rules:
 

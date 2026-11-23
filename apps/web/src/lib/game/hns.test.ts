@@ -58,6 +58,7 @@ function mapDef(): MapDef {
 function client() {
 	const sent: ClientMessage[] = [];
 	const sounds: HnsSound[] = [];
+	const from: Array<number | undefined> = [];
 	const teleports: Array<{ x: number; yaw: number }> = [];
 	const host: HnsHost = {
 		online: () => true,
@@ -65,11 +66,14 @@ function client() {
 		send: (m) => sent.push(m),
 		name: (id) => (id === 1 ? 'Me' : `P${id}`),
 		teleport: (pos, yaw) => teleports.push({ x: pos.x, yaw }),
-		sound: (n) => sounds.push(n),
+		sound: (n, f) => {
+			sounds.push(n);
+			from.push(f);
+		},
 		viewmodel: () => null,
 		viewId: () => 1
 	};
-	return { c: new HnsClient(host, mapDef()), sent, sounds, teleports };
+	return { c: new HnsClient(host, mapDef()), sent, sounds, from, teleports };
 }
 
 const state = (phase: HnsModeState['phase'], seekers: number[], hiders: number[], extra: Partial<HnsModeState> = {}): HnsModeState => ({
@@ -145,6 +149,21 @@ describe('HnsClient', () => {
 		const v = c.frame(30, true, 0);
 		expect(v.summary).toEqual({ winner: 'hiders', survivors: ['Me'], top: null });
 		expect(c.canRespawn()).toBe(true);
+	});
+
+	it("plays the knife hit for the finder and the found, and others' swings from their position", () => {
+		const { c, sounds, from } = client();
+		c.onModeState(state('seeking', [3], [1, 2]), 0);
+		c.onEvent({ e: 'swing', by: 3 }, 10);
+		expect(sounds).toEqual(['swing']);
+		expect(from).toEqual([3]);
+		c.onEvent({ e: 'swing', by: 1 }, 20);
+		expect(sounds).toEqual(['swing']);
+		c.onEvent({ e: 'found', by: 3, target: 2, hidersLeft: 1 }, 30);
+		expect(sounds).toEqual(['swing']);
+		c.onEvent({ e: 'found', by: 3, target: 1, hidersLeft: 0 }, 40);
+		expect(sounds).toEqual(['swing', 'hit']);
+		expect(from[1]).toBeUndefined();
 	});
 
 	it('falls back to role spawns', () => {

@@ -9,6 +9,8 @@ export const SFX_EVENTS = {
 	record: ['record.m4a'],
 	vote: ['vote.m4a'],
 	click: ['click.m4a'],
+	swing: ['swing-1.m4a', 'swing-2.m4a', 'swing-3.m4a', 'swing-4.m4a'],
+	hit: ['hit-1.m4a', 'hit-2.m4a', 'hit-3.m4a', 'hit-4.m4a'],
 } as const;
 
 /** Seamless loops: loopSeconds is the exact loop length prepared offline. */
@@ -26,6 +28,8 @@ export const SFX_LUFS = {
 	record: -21.1,
 	vote: -24.2,
 	click: -21.9,
+	swing: -23.6,
+	hit: -24.4,
 	wind: -20.2,
 	slide: -20.0,
 } as const;

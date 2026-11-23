@@ -3,7 +3,11 @@ import {
 	Cycle,
 	LAND_MIN_SPEED,
 	MIX_LUFS,
+	SWING_FAR,
+	SWING_NEAR,
 	VARIATION_DB,
+	distanceDb,
+	eventDb,
 	landDb,
 	levelDb,
 	loopRegion,
@@ -39,6 +43,26 @@ describe('Cycle', () => {
 		expect(SFX_EVENTS.step.length).toBeGreaterThanOrEqual(3);
 		expect(SFX_EVENTS.jump.length).toBeGreaterThanOrEqual(3);
 		expect(SFX_EVENTS.land.length).toBeGreaterThanOrEqual(3);
+		expect(SFX_EVENTS.swing.length).toBeGreaterThanOrEqual(3);
+		expect(SFX_EVENTS.hit.length).toBeGreaterThanOrEqual(3);
+	});
+});
+
+describe('hide and seek knife sounds', () => {
+	it('place the swing and hit at their mix levels', () => {
+		expect(eventDb('swing')).toBeCloseTo(levelDb('swing', MIX_LUFS.swing));
+		expect(eventDb('hit')).toBeCloseTo(levelDb('hit', MIX_LUFS.hit));
+		expect(MIX_LUFS.hit).toBeGreaterThan(MIX_LUFS.swing);
+	});
+
+	it("fall off with distance and are silent far away (another seeker's swing)", () => {
+		expect(distanceDb(0)).toBe(0);
+		expect(distanceDb(SWING_NEAR)).toBe(0);
+		expect(distanceDb(SWING_NEAR * 2)).toBeCloseTo(-6.02, 1);
+		expect(distanceDb(SWING_NEAR * 4)).toBeCloseTo(-12.04, 1);
+		expect(distanceDb(SWING_FAR)).toBeCloseTo(-18.06, 1);
+		expect(distanceDb(SWING_FAR + 1)).toBeNull();
+		expect(distanceDb(Number.NaN)).toBeNull();
 	});
 });
 

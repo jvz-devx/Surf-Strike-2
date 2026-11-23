@@ -15,6 +15,7 @@ import {
 	STEP_DISTANCE,
 	STEP_MIN_SPEED,
 	dbToGain,
+	distanceDb,
 	eventDb,
 	landDb,
 	loopRegion,
@@ -255,12 +256,17 @@ export class GameAudio {
 	}
 
 	/**
-	 * Hide and seek sounds (docs/modes.md#hide-and-seek). The seeker release
-	 * reuses the vote gavel (a real CC0 recording, CREDITS.md); the knife swing
-	 * and hit stay silent until real CC0 recordings are sourced.
+	 * Hide and seek sounds (docs/modes.md#hide-and-seek), all real CC0
+	 * recordings (CREDITS.md): knife swing (stick whooshes, pool of 4), knife
+	 * hit (knife into foam, pool of 4); the seeker release reuses the vote
+	 * gavel. `dist`: how far away another player's swing is (units); omitted
+	 * for your own sounds.
 	 */
-	hns(name: 'swing' | 'hit' | 'release'): void {
-		if (name === 'release') this.voteChime();
+	hns(name: 'swing' | 'hit' | 'release', dist?: number): void {
+		if (name === 'release') return this.voteChime();
+		const falloff = dist === undefined ? 0 : distanceDb(dist);
+		if (falloff === null) return;
+		this.play(name, eventDb(name) + falloff, true);
 	}
 
 	/** The one click voice (chat messages). */

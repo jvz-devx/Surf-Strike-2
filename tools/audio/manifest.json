@@ -69,6 +69,30 @@
 			"snapDb": -20,
 			"fadeIn": 0.001,
 			"fadeOut": 0.03
+		},
+		"swing": {
+			"src": "427979",
+			"takes": [
+				{ "start": 1.33, "dur": 0.3 },
+				{ "start": 2.335, "dur": 0.3 },
+				{ "start": 5.805, "dur": 0.3 },
+				{ "start": 9.2, "dur": 0.34 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.004,
+			"fadeOut": 0.08
+		},
+		"hit": {
+			"src": "870740",
+			"takes": [
+				{ "start": 1.245, "dur": 0.34 },
+				{ "start": 2.315, "dur": 0.4 },
+				{ "start": 7.255, "dur": 0.44 },
+				{ "start": 10.51, "dur": 0.38 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.1
 		}
 	},
 	"loops": {

@@ -31,7 +31,7 @@ SR = 48000
 DUR = 12.0
 
 # Mirrors apps/web/src/lib/audio/mix.ts and sfx.ts.
-MIX = dict(wind=-20, slideMin=-26, slideMax=-20, step=-28, jump=-33, landMin=-33, landMax=-21, zone=-29, record=-24, vote=-27, click=-31)
+MIX = dict(wind=-20, slideMin=-26, slideMax=-20, step=-28, jump=-33, landMin=-33, landMax=-21, zone=-29, record=-24, vote=-27, click=-31, swing=-30, hit=-24)
 VARIATION_DB = 1.5
 STEP_DISTANCE, STEP_MIN_SPEED, STEP_MAX_SPEED, LAND_MIN_SPEED = 76, 90, 320, 120
 

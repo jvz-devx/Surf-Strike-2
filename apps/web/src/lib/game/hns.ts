@@ -20,7 +20,8 @@ export interface HnsHost {
 	name(id: number): string;
 	/** Move the local player (spawn, found, freeze pull), velocity zeroed. */
 	teleport(pos: Vec3, yaw: number): void;
-	sound(name: HnsSound): void;
+	/** Play a sound; `from` = the player making it (another player: level falls off with distance). */
+	sound(name: HnsSound, from?: number): void;
 	viewmodel(): ZombieRenderer | null;
 	/** Player whose role the HUD shows (spectated target, else self). */
 	viewId(): number;
@@ -110,7 +111,7 @@ export class HnsClient {
 				this.frozenUntil = ev.freezeSecs > 0 ? now + ev.freezeSecs * 1000 : 0;
 				break;
 			case 'swing':
-				this.host.sound('swing');
+				if (ev.by !== self) this.host.sound('swing', ev.by);
 				return;
 			case 'release':
 				this.host.sound('release');
@@ -119,8 +120,10 @@ export class HnsClient {
 				const by = this.host.name(ev.by);
 				const target = this.host.name(ev.target);
 				this.killFeed = pushKillFeed(this.killFeed, { id: ++this.feedId, text: `${by} found ${target}`, head: false, mine: ev.by === self, at: now }, now);
-				if (ev.target === self) this.setFlash(`You were found by ${by} — you are now a seeker`, 'seeker', now);
-				else if (ev.by === self) {
+				if (ev.target === self) {
+					this.host.sound('hit');
+					this.setFlash(`You were found by ${by} — you are now a seeker`, 'seeker', now);
+				} else if (ev.by === self) {
 					this.host.sound('hit');
 					this.setFlash(`You found ${target}!`, 'seeker', now);
 				}

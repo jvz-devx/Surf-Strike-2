@@ -1063,7 +1063,13 @@ export class Game implements CommandContext {
 				this.placeAt({ pos, yaw });
 				this.afterTeleport();
 			},
-			sound: (name) => this.audio.hns(name),
+			sound: (name, from) => {
+				if (from === undefined || from === this.selfId) return this.audio.hns(name);
+				const r = this.remotes.get(from);
+				if (!r?.hasSample) return;
+				const o = this.player.origin;
+				this.audio.hns(name, Math.hypot(r.sample.x - o.x, r.sample.y - o.y, r.sample.z - o.z));
+			},
 			viewmodel: () => this.renderer?.zombies ?? null,
 			viewId: () => this.tagViewId()
 		};
