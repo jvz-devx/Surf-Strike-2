@@ -24,6 +24,8 @@ interface Avatar {
 	it: boolean;
 	/** Zombies mode: turned into a zombie (zombie colours, green tag). */
 	zombie: boolean;
+	/** Hide and seek: a seeker (red tint, red SEEKER tag). */
+	seeker: boolean;
 	skin: THREE.MeshLambertMaterial;
 	baseSkin: THREE.Color;
 	shirt: THREE.MeshLambertMaterial;
@@ -40,7 +42,7 @@ const ZOMBIE_SKIN = new THREE.Color(0x7d9a6e);
 const ZOMBIE_SHIRT = new THREE.Color(0x4e5a52);
 const ZOMBIE_PANTS = new THREE.Color(0x3a3a40);
 
-function makeTag(name: string, it = false, zombie = false): { tex: THREE.CanvasTexture; aspect: number } {
+function makeTag(name: string, it = false, zombie = false, seeker = false): { tex: THREE.CanvasTexture; aspect: number } {
 	const canvas = document.createElement('canvas');
 	canvas.width = 256;
 	canvas.height = 64;
@@ -52,7 +54,8 @@ function makeTag(name: string, it = false, zombie = false): { tex: THREE.CanvasT
 		const w = Math.min(250, g.measureText(name).width + 24);
 		if (it) name = `IT · ${name}`;
 		if (zombie) name = `ZOMBIE · ${name}`;
-		g.fillStyle = it ? 'rgba(200, 24, 24, 0.85)' : zombie ? 'rgba(40, 110, 40, 0.85)' : 'rgba(8, 12, 18, 0.55)';
+		if (seeker) name = `SEEKER · ${name}`;
+		g.fillStyle = it || seeker ? 'rgba(200, 24, 24, 0.85)' : zombie ? 'rgba(40, 110, 40, 0.85)' : 'rgba(8, 12, 18, 0.55)';
 		g.fillRect(128 - w / 2, 10, w, 44);
 		g.fillStyle = '#ffffff';
 		g.shadowColor = 'rgba(0,0,0,0.8)';
@@ -131,6 +134,7 @@ export class RemotePlayers {
 			name,
 			it: false,
 			zombie: false,
+			seeker: false,
 			skin,
 			baseSkin: skin.color.clone(),
 			shirt,
@@ -157,7 +161,7 @@ export class RemotePlayers {
 
 	private retag(a: Avatar): void {
 		a.tagTex.dispose();
-		const { tex } = makeTag(a.name, a.it, a.zombie);
+		const { tex } = makeTag(a.name, a.it, a.zombie, a.seeker);
 		(a.tag.material as THREE.SpriteMaterial).map = tex;
 		(a.tag.material as THREE.SpriteMaterial).needsUpdate = true;
 		a.tagTex = tex;
@@ -184,6 +188,23 @@ export class RemotePlayers {
 		a.pants.color.copy(zombie ? ZOMBIE_PANTS : a.basePants);
 		a.body.rotation.z = zombie ? -0.2 : 0; // hunched forward
 		this.retag(a);
+	}
+
+	/** Hide and seek: mark a seeker (red tint and SEEKER tag) or a hider. */
+	setSeeker(id: number, seeker: boolean): void {
+		const a = this.avatars.get(id);
+		if (!a || a.seeker === seeker) return;
+		a.seeker = seeker;
+		a.shirt.color.copy(seeker ? IT_SHIRT : a.baseShirt);
+		a.pants.color.copy(seeker ? IT_PANTS : a.basePants);
+		a.shirt.emissive.copy(seeker ? IT_GLOW : NO_GLOW);
+		this.retag(a);
+	}
+
+	/** Show or hide a player's name tag (hide and seek: only up close and in sight). */
+	setTagVisible(id: number, visible: boolean): void {
+		const a = this.avatars.get(id);
+		if (a) a.tag.visible = visible;
 	}
 
 	has(id: number): boolean {

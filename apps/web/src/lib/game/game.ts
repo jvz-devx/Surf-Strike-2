@@ -19,6 +19,8 @@ import {
 	inflateGhost,
 	unpackGhost,
 	getMap,
+	hnsSpawns,
+	HNS_NAMETAG_RANGE,
 	hullInBox,
 	MAP_IDS,
 	mapCvars,
@@ -98,9 +100,12 @@ import { loadSoloPb, mergeRecordsPush, recordFields, saveSoloPb, splitDelta, typ
 import { cycleTarget, findTargetByName, specTargets } from './spectate.js';
 import { browserStore, type KeyValueStore } from './storage.js';
 import { mapLabel, routeVoteKey, voteLabel } from './vote.js';
+import { HnsClient, type HnsHost } from './hns.js';
+import { hnsTagVisible } from './hns-view.js';
 import { ZombiesClient, type ZmHost } from './zombies.js';
 
 const FREEFLY_SPEED = 1000;
+const ZERO_VEC: Vec3 = { x: 0, y: 0, z: 0 };
 const MAX_CHAT_LINES = 100;
 const MAX_CONSOLE_LINES = 500;
 const SOLO_VOTER = 'local';
@@ -190,6 +195,8 @@ export class Game implements CommandContext {
 	private tagViewKey = '';
 	/** Zombies mode client (docs/modes.md#zombies); null on other maps. */
 	private zm: ZombiesClient | null = null;
+	/** Hide and seek client (docs/modes.md#hide-and-seek); null on other maps. */
+	private hns: HnsClient | null = null;
 	/** Physics cvars with the held weapon's max speed (zombies). */
 	private zmSv: Cvars = { ...SURF_CVARS };
 	private sv: Cvars = { ...SURF_CVARS };
@@ -464,6 +471,10 @@ export class Game implements CommandContext {
 		this.pitch = 0;
 		this.yaw = def.spawn.yaw;
 		if (this.gameMode.id === 'zombies') this.placeAt(def.spawn);
+		else if (this.gameMode.family === 'hns') {
+			const hiders = hnsSpawns(def).hiders;
+			this.placeAt(hiders[Math.floor(Math.random() * hiders.length)]!);
+		}
 		else if (!this.isRace()) this.placeAt(randomSpawn(def));
 		this.teleported = true;
 		this.snapEye();
@@ -479,6 +490,7 @@ export class Game implements CommandContext {
 		this.tagFlash = null;
 		this.refreshTagView(performance.now());
 		this.resetZombies();
+		this.resetHns();
 		h.unofficial = false;
 		h.splitPopup = null;
 		const staged = def.layout === 'staged';
@@ -671,6 +683,8 @@ export class Game implements CommandContext {
 			case 'attack2':
 				if (this.spec) {
 					if (is) this.cycleSpectate(action === 'attack' ? 1 : -1);
+				} else if (this.hns) {
+					if (action === 'attack') this.hns.press(is, performance.now(), this.currEye, this.pitch, this.yaw);
 				} else this.zm?.press(action, is, performance.now());
 				break;
 		}
@@ -972,6 +986,36 @@ export class Game implements CommandContext {
 		this.hud.zombies = this.zm.frame(performance.now(), false, 0);
 	}
 
+	/** (Re)create the hide and seek client for the current map and connection (docs/modes.md#hide-and-seek). */
+	private resetHns(): void {
+		this.hns?.dispose();
+		this.hns = null;
+		if (this.gameMode.family !== 'hns') {
+			if (this.hud.hns) this.hud.hns = null;
+			return;
+		}
+		const host: HnsHost = {
+			online: () => this.mode === 'online',
+			selfId: () => this.selfId,
+			send: (msg) => this.send(msg),
+			name: (id) => this.remoteName(id),
+			teleport: (pos, yaw) => {
+				this.placeAt({ pos, yaw });
+				this.afterTeleport();
+			},
+			sound: (name) => this.audio.hns(name),
+			viewmodel: () => this.renderer?.zombies ?? null,
+			viewId: () => this.tagViewId()
+		};
+		this.hns = new HnsClient(host, this.map);
+		this.hud.hns = this.hns.frame(performance.now(), false, 0);
+	}
+
+	/** Respawn point for fall-outs and !r in non-race modes. */
+	private fallSpawn(): Spawn {
+		return this.hns ? this.hns.fallSpawn() : randomSpawn(this.map);
+	}
+
 	private isRace(): boolean {
 		return this.gameMode.family === 'race';
 	}
@@ -992,16 +1036,19 @@ export class Game implements CommandContext {
 
 	/** Non-race modes: respawn at a random map spawn (fall-outs, !r, leaving spectate). */
 	private respawnRandom(): void {
-		this.placeAt(randomSpawn(this.map));
+		this.placeAt(this.fallSpawn());
 		this.afterTeleport();
 	}
 
-	/** Non-race modes: teleport triggers respawn at a random spawn. */
+	/**
+	 * Non-race modes: teleport triggers respawn at a random spawn, or move the
+	 * player to the zone's fixed `dest` (map teleporters, any mode).
+	 */
 	private modeTick(): void {
 		const p = this.player;
 		for (const z of this.map.zones) {
 			if (z.type !== 'teleport' || !hullInBox(p.origin, p.ducked, z)) continue;
-			this.placeAt(randomSpawn(this.map));
+			this.placeAt(z.dest ?? this.fallSpawn());
 			this.teleported = true;
 			this.snapPending = true;
 			return;
@@ -1014,6 +1061,7 @@ export class Game implements CommandContext {
 		if (this.zm) return this.zm.reload(performance.now());
 		if (!this.isRace()) {
 			if (this.tagState?.phase === 'playing') return this.notice('!r is disabled during a tag round.');
+			if (this.hns && !this.hns.canRespawn()) return this.notice('!r is disabled during a hide and seek round.');
 			return this.respawnRandom();
 		}
 		this.tracker.restart(this.player);
@@ -1098,7 +1146,10 @@ export class Game implements CommandContext {
 			}
 			case 'teleport':
 				// restart()/back() set the view themselves; tracker-driven teleports do it here.
-				if (ev.reason === 'trigger' || ev.reason === 'finish') {
+				if (ev.dest) {
+					this.yaw = ev.dest.yaw;
+					this.pitch = 0;
+				} else if (ev.reason === 'trigger' || ev.reason === 'finish') {
 					this.yaw = this.tracker.state.respawn.yaw;
 					this.pitch = 0;
 				}
@@ -1231,6 +1282,10 @@ export class Game implements CommandContext {
 				Object.assign(this.zmSv, this.sv);
 				this.zmSv.sv_maxspeed = zm.maxSpeed(end);
 				if (!zm.down) playerMove(this.world, p, c, this.zmSv, TICK_INTERVAL);
+			} else if (this.hns?.frozen(end)) {
+				// Hide and seek: seekers frozen while the hiders hide, and found hiders for a moment.
+				p.velocity.x = p.velocity.y = 0;
+				if (p.velocity.z > 0) p.velocity.z = 0;
 			} else playerMove(this.world, p, c, this.sv, TICK_INTERVAL);
 			if (this.isRace()) {
 				const events = this.tracker.update(p, this.tick);
@@ -1283,6 +1338,10 @@ export class Game implements CommandContext {
 					? this.zm.down
 						? Status.Down
 						: Status.Alive
+					: this.hns
+						? this.hns.role === 'seeker'
+							? Status.Seeker
+							: Status.Hider
 					: this.tagState?.it.includes(this.selfId)
 						? Status.Tagger
 						: Status.Runner;
@@ -1351,6 +1410,10 @@ export class Game implements CommandContext {
 			const v = this.zm.frame(now, !this.spec, Math.hypot(this.player.velocity.x, this.player.velocity.y));
 			if (this.hud.zombies !== v) this.hud.zombies = v;
 		}
+		if (this.hns) {
+			const v = this.hns.frame(now, !this.spec, Math.hypot(this.player.velocity.x, this.player.velocity.y));
+			if (this.hud.hns !== v) this.hud.hns = v;
+		}
 		this.updateGhost();
 		this.updateHud(now, view);
 		this.audio.update(Math.min(dt, 100) / 1000, {
@@ -1409,6 +1472,17 @@ export class Game implements CommandContext {
 			players.setPose(rm.id, s.x, s.y, s.z, s.yaw, (s.flags & FLAG_DUCKED) !== 0, visible);
 			players.setIt(rm.id, it?.includes(rm.id) ?? false);
 			players.setZombie(rm.id, this.zm?.isZombiePlayer(rm.id) ?? false);
+			if (this.hns && visible) {
+				// Hide and seek: seekers are marked; tags only up close, in sight, never hider tags to seekers.
+				const role = this.hns.roleOf(rm.id);
+				players.setSeeker(rm.id, role === 'seeker');
+				const eye = this.spec ? this.spec.pos : this.currEye;
+				const head = { x: s.x, y: s.y, z: s.z + 64 };
+				const dist = Math.hypot(head.x - eye.x, head.y - eye.y, head.z - eye.z);
+				const los = dist <= HNS_NAMETAG_RANGE && this.world.trace(eye, head, ZERO_VEC, ZERO_VEC).fraction >= 1;
+				const viewer = this.spec ? null : this.hns.roleOf(this.selfId);
+				players.setTagVisible(rm.id, hnsTagVisible(viewer, role, dist, los));
+			}
 		}
 	}
 
@@ -1509,6 +1583,7 @@ export class Game implements CommandContext {
 			spectating: false,
 			...(race ? {} : { score: 0, it: false })
 		};
+		if (this.hns) Object.assign(row, { status: Status.Hider, kills: 0, score: 0, it: undefined });
 		if (this.zm) {
 			const z = this.zm.soloRow();
 			Object.assign(row, { status: z.alive ? Status.Alive : Status.Down, kills: z.kills, deaths: z.deaths, score: undefined, it: undefined });
@@ -1972,10 +2047,14 @@ export class Game implements CommandContext {
 				break;
 			case 'modeState':
 				if (m.mode === 'zombies') this.zm?.onModeState(m, now);
+				else if (m.mode === 'hns') this.hns?.onModeState(m, now);
 				else this.onModeState(m, now);
 				break;
 			case 'zm':
 				this.zm?.onEvent(m.ev, now);
+				break;
+			case 'hns':
+				this.hns?.onEvent(m.ev, now);
 				break;
 			case 'tagged':
 				this.onTagged(m.by, m.target, now);
@@ -2063,6 +2142,7 @@ export class Game implements CommandContext {
 		this.tagFlash = null;
 		this.refreshTagView(performance.now());
 		this.resetZombies();
+		this.resetHns();
 		this.soloPb = loadSoloPb(this.store, this.map.id);
 		this.applyRecords();
 		this.recordGhost = null;

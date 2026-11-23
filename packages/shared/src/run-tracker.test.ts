@@ -154,6 +154,23 @@ describe('RunTracker', () => {
 		expect(rt.state.ticks).toBe(2);
 	});
 
+	it('fixed-destination teleport moves to dest, keeps the timer and reports the yaw', () => {
+		const map = makeMap('staged');
+		map.zones.unshift({ type: 'teleport', min: { x: 500, y: -100, z: 0 }, max: { x: 600, y: 100, z: 100 }, to: 'start', dest: { pos: { x: 1800, y: 50, z: 10 }, yaw: 180 } });
+		const rt = new RunTracker(map);
+		const p = player(100);
+		rt.update(p, 0);
+		p.origin.x = 300;
+		rt.update(p, 1);
+		p.origin.x = 550;
+		p.velocity = { x: 600, y: 0, z: 0 };
+		const ev = rt.update(p, 2);
+		expect(ev).toEqual([{ type: 'teleport', reason: 'trigger', dest: { pos: { x: 1800, y: 50, z: 10 }, yaw: 180 } }]);
+		expect(p.origin).toEqual({ x: 1800, y: 50, z: 10 });
+		expect(p.velocity).toEqual({ x: 0, y: 0, z: 0 });
+		expect(rt.state.phase).toBe('running');
+	});
+
 	it('teleport to stage before any stage goes to spawn', () => {
 		const rt = new RunTracker(makeMap('staged'));
 		const p = player(100);

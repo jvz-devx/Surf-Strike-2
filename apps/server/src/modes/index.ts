@@ -1,5 +1,6 @@
 /** Server gamemode factory (docs/modes.md). */
 import { modeOf } from '@surf/shared';
+import { HnsMode, hnsEnvOptions, type HnsModeOptions } from './hns.ts';
 import { RaceMode } from './race.ts';
 import { TagMode, type TagModeOptions } from './tag.ts';
 import type { ModeHost, ServerMode } from './types.ts';
@@ -8,6 +9,8 @@ import { ZombiesMode, type ZombiesModeOptions } from './zombies.ts';
 export interface ModeOptions {
 	tag?: TagModeOptions;
 	zombies?: ZombiesModeOptions;
+	/** Hide and seek round lengths; default from HNS_HIDE_SECS / HNS_SEEK_SECS env, else the rule defaults. */
+	hns?: HnsModeOptions;
 }
 
 export function createServerMode(host: ModeHost, opts: ModeOptions = {}): ServerMode {
@@ -20,10 +23,9 @@ export function createServerMode(host: ModeHost, opts: ModeOptions = {}): Server
 		case 'coop':
 			return new ZombiesMode(host, opts.zombies);
 		case 'hns':
-			// Placeholder until HnsMode lands (docs/modes.md#hide-and-seek).
-			return new TagMode(host, opts.tag);
+			return new HnsMode(host, { ...hnsEnvOptions(), ...opts.hns });
 	}
 }
 
 export type { ModeHost, ModePlayer, ServerMode } from './types.ts';
-export { RaceMode, TagMode, ZombiesMode };
+export { HnsMode, RaceMode, TagMode, ZombiesMode };

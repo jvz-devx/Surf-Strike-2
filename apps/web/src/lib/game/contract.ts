@@ -7,7 +7,7 @@
  * `HudState` reactively and calls `GameApi` methods; it never touches Three.js
  * or the network directly.
  */
-import type { AdminAction, AdminState, GameModeId, ModeFamily, ScoreRow, TagPhase, WeaponId, ZmPhase, ZmTeam } from '@surf/shared';
+import type { AdminAction, AdminState, GameModeId, HnsPhase, HnsRole, HnsWinner, ModeFamily, ScoreRow, TagPhase, WeaponId, ZmPhase, ZmTeam } from '@surf/shared';
 
 export interface ChatLine {
 	id: number;
@@ -125,6 +125,29 @@ export interface ZombiesView {
 	online: boolean;
 }
 
+/** Hide and seek HUD (docs/modes.md#hide-and-seek, docs/ui.md#hide-and-seek-hud); null in other modes. */
+export interface HnsView {
+	/** 'solo' = offline free roam (hide and seek needs a server and 2+ players). */
+	phase: HnsPhase | 'solo';
+	round: number;
+	/** performance.now() when the current phase ends (0 while waiting). */
+	endsAt: number;
+	/** Role of the local (or spectated) player. */
+	role: HnsRole;
+	hidersLeft: number;
+	seekerNames: string[];
+	/** Hiding-phase seeker: black screen with the release countdown. */
+	blindfold: boolean;
+	/** performance.now() until the local player is frozen after being found (0 = not). */
+	frozenUntil: number;
+	finds: number;
+	/** Short banner ("You were found by Alice", "Last hider!"). */
+	flash: { text: string; at: number; tone: 'seeker' | 'hider' | 'info' } | null;
+	killFeed: KillFeedLine[];
+	/** Round result while the summary shows. */
+	summary: { winner: HnsWinner; survivors: string[]; top: string | null } | null;
+}
+
 export interface TagView {
 	/** 'solo' = offline free roam (tag needs a server and 2+ players). */
 	phase: TagPhase | 'solo';
@@ -157,6 +180,7 @@ export interface HudStateShape {
 	modeFamily: ModeFamily;
 	tag: TagView | null;
 	zombies: ZombiesView | null;
+	hns: HnsView | null;
 	/** Rotation maps, in rotation order (Esc menu, Change map). */
 	maps: MapListEntry[];
 	/** Solo, or online as the only connected client: the Esc menu may switch maps directly. */

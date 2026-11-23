@@ -143,5 +143,6 @@ export function mapCvars(map: Pick<MapDef, 'kind' | 'cvars'>): Cvars {
 	return { ...modeOf(map).cvars, ...map.cvars } as Cvars;
 }
 
+export * from './hns.ts';
 export * from './tag.ts';
 export * from './zombies/index.ts';

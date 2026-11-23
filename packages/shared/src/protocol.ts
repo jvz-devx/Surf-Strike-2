@@ -4,6 +4,7 @@
  */
 import type { Cvars } from './cvars.ts';
 import type { GameModeId } from './modes/index.ts';
+import type { HnsEvent, HnsStateView } from './modes/hns.ts';
 import type { TagPhase, TagScore } from './modes/tag.ts';
 import type { ZmEvent, ZmStateView } from './modes/zombies/game.ts';
 import type { WeaponId } from './modes/zombies/weapons.ts';
@@ -92,7 +93,12 @@ export interface ZombiesModeState extends ZmStateView {
 	mode: 'zombies';
 }
 
-export type ModeState = TagModeState | ZombiesModeState;
+/** Hide and seek round state (docs/modes.md#hide-and-seek). */
+export interface HnsModeState extends HnsStateView {
+	mode: 'hns';
+}
+
+export type ModeState = TagModeState | ZombiesModeState | HnsModeState;
 
 export interface MapRecordInfo {
 	pbTicks: number | null;
@@ -140,6 +146,12 @@ export type ClientMessage =
 	| { type: 'reload' }
 	/** Zombies: pick the weapon for this life (only while the loadout window is open). */
 	| { type: 'loadout'; weapon: WeaponId }
+	/**
+	 * Hide and seek (docs/modes.md#hide-and-seek): a seeker's knife swing.
+	 * `origin` is the eye, `dir` a unit vector; the server resolves the hit
+	 * (lag-compensated against the hiders' recent positions).
+	 */
+	| { type: 'knife'; origin: Vec3; dir: Vec3 }
 	/** Admin menu (docs/gameplay.md#admin): re-checked on the server, ignored for non-admins. */
 	| { type: 'admin'; action: AdminAction };
 
@@ -272,6 +284,8 @@ export type ServerMessage =
 	| { type: 'tagged'; by: number; target: number }
 	/** Zombies event (spawn/teleport, hit marker, kill feed, tracer, hurt, down, checkpoint, ammo, round end). */
 	| { type: 'zm'; ev: ZmEvent }
+	/** Hide and seek event (spawn/teleport to that player; swing, found, round flow to everyone). */
+	| { type: 'hns'; ev: HnsEvent }
 	| { type: 'timeLeft'; mapTimeLeft: number }
 	| { type: 'scoreboard'; rows: ScoreRow[] }
 	| { type: 'ping'; t: number }

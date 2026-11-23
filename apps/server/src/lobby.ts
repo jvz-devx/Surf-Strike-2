@@ -448,7 +448,8 @@ export class Lobby {
 			case 'fire':
 			case 'reload':
 			case 'loadout':
-				// Zombies weapons (docs/modes.md#zombies); the mode validates every field.
+			case 'knife':
+				// Zombies weapons (docs/modes.md#zombies), hide and seek knife; the mode validates every field.
 				if (!c.spectating) this.mode.message?.(c, msg);
 				return;
 			case 'admin':

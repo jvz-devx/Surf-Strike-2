@@ -22,6 +22,7 @@
 	import DesktopOnly from '#lib/ui/DesktopOnly.svelte';
 	import TagHud from '#lib/ui/TagHud.svelte';
 	import ZombiesHud from '#lib/ui/ZombiesHud.svelte';
+	import HnsHud from '#lib/ui/HnsHud.svelte';
 
 	let { hud, api }: { hud: HudStateShape; api: GameApi } = $props();
 
@@ -49,10 +50,12 @@
 	<DesktopOnly />
 {:else}
 	<div class="hud" class:under-menu={hud.settingsOpen && !hud.authPanelOpen}>
+		{#if hud.hns}<HnsHud h={hud.hns} {now} part="screen" />{/if}
 		<div class="top-centre">
 			<MapInfo mapId={hud.mapId} timeLeft={hud.mapTimeLeft} />
 			{#if hud.spectating}<SpectatorBar spectating={hud.spectating} />{/if}
 			{#if hud.tag}<TagHud tag={hud.tag} {now} />{/if}
+			{#if hud.hns}<HnsHud h={hud.hns} {now} part="top" />{/if}
 			{#if hud.rtvRequest}<RtvRequest request={hud.rtvRequest} {now} interactive={!hud.pointerLocked} onvote={(yes) => api.rtvVote(yes)} />{/if}
 		</div>
 
@@ -88,7 +91,7 @@
 		{/if}
 
 		{#if hud.zombies}<ZombiesHud z={hud.zombies} {now} />{/if}
-		{#if !hud.zombies?.scoped}<Crosshair cvars={hud.cvars} />{/if}
+		{#if !hud.zombies?.scoped && !hud.hns?.blindfold}<Crosshair cvars={hud.cvars} />{/if}
 
 		<div class="below-crosshair">
 			{#if clickHint}

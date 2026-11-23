@@ -23,6 +23,7 @@ interface RespawnZone extends Box {
 
 interface TeleportZone extends Box {
 	to: 'stage' | 'start';
+	dest?: Spawn;
 }
 
 function overlaps(origin: Vec3, maxs: Vec3, z: Box): boolean {
@@ -184,6 +185,12 @@ export class RunTracker {
 		// Teleport triggers.
 		for (const t of this.teleports) {
 			if (!overlaps(o, maxs, t)) continue;
+			if (t.dest) {
+				// Fixed-destination teleporter: the run keeps going.
+				this.teleportTo(player, t.dest);
+				events.push({ type: 'teleport', reason: 'trigger', dest: cloneSpawn(t.dest) });
+				break;
+			}
 			if (t.to === 'start') {
 				if (this.toSpawn(player)) events.push({ type: 'enterStart' });
 			} else {
