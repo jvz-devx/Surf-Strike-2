@@ -10,12 +10,13 @@ Maps are TypeScript modules in `packages/shared/maps/`, built from code so both 
 interface MapDef {
   id: string;                  // "surf_aurora"
   title: string;               // "Aurora"
-  kind: GameModeId;            // the gamemode: 'surf' | 'bhop' | 'tag' (modes.md)
+  kind: GameModeId;            // the gamemode: 'surf' | 'bhop' | 'tag' | 'zombies' | 'hns' (modes.md)
   difficulty: 'easy' | 'hard';
   layout: 'linear' | 'staged' | 'open';  // 'open' = tag maps
   cvars: Partial<Cvars>;       // overrides on top of the mode's profile (physics.md, modes.md)
   spawn: { pos: Vec3; yaw: number };     // race: in the start zone; tag: fallback spawn
   spawns?: Spawn[];            // tag (required, >= 8): random spawns for joins and fall-outs
+  hns?: { hiderSpawns: Spawn[]; seekerSpawns: Spawn[]; seekerCage?: { min: Vec3; max: Vec3 } };  // hide and seek (required there): >= 8 hider spawns, >= 2 seeker spawns (modes.md#hide-and-seek)
   brushes: Brush[];            // solid convex brushes
   zones: Zone[];               // start, end, stage/checkpoint, teleport
   theme: Theme;                // sky, fog, palette, lights, materials

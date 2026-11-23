@@ -1,6 +1,6 @@
 # Gameplay
 
-This page covers the race modes (surf, bhop). Tag has its own rules: see [modes.md](modes.md#tag). Chat, spectating, map rotation, solo mode and the lobby apply to every mode.
+This page covers the race modes (surf, bhop). Tag, zombies and hide and seek have their own rules: see [modes.md](modes.md#tag), [modes.md](modes.md#zombies) and [modes.md](modes.md#hide-and-seek). Chat, spectating, map rotation, solo mode and the lobby apply to every mode.
 
 ## Runs and timer
 
@@ -74,7 +74,7 @@ Chat commands:
 
 ## Tab scoreboard
 
-Hold `Tab`. Columns: name, map rank, PB, status (`Start zone`, `Stage 3`, `Running`, `Spectating`), ping. Sorted by PB, players without a PB last. Header shows map name, time left and player count (`12 / 32`). On tag maps the columns are name (with an `IT` marker), score, status (`IT`, `Runner`, `Spectating`) and ping, sorted by score.
+Hold `Tab`. Columns: name, map rank, PB, status (`Start zone`, `Stage 3`, `Running`, `Spectating`), ping. Sorted by PB, players without a PB last. Header shows map name, time left and player count (`12 / 32`). On tag maps the columns are name (with an `IT` marker), score, status (`IT`, `Runner`, `Spectating`) and ping, sorted by score. On hide and seek maps they are name, role (`Hider`, `Seeker`, `Spectating`), finds, survived (mm:ss as a hider this round) and ping, sorted by survived time, then finds.
 
 ## Spectating
 

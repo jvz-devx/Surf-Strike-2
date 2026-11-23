@@ -1,6 +1,6 @@
 # Gamemodes
 
-Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old name). There are four modes:
+Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old name). There are five modes:
 
 | Mode | Family | Rules | Default cvars | Min players | Scoreboard |
 | --- | --- | --- | --- | --- | --- |
@@ -8,6 +8,7 @@ Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old na
 | `bhop` | race | Same as surf | `BHOP_CVARS` | 1 | Rank, PB, Status, Ping |
 | `tag` | tag | Rounds of tag, see [Tag](#tag) | `TAG_CVARS` | 2 | Score, Status, Ping |
 | `zombies` | coop | Co-op escape with weapons against AI zombies, see [Zombies](#zombies) | `ZOMBIES_CVARS` | 1 | Kills, Turned, Status, Ping |
+| `hns` | hns | Hide and seek with knives; found hiders become seekers, see [Hide and seek](#hide-and-seek) | `HNS_CVARS` | 2 | Role, Finds, Survived, Ping |
 
 The map rotation, vote, `!rtv`, chat, spectating and lobby are the same in every mode. The rotation mixes maps of all modes, so a vote can move the lobby from a surf map to a tag map.
 
@@ -17,10 +18,12 @@ The map rotation, vote, `!rtv`, chat, spectating and lobby are the same in every
 packages/shared/src/modes/
   index.ts   GameModeId, GAME_MODES registry, modeOf(map), mapCvars(map), TAG_CVARS
   tag.ts     TagGame: pure tag rules with an injected clock, plus tagTouch, randomSpawn, hullInBox
+  hns.ts     HnsGame: pure hide and seek rules (clock-injected), knifeHit, hnsSpawns, HNS_* constants
 apps/server/src/modes/
   types.ts   ServerMode interface, ModeHost, ModePlayer
   race.ts    RaceMode: RunValidator per player, PB/leaderboard, !top/!pb, race scoreboard
   tag.ts     TagMode: runs TagGame on the latest state packets, chat announcements, modeState
+  hns.ts     HnsMode: runs HnsGame, knife messages, event routing, announcements, speed-cap check
   index.ts   createServerMode(host): picks the module by GAME_MODES[kind].family
 ```
 
@@ -99,3 +102,47 @@ Hits slow a zombie for 0.6 s (×0.6, stacking to ×0.5 and ×0.42) and push it b
 - No player-zombie collision with survivors or AI zombies (as everywhere in the game); player-zombies are not lag-compensated; their speed and slows are applied client-side.
 - Zombie navigation is a single waypoint route; zombies spawned off it walk straight to it.
 - Viewmodels are simple boxes and fairly large; no hands or animations beyond recoil, reload dip and a knife swing.
+
+## Hide and seek
+
+Mode id `hns` (family `hns`), label "Hide and Seek". Built like the CS:GO community hide and seek servers, with the "infection" twist the owner asked for: a hider knifed by a seeker becomes a seeker. Server-authoritative: the shared `HnsGame` (`packages/shared/src/modes/hns.ts`) runs in `apps/server/src/modes/hns.ts`; the client (`apps/web/src/lib/game/hns.ts`, `hns-view.ts`, `ui/HnsHud.svelte`) only displays the result and sends knife swings. Maps: `kind: 'hns'` with `MapDef.hns` ([maps.md](maps.md)).
+
+### Rules
+
+| Phase | Length | What happens |
+| --- | --- | --- |
+| `waiting` | while < 2 players | Free roam as a hider, HUD "Waiting for players — needs 2+". Offline (solo) the same, with "(offline: free roam)". No bots. |
+| `starting` | 5 s | Countdown once 2 players are in (first round only). |
+| `hiding` | 45 s (`HNS_HIDE_SECS`, env `HNS_HIDE_SECS`) | Seekers are teleported to a seeker spawn, **frozen and blindfolded** (black screen with the release countdown). Hiders are teleported to distinct, shuffled hider spawns and spread out. |
+| `seeking` | 4:00 (`HNS_SEEK_SECS`, env `HNS_SEEK_SECS`) | Seekers are released ("Ready or not, here they come!", gavel sound) and hunt with knives. Warnings at 60, 30 and 10 s left; "X is the last hider!" when one is left. |
+| `ended` | 8 s | Summary in chat and HUD (winner, survivors, top seeker by finds), then the next round's hiding phase starts with re-picked seekers. |
+
+- **Seekers.** 1 seeker, 2 from 8 players (`HNS_TWO_SEEKER_PLAYERS`, the same split tag uses). At each round start the seekers are picked among the players who have not *started* a round as seeker for the longest (never first), randomly among ties, so the role rotates. Seekers get the knife (Mouse1); hiders have no weapon.
+- **Knife.** Reach 64 units from the eye to the target's hull surface, 30° aim cone (×1.6 within 40 units), one swing per 0.5 s, one hit kills (`HNS_KNIFE`). The client sends `knife { origin, dir }`; the server checks: seeker, seeking phase, not frozen, finite values, a unit direction, origin within 80 units of the seeker's last eye, swing interval ≥ 75 % of 0.5 s, and line of sight (world trace; `solid: false` brushes do not block). **Lag compensation:** every state packet is stored with its arrival time (500 ms history); a swing is tested against each hider at `now − min(400, ping + 116) ms` (the seeker's RTT plus the 100 ms client interpolation delay and half a snapshot interval) and at their latest position; either counts, the closest hit wins.
+- **Found.** The hider becomes a seeker at once, is teleported to a seeker spawn and is frozen there for 3 s (`HNS_FOUND_FREEZE_SECS`; HUD "You were found by X — you are now a seeker", kill feed "X found Y"). Respawning at the seeker spawn (as CS:GO servers moved killed T to the CT side) instead of in place means a found hider cannot instantly knife the hider standing next to them.
+- **Win.** Seekers win the moment no hiders are left (found, or the last hiders left the server). Hiders win when the seeking clock runs out with at least one hider left. Scores: finds (hiders knifed) and seconds survived as a hider in the seeking phase; both reset each round.
+- **Late joiners** during hiding or seeking join as seekers (frozen with the others while hiding): a fresh hider spawn could be next to a seeker, and joining as seeker cannot be used to scout. Between rounds they are hiders.
+- **Disconnects.** A leaving player is removed from the round. If every seeker leaves, a random hider becomes the seeker (teleported, frozen 3 s while seeking). Dropping below 2 players cancels the round and goes back to waiting.
+- **Freeze is server-enforced.** A frozen player whose position is more than 48 units from their freeze spawn is teleported back (`spawn` event, at most every 0.5 s); the client also skips movement while frozen.
+- **`!r` / `!back`** respawn (hiders at a hider spawn, seekers at a seeker spawn) only outside a round. Fall-out teleport zones respawn by role; teleport zones with `dest` move the player to that point (secret passages).
+- **Name tags.** Only within 600 units and in line of sight (`HNS_NAMETAG_RANGE`); seekers never see hiders' tags (no wallhack through tags). Seekers are drawn red with a red `SEEKER · name` tag.
+- **Physics.** `HNS_CVARS` = surf profile (CS2 accelerate 6.5, friction 5.2, 250 run speed, legacy full-height jump), autobhop on, `sv_airaccelerate 100`, and `sv_air_speed_cap 300`: horizontal speed is clamped to 300 u/s whenever the player is airborne (bhop, strafes, ramps). Ground speed stays capped by `sv_maxspeed` 250. The cap is a mode cvar read by the movement code (`checkVelocity`), 0 (off) in every other mode. The server logs state packets above 320 u/s and ignores that player's knife swings for 1 s after one.
+- **Messages.** C→S `knife { origin, dir }`. S→C `hns { ev }` with `ev.e` = `spawn` (teleport + freeze, to that player only), `swing` (to the others), `waiting`, `starting`, `roundStart`, `release`, `found`, `newSeeker`, `lastHider`, `warn`, `end`. `modeState { mode: 'hns', phase, round, timeLeft, seekers[], hiders[], winner, players[{ id, role, finds, survived, frozen }] }` on every change and once a second. Scoreboard rows: `status` Hider/Seeker, `kills` = finds, `score` = seconds survived.
+
+### Why these numbers (research)
+
+CS:GO hide and seek was never an official mode; every community server ran its own plugin and config, so these are the common conventions rather than one standard:
+
+- **Freeze and blind the seekers at round start.** The original SourceMod plugin's `sm_hns_freezects` ("Should CTs get freezed and blinded on spawn?", default on): [AlliedModders: SM Hide and Seek](https://forums.alliedmods.net/showthread.php?p=1162319). The CS2 HNS plugin ChaseMod freezes the seekers for `ctStartFreezeTime` 15 s by default: [ChaseMod](https://github.com/ipsvn/ChaseMod) ([config](https://github.com/ipsvn/ChaseMod/blob/master/ChaseModConfig.cs)). A Workshop HNS map gives hiders one minute to hide: [Steam Workshop: Hide and Seek map](https://steamcommunity.com/sharedfiles/filedetails/?id=2445282334). We use 45 s: our maps are smaller than Inferno, and there is no flash/smoke to help hiders.
+- **Round length.** That Workshop map gives seekers 10 minutes, hosting guides quote 8-10 minute matches ([Apex Hosting HNS guide](https://apexminecrafthosting.com/guides/csgo/setup-and-play-a-hide-seek-csgo-server/)). With conversion (seekers multiply) rounds end faster, so 4:00 of seeking keeps one map (15 min) at 2-3 rounds.
+- **Knife-only seekers, unarmed hiders, seekers chosen in turns.** ChaseMod's knife damage/cooldown settings and its team switching on a seeker win ([ChaseMod](https://github.com/ipsvn/ChaseMod)); we rotate seekers by "sought least recently" instead of team swaps.
+- **Last-hider events.** The Workshop map reveals everyone at one minute left or one hider left; we only announce the last hider (and 60/30/10 s warnings), because a reveal would make the 300 u/s cap the only defence.
+- **Bhop cap 300** is the owner's rule.
+
+### Known gaps
+
+- Positions are client-authoritative as in every mode: snapshots still carry every player's position, so a modified client could show hiders through walls. Server-side visibility culling is not done.
+- Knife swing and hit are silent: no real CC0 knife recording has been sourced yet (audio rules). The seeker release plays the existing gavel recording.
+- No spectating while found (found hiders play on as seekers); spectating works as in every mode.
+- Map votes give hns no reserved slot (`VOTE_MAP_SLOTS` covers surf/bhop/tag/zombies); hns maps fill free slots like any map.
+

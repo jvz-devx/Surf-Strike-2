@@ -89,6 +89,7 @@ SharpTimer CS2 configs [S5], except `sv_maxspeed` 250 (knife run speed, no weapo
 | `sv_standable_normal` / `sv_walkable_normal` | 0.7 | 0.7 | |
 | `sv_staminamax` / `jumpcost` / `landcost` / `recoveryrate` | 80 / 0 / 0 / 60 | same | Stamina costs 0: no CS:GO stamina slowdown |
 | `sv_stepsize` | 18 | 18 | |
+| `sv_air_speed_cap` | 0 | 0 | Not a CS2 cvar. Hard horizontal speed cap while airborne, 0 = off; hide and seek sets 300 ([modes.md](modes.md#hide-and-seek)) |
 
 Each map's definition sets its cvar profile. The server pushes cvars to clients on join and map change; in solo mode the client applies the map's profile itself. Changing `sv_*` cvars in the console is allowed only in solo mode, and marks runs as unofficial.
 

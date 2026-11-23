@@ -39,6 +39,15 @@ Key routing (`apps/web/src/lib/game/vote.ts` `routeVoteKey`, ahead of binds): ma
 
 Shown on zombies maps (`ZombiesHud.svelte`, [modes.md](modes.md#zombies)): a round banner under the map name (countdown; Survivor/Zombie, round clock, zone, zombies alive, your kills / team kills; result summary), route progress bar and the gate line ("Gate 2/5: get half the survivors into the green area" or "Gate 2/5 opens in 23 s"), short flash banners (checkpoint, gate, turned), kill feed top right, health (5 pips; a bar as a zombie) and weapon / ammo / reload bar bottom right, a loadout list (keys 1-4) while it is open, hit markers (white, yellow for headshots, red for kills), a red vignette when hit, and the sniper scope overlay. Binds in zombies: mouse1 fire, mouse2 scope, R reload, 1-4 weapon (map vote while one is open).
 
+## Hide and seek HUD
+
+Shown on hide and seek maps (`HnsHud.svelte`, [modes.md](modes.md#hide-and-seek)), in two parts:
+
+- **Top** (under the map name): a role banner (blue HIDER / red SEEKER) with the phase text ("Hide! Seekers released in", "Find them", "Stay hidden", "Next round in"), the phase countdown (mm:ss while seeking, red at 30 s or less), hiders left and your finds as a seeker; the seeker names; the round summary while ended ("Hiders win! Survived: …" / "Seekers win!", top seeker); short flash banners ("You were found by Alice — you are now a seeker", "You found Bob!", "Bob is the last hider", "30 seconds left"); a "Frozen 3" line during the post-find freeze. Waiting / offline: "Waiting for players — needs 2+".
+- **Screen**: the blindfold for seekers during the hiding phase (opaque black over the game with "You are a seeker", "Blindfolded while the hiders hide" and a large countdown; chat, the banner and the scoreboard stay on top; the crosshair is hidden), and the kill feed top right ("Alice found Bob", your own finds outlined).
+
+Seekers hold a knife viewmodel (the zombies knife, swing on Mouse1); hiders have none. Remote seekers are drawn red with a `SEEKER · name` tag. Name tags show only within 600 units and in line of sight, and never hiders' tags to a seeker. `!r` is refused during a round.
+
 ## Account panel
 
 Replaces the first-visit name prompt ([gameplay.md](gameplay.md#accounts-and-identity)). A small centred panel in the same style (`AuthPanel.svelte`):
@@ -135,7 +144,7 @@ All sounds are real recordings released under CC0, sourced from Freesound and li
 | Ramp slide | Continuous loop while surfing; gain rises with speed | Snowboard sliding on snow |
 | Zone | Entering start, stage, checkpoint, end | Antique clock bell, one strike |
 | Record | New PB or map record | Large church bell, one strike |
-| Vote | Vote opens | Two gavel knocks on a wooden desk |
+| Vote | Vote opens; hide and seek seeker release | Two gavel knocks on a wooden desk |
 | Click | New chat message (the only click voice) | Computer mouse button |
 
 Rules:
