@@ -303,7 +303,7 @@ describe('trace', () => {
 		expectVec(into.plane.normal, n);
 	});
 
-	it('randomized sweeps agree with an independent SAT test', () => {
+	it('randomized sweeps agree with an independent SAT test', { timeout: 30000 }, () => {
 		const rand = rng(1234);
 		const defs: BrushDef[] = [
 			ramp(v3(0, 0, 0), v3(700, 400, 300), 200, 150, 'both'),

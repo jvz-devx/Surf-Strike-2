@@ -36,6 +36,14 @@ Helper functions (`ramp()`, `platform()`, `wall()`, `blockRow()`) keep map files
 
 Zones render as CS-style glowing outlines: start green, end red, stages and checkpoints blue.
 
+### Glass
+
+A material with `glass: true` (and/or `opacity` below 1; glass defaults to 0.3) is see-through: the renderer draws it blended after opaque geometry, from both sides, without depth writes, with a bright fresnel rim; give it an `edgeColor` so its outline reads. Collision is unchanged: glass is as solid as any brush (walls, ceilings, floors, even a surfable glass ramp).
+
+### Hard-surf obstacles
+
+`maps/surf-obstacles.ts` has generic builders for obstacles placed ON the intended line (unlike scenery, which keeps ≥ 256 from it): `wallWithHole()` (window or narrow slot in a thick wall), `floorWithHole()` (drop through a slab), `glassPanel()`, `pillar()`, `orientedBox()` (box at any heading; a `convex` brush off-axis), `spiralSteps()` (downward spiral peak steps for `rampChain`). Each obstacle lists the openings (`Gate`s) its intended line flies through. The same module has a route bot (`runRouteBot`: rides chains at a target face fraction, flies transfers with no input, steering to an aim point, through gates, or with a full-rate air-strafe turn) and `gateCrossing()`, so map tests prove with the real physics that a skilled line passes every hole and that sloppier lines (offset, ±15% speed, no air strafe) hit the obstacles.
+
 Race-only rules (one start and one end zone, spawn in the start zone, contiguous stages/checkpoints) apply to race modes. A tag map (`kind: 'tag'`) has `layout: 'open'`, at least 8 `spawns` that stand free on walkable ground in the real collision trace, and only teleport zones, with one under everything. In tag, every teleport zone respawns the player at a random spawn, whatever its `to` says. `mapsForMode(mode)` lists the rotation maps of one mode. `maps/maps.test.ts` checks all of this.
 
 ## surf_aurora — easy surf, linear
@@ -79,6 +87,21 @@ Theme: neon circuit board at night. Dark blocks with glowing cyan and magenta ed
 - Sharp strafe turns, a few height changes, and narrow strips.
 - Falling teleports to the last checkpoint.
 - Target time for a new player: 2:30+.
+
+## surf_kessler — hard surf, staged (6 stages)
+
+Theme: derelict orbital station at night, one neon colour per module. Each stage has its own signature obstacle (details and numbers in `surf_kessler.ts`):
+
+1. Window in a bulkhead between the first two ramps, then twin pillars on the flight to the next platform.
+2. A 224 × 256 window between a 120° right curve and a 90° left curve, low ceiling ribs over the second curve.
+3. A 540° downward spiral (radius 1200 → 2600) around a reactor core, then a glass floor with a hole: drop through onto the ramp under it.
+4. A 70° wall-surf face inside a glass corridor (glass wall beside it, glass lid over it), exit through a hole in a bulkhead.
+5. A 130° air-strafe turn through two offset windows, then a 160-wide slot between narrow ramps.
+6. A long steep descent, pillars in the long gap, and a final hole into the closed end room.
+
+## surf_ochre — hard surf, linear
+
+Theme: desert canyon at golden hour. Checkpoints are splits; any fall resets to the start. Nine hard moments: a narrow slot in a canyon fin, low arches over a bend, a 450° sinkhole spiral, a glass floor hole onto a ramp below it, hoodoo pillars to strafe around, two glass tubes over switch transfers (one switch ramp is glass), a far speed window off a wave, an up-ramp into a high window followed by a 130° air turn, and arches over the final descent.
 
 ## Default map
 
