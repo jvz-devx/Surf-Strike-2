@@ -38,7 +38,7 @@ Owner's rule. In Zombie Run, Infected, Hide and seek and Tag every award, includ
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Multiplier | ×1.0 | ×1.2 | ×1.3 | ×1.4 | ×1.5 | ×1.6 | ×1.7 | ×1.8 | ×1.9 | ×2.0 |
 
-**Active player:** connected, not spectating, and has moved in the last 30 seconds. Anyone still for longer is AFK: not kicked, only not counted. Time in which the game itself holds a player still (frozen or blindfolded seeker, respawn wait, map change) does not run the 30 seconds down. Hiders in Hide and seek also stay active by looking around, because sitting still is how they play. An account connected more than once counts once. Guests count as players. A player who just joined, or comes back from spectating, is not active before the first movement. Teleports, respawns and falling straight down are not movement.
+**Active player:** connected, not spectating, and has moved in the last 30 seconds. Anyone still for longer is AFK: not kicked, only not counted. Time in which the game itself holds a player still (frozen or blindfolded seeker, respawn wait, map change) does not run the 30 seconds down. Players in a Hide and seek round also stay active by looking around: hiders sit still, and a seeker may guard the cash bag. An account connected more than once counts once. Guests count as players. A player who just joined, or comes back from spectating, is not active before the first movement. Teleports, respawns and falling straight down are not movement.
 
 The minimum player counts below use the same definition of active.
 
@@ -235,7 +235,7 @@ A mode calls `host.economy` (`ModeEconomy`) and nothing else. Every rule of this
 
 A map session is one mode instance: from map change to map change, extensions included. Its handle stops paying afterwards. Outside a round (before the first `roundStart`) the caps of `AWARDS` run for the whole session.
 
-Optional on `ServerMode`: `stillness(p)` returns `'held'` while the game keeps a player from moving, `'look'` when looking around is enough, else null. Hide and seek (frozen; hiders), Zombie Run and Infected (dead) have it.
+Optional on `ServerMode`: `stillness(p)` returns `'held'` while the game keeps a player from moving, `'look'` when looking around is enough, else null. Hide and seek (frozen; everyone in a round), Zombie Run and Infected (dead) have it.
 
 A repeated race finish and a first one:
 

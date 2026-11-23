@@ -183,12 +183,12 @@ export class HnsMode implements ServerMode {
 		return rows;
 	}
 
-	/** Frozen seekers are held; hiders sit still and look around. */
+	/** Frozen seekers are held; hiders sit still and look around, and seekers may guard the cash bag. */
 	stillness(p: ModePlayer): 'held' | 'look' | null {
 		const g = this.game;
 		if (!g.inRound) return null;
 		if (g.isFrozen(p.id, this.host.now())) return 'held';
-		return g.role(p.id) === 'hider' ? 'look' : null;
+		return g.role(p.id) ? 'look' : null;
 	}
 
 	tick(): void {
