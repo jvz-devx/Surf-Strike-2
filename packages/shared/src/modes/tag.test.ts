@@ -42,8 +42,8 @@ describe('gamemode registry', () => {
 		expect(isRaceMode('tag')).toBe(false);
 		expect(gameMode('nope').id).toBe('surf');
 		expect(GAME_MODES.tag.minPlayers).toBe(2);
-		expect(GAME_MODES.tag.scoreColumns).toContain('score');
-		expect(GAME_MODES.surf.scoreColumns).toContain('pb');
+		expect(GAME_MODES.tag.score.columns.map((c) => c.id)).toContain('score');
+		expect(GAME_MODES.surf.score.columns.map((c) => c.id)).toContain('pb');
 	});
 
 	it('mapCvars layers the map over the mode profile', () => {

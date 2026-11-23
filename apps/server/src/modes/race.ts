@@ -4,7 +4,7 @@
  */
 import { deflateRawSync } from 'node:zlib';
 import type { GameModeId, GhostTrack, MapRecordInfo, NetState, ScoreRow } from '@surf/shared';
-import { encodeGhostFrame, formatTicks, GhostRecorder, packGhost, Status } from '@surf/shared';
+import { encodeGhostFrame, formatTicks, GhostRecorder, packGhost, RECORDS_TOP, Status } from '@surf/shared';
 import type { Command } from '../commands.ts';
 import { RunValidator } from '../validation.ts';
 import type { ModeHost, ModePlayer, ServerMode, ZoneKind } from './types.ts';
@@ -140,13 +140,22 @@ export class RaceMode implements ServerMode {
 	records(p: ModePlayer): MapRecordInfo {
 		const { db, map } = this.host;
 		const pb = p.accountId === null ? null : db.getPb(p.accountId, map.id);
-		const rec = db.top(map.id, 1)[0] ?? null;
+		const top = db.top(map.id, RECORDS_TOP);
+		const rec = top[0] ?? null;
+		// Ties share the better rank, as in db.rankFor; `top` is sorted by time.
+		const rankOf = (ticks: number) => top.findIndex((r) => r.ticks === ticks) + 1;
 		return {
 			pbTicks: pb?.ticks ?? null,
 			pbSplits: pb?.splits ?? null,
 			rank: pb ? db.rankFor(map.id, pb.ticks) : null,
 			recordTicks: rec?.ticks ?? null,
-			recordName: rec?.name ?? null
+			recordName: rec?.name ?? null,
+			top: top.map((r) => ({
+				rank: rankOf(r.ticks),
+				name: r.name,
+				ticks: r.ticks,
+				...(r.accountId === p.accountId ? { self: true } : {})
+			}))
 		};
 	}
 

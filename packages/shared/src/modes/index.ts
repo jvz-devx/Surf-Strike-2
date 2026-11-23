@@ -2,13 +2,14 @@
  * Gamemode registry (docs/modes.md). A map's `kind` names its gamemode; the
  * mode decides the default physics profile, whether the race timer and zones
  * run (race family: surf, bhop) or the mode has its own rules (tag), and
- * which scoreboard columns are shown.
+ * what the scoreboard and score panel show.
  *
  * Adding a mode: extend `GameModeId`, add a `GAME_MODES` entry, then plug in a
  * server rules module (apps/server/src/modes) and client HUD (docs/modes.md).
  */
 import { BHOP_CVARS, SURF_CVARS, type Cvars } from '../cvars.ts';
 import type { MapDef } from '../maps/types.ts';
+import { HNS_SCORE, INFECTED_SCORE, RACE_SCORE, TAG_SCORE, ZOMBIES_SCORE, type ModeScoreDef } from './score.ts';
 
 export type GameModeId = 'surf' | 'bhop' | 'tag' | 'zombies' | 'infected' | 'hns';
 
@@ -17,9 +18,6 @@ export type GameModeId = 'surf' | 'bhop' | 'tag' | 'zombies' | 'infected' | 'hns
  * run validation and leaderboards. Any other family has its own rules module.
  */
 export type ModeFamily = 'race' | 'tag' | 'coop' | 'infected' | 'hns';
-
-/** Scoreboard columns besides the name (shown in this order). */
-export type ScoreColumn = 'rank' | 'pb' | 'score' | 'kills' | 'deaths' | 'status' | 'ping' | 'role' | 'finds' | 'survived';
 
 export interface GameModeDef {
 	id: GameModeId;
@@ -31,7 +29,8 @@ export interface GameModeDef {
 	cvars: Readonly<Cvars>;
 	/** Players needed before the mode's rules run (race: 1). */
 	minPlayers: number;
-	scoreColumns: readonly ScoreColumn[];
+	/** Tab scoreboard columns and score panel (score.ts, docs/modes.md#score-display). */
+	score: ModeScoreDef;
 }
 
 /**
@@ -74,8 +73,6 @@ export const HNS_CVARS: Readonly<Cvars> = Object.freeze({
 	sv_air_speed_cap: 300
 });
 
-const RACE_COLUMNS: readonly ScoreColumn[] = ['rank', 'pb', 'status', 'ping'];
-
 export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.freeze({
 	surf: {
 		id: 'surf',
@@ -84,7 +81,7 @@ export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.free
 		family: 'race',
 		cvars: SURF_CVARS,
 		minPlayers: 1,
-		scoreColumns: RACE_COLUMNS
+		score: RACE_SCORE
 	},
 	bhop: {
 		id: 'bhop',
@@ -93,7 +90,7 @@ export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.free
 		family: 'race',
 		cvars: BHOP_CVARS,
 		minPlayers: 1,
-		scoreColumns: RACE_COLUMNS
+		score: RACE_SCORE
 	},
 	tag: {
 		id: 'tag',
@@ -102,7 +99,7 @@ export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.free
 		family: 'tag',
 		cvars: TAG_CVARS,
 		minPlayers: 2,
-		scoreColumns: ['score', 'status', 'ping']
+		score: TAG_SCORE
 	},
 	zombies: {
 		id: 'zombies',
@@ -111,7 +108,7 @@ export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.free
 		family: 'coop',
 		cvars: ZOMBIES_CVARS,
 		minPlayers: 1,
-		scoreColumns: ['kills', 'deaths', 'status', 'ping']
+		score: ZOMBIES_SCORE
 	},
 	infected: {
 		id: 'infected',
@@ -120,7 +117,7 @@ export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.free
 		family: 'infected',
 		cvars: INFECTED_CVARS,
 		minPlayers: 2,
-		scoreColumns: ['score', 'kills', 'deaths', 'status', 'ping']
+		score: INFECTED_SCORE
 	},
 	hns: {
 		id: 'hns',
@@ -129,7 +126,7 @@ export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.free
 		family: 'hns',
 		cvars: HNS_CVARS,
 		minPlayers: 2,
-		scoreColumns: ['role', 'finds', 'survived', 'ping']
+		score: HNS_SCORE
 	}
 });
 
@@ -158,6 +155,7 @@ export function mapCvars(map: Pick<MapDef, 'kind' | 'cvars'>): Cvars {
 	return { ...modeOf(map).cvars, ...map.cvars } as Cvars;
 }
 
+export * from './score.ts';
 export * from './hns.ts';
 export * from './tag.ts';
 export * from './zombies/index.ts';

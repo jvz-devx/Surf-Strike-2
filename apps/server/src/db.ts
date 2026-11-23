@@ -10,6 +10,8 @@
  *   fastest validated account run recorded by the server, deflate-raw packed.
  * - `map_settings`, `bans`, `admin_log`: admin menu state (docs/gameplay.md#admin):
  *   disabled maps, account / guest bans, and an audit log of admin actions.
+ * - `account_stats`: playtime and points per account
+ *   (docs/gameplay.md#points-and-playtime); a missing row means zero.
  * - `runs`: legacy guest runs keyed by the localStorage UUID (and timed at
  *   the old 128 tick). Kept untouched for reference, never read or written.
  *
@@ -55,6 +57,18 @@ export interface BanRow {
 	reason: string | null;
 	createdAt: number;
 	createdBy: string;
+}
+
+/**
+ * Account totals (docs/gameplay.md#points-and-playtime). Earned and spendable
+ * points are separate numbers, both stored in tenths of a point (docs/economy.md).
+ */
+export interface AccountStatsRow {
+	playtimeSecs: number;
+	/** Lifetime earned points: only ever grows. */
+	pointsTotal: number;
+	/** Spendable points (coins). */
+	pointsBalance: number;
 }
 
 export interface AccountRow {
@@ -148,6 +162,12 @@ export class Db {
 				target TEXT,
 				detail TEXT
 			);
+			CREATE TABLE IF NOT EXISTS account_stats (
+				account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+				playtime_secs INTEGER NOT NULL DEFAULT 0,
+				points_total INTEGER NOT NULL DEFAULT 0,
+				points_balance INTEGER NOT NULL DEFAULT 0
+			);
 		`);
 		this.st = this.prepare();
 	}
@@ -208,6 +228,13 @@ export class Db {
 			),
 			ranks: d.prepare(
 				`SELECT account_id, time_ticks FROM account_runs WHERE map = ? ORDER BY time_ticks ASC, created_at ASC`
+			),
+
+			accountStats: d.prepare(`SELECT playtime_secs, points_total, points_balance FROM account_stats WHERE account_id = ?`),
+			// From `accounts`, so an account deleted meanwhile is skipped instead of failing the batch.
+			addPlaytime: d.prepare(
+				`INSERT INTO account_stats (account_id, playtime_secs) SELECT id, ? FROM accounts WHERE id = ?
+				 ON CONFLICT(account_id) DO UPDATE SET playtime_secs = playtime_secs + excluded.playtime_secs`
 			),
 
 			disabledMaps: d.prepare(`SELECT map_id FROM map_settings WHERE enabled = 0`),
@@ -291,6 +318,24 @@ export class Db {
 
 	deleteSession(tokenHash: string): void {
 		this.st.deleteSession.run(tokenHash);
+	}
+
+	// -----------------------------------------------------------------------
+	// Account totals (account-stats.ts)
+
+	/** Zeros for an account without a row yet. */
+	accountStats(accountId: number): AccountStatsRow {
+		const r = this.st.accountStats.get(accountId) as
+			| { playtime_secs: number; points_total: number; points_balance: number }
+			| undefined;
+		return { playtimeSecs: r?.playtime_secs ?? 0, pointsTotal: r?.points_total ?? 0, pointsBalance: r?.points_balance ?? 0 };
+	}
+
+	/** Add seconds online, all or nothing. */
+	addPlaytime(entries: readonly { accountId: number; secs: number }[]): void {
+		this.db.transaction(() => {
+			for (const e of entries) this.st.addPlaytime.run(e.secs, e.accountId);
+		})();
 	}
 
 	// -----------------------------------------------------------------------

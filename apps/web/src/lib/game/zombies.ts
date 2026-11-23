@@ -578,6 +578,11 @@ export class ZombiesClient {
 		return { kills: v?.kills ?? 0, deaths: v?.deaths ?? 0, alive: (v?.team ?? 'survivor') === 'survivor' };
 	}
 
+	/** Solo: the local game's state (score panel); null online. */
+	soloState(): ZmStateView | null {
+		return this.solo ? this.state : null;
+	}
+
 	dispose(): void {
 		this.setScoped(false);
 		this.host.zombieRenderer()?.clear();

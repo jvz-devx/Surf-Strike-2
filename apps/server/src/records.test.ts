@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { Status, TICK_RATE } from '@surf/shared';
+import { Status, TICK_RATE, type MapRecordInfo } from '@surf/shared';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
 import { netState, sleep, TestClient, testMap } from './test-helpers.ts';
@@ -50,6 +50,12 @@ async function run(c: TestClient, totalTicks: number) {
 	);
 }
 
+/** The records without the leaderboard top (checked by itself). */
+const own = ({ top: _top, ...r }: MapRecordInfo) => r;
+
+/** Leaderboard top as `rank name ticks`, `*` = the receiver's own. */
+const top = (r: MapRecordInfo) => (r.top ?? []).map((e) => `${e.rank} ${e.name} ${e.ticks}${e.self ? ' *' : ''}`);
+
 /** `records` pushes received by `c` since message index `from`. */
 const pushes = (c: TestClient, from: number) =>
 	c.messages.slice(from).filter((m): m is Extract<typeof m, { type: 'records' }> => m.type === 'records');
@@ -90,7 +96,7 @@ describe('record panel data', () => {
 		const b1 = await run(bob, 640);
 		assert.ok(b1.type === 'runResult' && b1.record && b1.records.recordName === 'Bob');
 		const a1 = await ana.waitFor('records', () => true, na);
-		assert.deepEqual(a1, {
+		assert.deepEqual({ ...a1, records: own(a1.records) }, {
 			type: 'records',
 			map: 'surf_a',
 			records: { pbTicks: null, pbSplits: null, rank: null, recordTicks: 640, recordName: 'Bob' }
@@ -106,9 +112,9 @@ describe('record panel data', () => {
 		assert.ok(a2.type === 'runResult');
 		if (a2.type !== 'runResult') return;
 		assert.equal(a2.record, true);
-		assert.deepEqual(a2.records, { pbTicks: 512, pbSplits: [256], rank: 1, recordTicks: 512, recordName: 'Ana' });
+		assert.deepEqual(own(a2.records), { pbTicks: 512, pbSplits: [256], rank: 1, recordTicks: 512, recordName: 'Ana' });
 		const b2 = await bob.waitFor('records', () => true, nb);
-		assert.deepEqual(b2.records, { pbTicks: 640, pbSplits: [256], rank: 2, recordTicks: 512, recordName: 'Ana' });
+		assert.deepEqual(own(b2.records), { pbTicks: 640, pbSplits: [256], rank: 2, recordTicks: 512, recordName: 'Ana' });
 		assert.equal((await guest.waitFor('records', () => true, ng)).records.recordName, 'Ana');
 	});
 
@@ -120,7 +126,7 @@ describe('record panel data', () => {
 		if (slow.type !== 'runResult') return;
 		assert.equal(slow.pb, false);
 		assert.equal(slow.record, false);
-		assert.deepEqual(slow.records, { pbTicks: 512, pbSplits: [256], rank: 1, recordTicks: 512, recordName: 'Ana' });
+		assert.deepEqual(own(slow.records), { pbTicks: 512, pbSplits: [256], rank: 1, recordTicks: 512, recordName: 'Ana' });
 		await sleep(1100);
 		await bob.barrier();
 		assert.equal(pushes(bob, nb).length, 0);
@@ -148,10 +154,13 @@ describe('record panel data', () => {
 		const c2 = await run(carl, 600);
 		assert.ok(c2.type === 'runResult' && c2.pb && !c2.record && c2.records.rank === 2);
 		const b = await bob.waitFor('records', () => true, nb);
-		assert.deepEqual(b.records, { pbTicks: 640, pbSplits: [256], rank: 3, recordTicks: 512, recordName: 'Ana' });
+		assert.deepEqual(own(b.records), { pbTicks: 640, pbSplits: [256], rank: 3, recordTicks: 512, recordName: 'Ana' });
 		const a = await ana.waitFor('records', () => true, na);
 		assert.equal(a.records.rank, 1);
 		assert.equal(a.records.recordName, 'Ana');
+		assert.deepEqual(top(b.records), ['1 Ana 512', '2 Carl 600', '3 Bob 640 *']);
+		assert.deepEqual(top(a.records), ['1 Ana 512 *', '2 Carl 600', '3 Bob 640']);
+		assert.deepEqual(top(c2.records), ['1 Ana 512', '2 Carl 600 *', '3 Bob 640']);
 		carl.close();
 		await sleep(100);
 	});
@@ -161,14 +170,15 @@ describe('record panel data', () => {
 		await sleep(100);
 		const w = (await join('Later')).welcome;
 		const later = clients[clients.length - 1];
-		assert.deepEqual(w.records, { pbTicks: null, pbSplits: null, rank: null, recordTicks: 512, recordName: 'Ana' });
+		assert.deepEqual(own(w.records), { pbTicks: null, pbSplits: null, rank: null, recordTicks: 512, recordName: 'Ana' });
+		assert.deepEqual(top(w.records), ['1 Ana 512', '2 Carl 600', '3 Bob 640'], 'nothing is a guest\'s own');
 		const auth = await later.auth('login', 'Bob', 'secret1');
 		assert.ok(auth.ok && auth.records);
 		if (!auth.ok) return;
-		assert.deepEqual(auth.records, { pbTicks: 640, pbSplits: [256], rank: 3, recordTicks: 512, recordName: 'Ana' });
+		assert.deepEqual(own(auth.records), { pbTicks: 640, pbSplits: [256], rank: 3, recordTicks: 512, recordName: 'Ana' });
 		const out = await later.auth('logout');
 		assert.ok(out.ok);
-		if (out.ok) assert.deepEqual(out.records, { pbTicks: null, pbSplits: null, rank: null, recordTicks: 512, recordName: 'Ana' });
+		if (out.ok) assert.deepEqual(own(out.records!), { pbTicks: null, pbSplits: null, rank: null, recordTicks: 512, recordName: 'Ana' });
 		const back = await later.auth('login', 'Bob', 'secret1');
 		assert.ok(back.ok && back.records?.pbTicks === 640);
 		// Token auto-login (hello) also carries the account's records in welcome.
@@ -176,7 +186,7 @@ describe('record panel data', () => {
 		const t = new TestClient(server.port);
 		clients.push(t);
 		const tw = await t.hello('whatever', undefined, token);
-		assert.deepEqual(tw.records, { pbTicks: 640, pbSplits: [256], rank: 3, recordTicks: 512, recordName: 'Ana' });
+		assert.deepEqual(own(tw.records), { pbTicks: 640, pbSplits: [256], rank: 3, recordTicks: 512, recordName: 'Ana' });
 		t.close();
 		await sleep(100);
 	});
@@ -190,12 +200,12 @@ describe('record panel data', () => {
 		c.send({ type: 'changeMap', mapId: 'surf_b' });
 		const b = await c.waitFor('mapChange', () => true, n);
 		assert.equal(b.map, 'surf_b');
-		assert.deepEqual(b.records, { pbTicks: null, pbSplits: null, rank: null, recordTicks: null, recordName: null });
+		assert.deepEqual(own(b.records), { pbTicks: null, pbSplits: null, rank: null, recordTicks: null, recordName: null });
 		n = c.messages.length;
 		c.send({ type: 'changeMap', mapId: 'surf_a' });
 		const a = await c.waitFor('mapChange', () => true, n);
 		assert.equal(a.map, 'surf_a');
-		assert.deepEqual(a.records, { pbTicks: 512, pbSplits: [256], rank: 1, recordTicks: 512, recordName: 'Ana' });
+		assert.deepEqual(own(a.records), { pbTicks: 512, pbSplits: [256], rank: 1, recordTicks: 512, recordName: 'Ana' });
 		c.close();
 	});
 });

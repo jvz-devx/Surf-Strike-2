@@ -2,13 +2,13 @@
 
 Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old name). There are five modes:
 
-| Mode | Family | Rules | Default cvars | Min players | Scoreboard |
+| Mode | Family | Rules | Default cvars | Min players | Scoreboard (plus the totals) |
 | --- | --- | --- | --- | --- | --- |
 | `surf` | race | Timer, start/end zones, stages, PBs, leaderboard ([gameplay.md](gameplay.md)) | `SURF_CVARS` | 1 | Rank, PB, Status, Ping |
 | `bhop` | race | Same as surf | `BHOP_CVARS` | 1 | Rank, PB, Status, Ping |
-| `tag` | tag | Rounds of tag, see [Tag](#tag) | `TAG_CVARS` | 2 | Score, Status, Ping |
+| `tag` | tag | Rounds of tag, see [Tag](#tag) | `TAG_CVARS` | 2 | Time not IT, Status, Ping |
 | `zombies` ("Zombie Run") | coop | Co-op escape with weapons against AI zombies, see [Zombie Run](#zombies) | `ZOMBIES_CVARS` | 1 | Kills, Turned, Status, Ping |
-| `infected` | infected | Infected with throwing knives, see [Infected](#infected) | `INFECTED_CVARS` | 2 | Score, Kills, Deaths, Status, Ping |
+| `infected` | infected | Infected with throwing knives, see [Infected](#infected) | `INFECTED_CVARS` | 2 | Score, Kills, Streak, Deaths, Status, Ping |
 | `hns` | hns | Hide and seek with knives; found hiders become seekers, see [Hide and seek](#hide-and-seek) | `HNS_CVARS` | 2 | Role, Finds, Survived, Ping |
 
 The map rotation, vote, `!rtv`, chat, spectating and lobby are the same in every mode. The rotation mixes maps of all modes, so a vote can move the lobby from a surf map to a tag map.
@@ -18,6 +18,7 @@ The map rotation, vote, `!rtv`, chat, spectating and lobby are the same in every
 ```
 packages/shared/src/modes/
   index.ts   GameModeId, GAME_MODES registry, modeOf(map), mapCvars(map), TAG_CVARS
+  score.ts   ModeScoreDef per mode: scoreboard columns, score panel, order, marks; buildScorePanel
   tag.ts     TagGame: pure tag rules with an injected clock, plus tagTouch, randomSpawn, hullInBox
   hns.ts     HnsGame: pure hide and seek rules (clock-injected), knifeHit, hnsSpawns, HNS_* constants
 apps/server/src/modes/
@@ -28,14 +29,32 @@ apps/server/src/modes/
   index.ts   createServerMode(host): picks the module by GAME_MODES[kind].family
 ```
 
-- **Registry.** `GAME_MODES[id]` gives a mode's `label`, `family` (`race` or its own), `cvars` profile, `minPlayers` and `scoreColumns`. `mapCvars(map)` is the mode profile plus the map's `cvars` overrides; the server sends it in `welcome` and `mapChange`.
+- **Registry.** `GAME_MODES[id]` gives a mode's `label`, `family` (`race` or its own), `cvars` profile, `minPlayers` and `score` (see [Score display](#score-display)). `mapCvars(map)` is the mode profile plus the map's `cvars` overrides; the server sends it in `welcome` and `mapChange`.
 - **Server.** The lobby has no mode logic. It owns one `ServerMode` per map and replaces it on map change. It forwards these calls: `join` (after `welcome`/`mapChange`), `leave`, `spectate`, `state` (each state packet), `zone`, `command` (`!top`, `!pb`), `scoreRows`, `records` and `tick`. `tick` runs at `MODE_TICK_HZ` (32 Hz).
-- **Client.** `game.ts` reads `modeOf(map)`. In race modes `RunTracker` runs every tick, as before. In other modes the tracker is skipped: teleport zones respawn the player at a random map spawn, and the race HUD (timer, splits, record panel) is hidden. `hud.gameMode`, `hud.modeFamily` and `hud.tag` drive the UI. The scoreboard takes its columns from `GAME_MODES[mode].scoreColumns`.
-- **Protocol.** These changes are additive. `welcome` and `mapChange` carry `mode`. Non-race modes send `modeState` messages; race modes never do. `ScoreRow` has optional `score` and `it` fields. `Status` has new `Tagger` and `Runner` values.
+- **Client.** `game.ts` reads `modeOf(map)`. In race modes `RunTracker` runs every tick, as before. In other modes the tracker is skipped: teleport zones respawn the player at a random map spawn, and the race HUD (timer, splits) is hidden. `hud.gameMode`, `hud.modeFamily` and `hud.tag` drive the UI. The scoreboard and the score panel render `GAME_MODES[mode].score`.
+- **Protocol.** These changes are additive. `welcome` and `mapChange` carry `mode`. Non-race modes send `modeState` messages; race modes never do. `ScoreRow` has optional mode fields (`score`, `it`, `kills`, `deaths`) and optional account totals (`pointsTotal`, `playtimeSecs`), which the lobby adds to every mode's rows. `Status` has new `Tagger` and `Runner` values.
+
+### Score display
+
+`packages/shared/src/modes/score.ts` defines what each mode shows in the Tab scoreboard ([gameplay.md](gameplay.md#tab-scoreboard)) and in the always-on score panel ([ui.md](ui.md#score-panel)). `GAME_MODES[id].score` is the mode's `ModeScoreDef`; the Svelte components only render it and have no mode branches.
+
+| Field | Meaning |
+| --- | --- |
+| `columns` | Ordered `ScoreMetric`s: `id`, `label`, `short` (panel header), `num`, `width` (em, scoreboard), `text(row, ctx)`. `panel: true` also makes it a column of the panel's standing; `minor: true` drops it first in narrow windows. `scoreboardColumns(def)` appends Total points and Total playtime (`TOTAL_COLUMNS`) in every mode |
+| `compare(a, b)` | Row order, best first (scoreboard and standing) |
+| `mark(row)` | Optional role marker: `text` (scoreboard chip), `short` (panel chip), `tone` (row colour) |
+| `panel.list` | `records` (the map's leaderboard: surf, bhop) or `standing` (the players in the current game) |
+| `panel.title`, `panel.subtitle(input)` | Default title: the mode's label. The standing modes show "Round 3" |
+| `panel.maxRows` | Row cap, your own row included (6 records, 8 players) |
+| `panel.summary` | Lines under the list: `{ id, line(input) }`, where `line` returns `{ label, text, note?, tone? }` or null |
+
+- **A new per-player metric** is one entry in the mode's `columns`. `text` gets the `ScoreRow` and `ctx.state`, the latest `modeState` of the mode (the infected streak is read from it, so it needs no row field). **A new game-wide or personal line** is one entry in `panel.summary`; its input also has the race records (`records.top`, PB, record).
+- Values can be missing (older server, offline, no state yet): `text` and `line` must fall back and never throw.
+- A new `tone` also needs a colour in `ScorePanel.svelte` and `Scoreboard.svelte`. If a mode's HUD uses the right edge of the screen, add its space to `AREAS` in `apps/web/src/lib/ui/score-panel.ts`.
 
 ### Adding a mode
 
-1. Add the id to `GameModeId` and an entry to `GAME_MODES` (new `family` if it is not a race).
+1. Add the id to `GameModeId` and an entry to `GAME_MODES` (new `family` if it is not a race), with its `ModeScoreDef` in `score.ts`.
 2. Put its pure rules in `packages/shared/src/modes/<mode>.ts`, with vitest tests on a fake clock.
 3. Add `apps/server/src/modes/<mode>.ts` implementing `ServerMode`, and a case in `createServerMode`.
 4. Add a `ModeState` variant to `protocol.ts` (keep the `{ type: 'modeState', mode }` shape).

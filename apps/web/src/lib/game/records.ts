@@ -2,7 +2,7 @@
  * Split/PB helpers and the solo personal-best store (solo runs are kept in
  * localStorage per map and never sent to the leaderboard).
  */
-import type { MapRecordInfo } from '@surf/shared';
+import type { MapRecordInfo, RecordEntry } from '@surf/shared';
 import { readJson, STORAGE_KEYS, writeJson, type KeyValueStore } from './storage.js';
 
 export interface LocalPb {
@@ -31,16 +31,18 @@ export function splitDelta(pbSplits: readonly number[] | null | undefined, posit
 	return typeof ref === 'number' && Number.isFinite(ref) ? ticks - ref : null;
 }
 
-/** The four record fields of the HUD record panel (RecordPanel.svelte). */
+/** The record fields of the HUD score panel in race modes (ScorePanel.svelte). */
 export interface RecordFields {
 	pbTicks: number | null;
 	pbRank: number | null;
 	recordTicks: number | null;
 	recordName: string | null;
+	/** Leaderboard top; null offline and from an older server. */
+	recordTop: RecordEntry[] | null;
 }
 
 /**
- * What the record panel shows. Online: the server's records only (never the
+ * What the score panel shows. Online: the server's records only (never the
  * solo PB). Solo: the local solo PB only, no rank or map record.
  */
 export function recordFields(mode: 'solo' | 'online', online: MapRecordInfo | null, soloPb: LocalPb | null): RecordFields {
@@ -49,10 +51,11 @@ export function recordFields(mode: 'solo' | 'online', online: MapRecordInfo | nu
 			pbTicks: online?.pbTicks ?? null,
 			pbRank: online?.rank ?? null,
 			recordTicks: online?.recordTicks ?? null,
-			recordName: online?.recordName ?? null
+			recordName: online?.recordName ?? null,
+			recordTop: online?.top ?? null
 		};
 	}
-	return { pbTicks: soloPb?.ticks ?? null, pbRank: null, recordTicks: null, recordName: null };
+	return { pbTicks: soloPb?.ticks ?? null, pbRank: null, recordTicks: null, recordName: null, recordTop: null };
 }
 
 /**

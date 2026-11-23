@@ -3,7 +3,7 @@
  * Primitives are updated each frame only when they change; arrays use
  * `$state.raw` and are replaced, never mutated.
  */
-import { MAX_PLAYERS, type AdminState, type GameModeId, type ModeFamily, type ScoreRow } from '@surf/shared';
+import { MAX_PLAYERS, type AdminState, type GameModeId, type ModeFamily, type ModeState, type RecordEntry, type ScoreRow } from '@surf/shared';
 import type {
 	ChatLine,
 	ConsoleLine,
@@ -50,6 +50,7 @@ export class HudState implements HudStateShape {
 	pbRank = $state<number | null>(null);
 	recordTicks = $state<number | null>(null);
 	recordName = $state<string | null>(null);
+	recordTop = $state.raw<RecordEntry[] | null>(null);
 
 	account = $state.raw<{ username: string; admin?: boolean } | null>(null);
 	adminState = $state.raw<AdminState | null>(null);
@@ -64,6 +65,9 @@ export class HudState implements HudStateShape {
 	rtvCooldown = $state.raw<{ until: number; reason: 'declined' | 'mapStart' } | null>(null);
 	scoreboardOpen = $state(false);
 	scoreboard = $state.raw<ScoreRow[]>([]);
+	selfId = $state(0);
+	selfName = $state('');
+	modeState = $state.raw<ModeState | null>(null);
 	spectating = $state.raw<{ targetName: string; freeFly: boolean } | null>(null);
 
 	consoleOpen = $state(false);

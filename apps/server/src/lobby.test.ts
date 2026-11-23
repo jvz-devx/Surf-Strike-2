@@ -85,7 +85,7 @@ describe('lobby', () => {
 		assert.equal(wa.mapTimeLeft, MAP_DURATION);
 		assert.equal(wa.cvars.sv_maxvelocity, 3500);
 		assert.equal(wa.cvars.sv_airaccelerate, 150);
-		assert.deepEqual(wa.records, { pbTicks: null, pbSplits: null, rank: null, recordTicks: null, recordName: null });
+		assert.deepEqual(wa.records, { pbTicks: null, pbSplits: null, rank: null, recordTicks: null, recordName: null, top: [] });
 		const { welcome: wb } = await join('\u0001Bob' + 'b'.repeat(40));
 		assert.equal(wb.players.length, 2);
 		const self = wb.players.find((p) => p.id === wb.selfId)!;

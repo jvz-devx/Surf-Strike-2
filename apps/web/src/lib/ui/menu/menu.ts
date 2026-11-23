@@ -200,6 +200,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 			'cl_crosshairthickness',
 			'cl_crosshairdot',
 			'cl_showkeys',
+			'cl_scorepanel',
 			'cl_ghost',
 			'cl_hideplayers'
 		]

@@ -180,6 +180,12 @@
 		</div>
 		<div class="sub ss-label">Display</div>
 		<Toggle label="Show keys" hint="Pressed keys under the crosshair" checked={on('cl_showkeys')} onset={flag('cl_showkeys')} />
+		<Toggle
+			label="Show score panel"
+			hint="Map records or the current standing, on the right"
+			checked={on('cl_scorepanel')}
+			onset={flag('cl_scorepanel')}
+		/>
 		<Toggle label="Show ghost" hint="Race ghost on surf and bhop maps" checked={on('cl_ghost')} onset={flag('cl_ghost')} />
 		<Toggle label="Hide players" hint="Hide other players (not the ghost)" checked={on('cl_hideplayers')} onset={flag('cl_hideplayers')} />
 	{:else}

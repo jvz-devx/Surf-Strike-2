@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Status, TICK_RATE } from '@surf/shared';
-import type { ScoreRow } from '@surf/shared';
+import { TICK_RATE } from '@surf/shared';
 import {
 	cleanName,
 	commonPrefix,
@@ -13,12 +12,7 @@ import {
 	formatRunTime,
 	hexToRgb,
 	rgbToHex,
-	splitScoreboard,
-	stageText,
-	statusText,
-	scoreText,
-	deathsLabel,
-	infectedRowRole
+	stageText
 } from './format.js';
 
 describe('formatDelta', () => {
@@ -55,63 +49,6 @@ describe('fadeOpacity', () => {
 		expect(fadeOpacity(100, 2000, 500)).toBe(1);
 		expect(fadeOpacity(2250, 2000, 500)).toBeCloseTo(0.5);
 		expect(fadeOpacity(3000, 2000, 500)).toBe(0);
-	});
-});
-
-const row = (p: Partial<ScoreRow>): ScoreRow => ({
-	id: 0,
-	name: 'a',
-	rank: null,
-	pbTicks: null,
-	status: Status.Idle,
-	stage: 0,
-	ping: 0,
-	spectating: false,
-	...p
-});
-
-describe('scoreboard', () => {
-	it('status text', () => {
-		expect(statusText(row({ status: Status.StartZone }))).toBe('Start zone');
-		expect(statusText(row({ status: Status.Running, stage: 3 }))).toBe('Stage 3');
-		expect(statusText(row({ status: Status.Running, stage: 3 }), false)).toBe('Running');
-		expect(statusText(row({ status: Status.Running, stage: 0 }))).toBe('Running');
-		expect(statusText(row({ status: Status.Finished }))).toBe('Finished');
-		expect(statusText(row({ status: Status.Spectating }))).toBe('Spectating');
-		expect(statusText(row({ spectating: true, status: Status.Running }))).toBe('Spectating');
-	});
-	it('sorts by PB, no PB last, spectators split', () => {
-		const { players, spectators } = splitScoreboard([
-			row({ name: 'nopb' }),
-			row({ name: 'slow', pbTicks: 900 }),
-			row({ name: 'spec', spectating: true, pbTicks: 1 }),
-			row({ name: 'fast', pbTicks: 500 })
-		]);
-		expect(players.map((r) => r.name)).toEqual(['fast', 'slow', 'nopb']);
-		expect(spectators.map((r) => r.name)).toEqual(['spec']);
-	});	it('tag: IT/Runner status, sorted by score', () => {
-		expect(statusText(row({ status: Status.Tagger }))).toBe('IT');
-		expect(statusText(row({ status: Status.Runner }))).toBe('Runner');
-		const { players } = splitScoreboard(
-			[row({ name: 'b', score: 10 }), row({ name: 'a', score: 42.5 }), row({ name: 'c', score: 10 })],
-			true
-		);
-		expect(players.map((r) => r.name)).toEqual(['a', 'b', 'c']);
-	});
-
-	it('infected: Alpha/Infected status, integer score, Deaths header, row roles', () => {
-		expect(statusText(row({ status: Status.Alpha }))).toBe('Alpha');
-		expect(statusText(row({ status: Status.Infected }))).toBe('Infected');
-		expect(statusText(row({ status: Status.Alive }))).toBe('Survivor');
-		expect(scoreText(250, 'infected')).toBe('250');
-		expect(scoreText(149.6, 'infected')).toBe('150');
-		expect(scoreText(undefined, 'infected')).toBe('0');
-		expect(scoreText(42.25, 'tag')).toBe('42.3');
-		expect(deathsLabel('infected')).toBe('Deaths');
-		expect(deathsLabel('zombies')).toBe('Turned');
-		expect(infectedRowRole(row({ status: Status.Alpha }))).toBe('alpha');
-		expect(infectedRowRole(row({ status: Status.Infected }))).toBe('infected');
-		expect(infectedRowRole(row({ status: Status.Alive }))).toBeNull();
 	});
 });
 

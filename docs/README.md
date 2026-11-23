@@ -61,7 +61,7 @@ In solo mode (no server), `?map=<id>` opens that map directly, e.g. `http://loca
 | Physics | CS2 movement: 64 tick with subtick input on a Source `CGameMovement` port, SharpTimer CS2 surf/bhop cvars |
 | Rendering/collision | Three.js; custom convex-brush AABB traces, no physics engine |
 | Gamemodes | `MapDef.kind` is the gamemode: surf and bhop (race: timer, zones, PBs), tag (server-run rounds, score = time not IT) Zombie Run (co-op escape with weapons against AI zombies, gates, turned players fight for the zombies) and hide and seek (45 s blindfolded seekers, 4:00 knife hunt, found hiders become seekers, bhop capped at 300 u/s); rotation mixes all modes ([modes.md](modes.md)) |
-| Features | Timer, zones, stages, PBs, top-10 leaderboard, chat, Tab scoreboard, spectate |
+| Features | Timer, zones, stages, PBs, top-10 leaderboard, chat, score panel, Tab scoreboard with total points and playtime, spectate |
 | Not included | Practice `!saveloc`/`!tele`, weapons outside Zombie Run (and the hide and seek knife), anti-cheat, mobile |
 | Identity | Simple accounts (username + password, no email/verification) in the server's SQLite; only accounts' runs reach the leaderboard. Guests pick a name and play everything without saving runs |
 | Settings | Developer console (`~`) plus an Esc menu (Change map, Settings, Account) |

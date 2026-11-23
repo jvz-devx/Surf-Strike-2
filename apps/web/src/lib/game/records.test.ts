@@ -5,20 +5,25 @@ import { mergeRecordsPush, recordFields } from './records.js';
 const online: MapRecordInfo = { pbTicks: 640, pbSplits: [256], rank: 2, recordTicks: 512, recordName: 'Ana' };
 const solo = { ticks: 400, splits: [200] };
 
-describe('recordFields (HUD record panel)', () => {
+describe('recordFields (HUD score panel)', () => {
 	it('online: all four fields from the server, never the solo PB', () => {
-		expect(recordFields('online', online, solo)).toEqual({ pbTicks: 640, pbRank: 2, recordTicks: 512, recordName: 'Ana' });
+		expect(recordFields('online', online, solo)).toEqual({ pbTicks: 640, pbRank: 2, recordTicks: 512, recordName: 'Ana', recordTop: null });
 	});
 	it('online without a PB still shows the map record', () => {
 		const r = { ...online, pbTicks: null, pbSplits: null, rank: null };
-		expect(recordFields('online', r, solo)).toEqual({ pbTicks: null, pbRank: null, recordTicks: 512, recordName: 'Ana' });
+		expect(recordFields('online', r, solo)).toEqual({ pbTicks: null, pbRank: null, recordTicks: 512, recordName: 'Ana', recordTop: null });
+	});
+	it('online: the leaderboard top when the server sends one', () => {
+		const top = [{ rank: 1, name: 'Ana', ticks: 512 }];
+		expect(recordFields('online', { ...online, top }, solo).recordTop).toBe(top);
+		expect(recordFields('solo', { ...online, top }, solo).recordTop).toBeNull();
 	});
 	it('online before any records: empty, not the solo PB', () => {
-		expect(recordFields('online', null, solo)).toEqual({ pbTicks: null, pbRank: null, recordTicks: null, recordName: null });
+		expect(recordFields('online', null, solo)).toEqual({ pbTicks: null, pbRank: null, recordTicks: null, recordName: null, recordTop: null });
 	});
 	it('solo: the local PB only, never online records', () => {
-		expect(recordFields('solo', online, solo)).toEqual({ pbTicks: 400, pbRank: null, recordTicks: null, recordName: null });
-		expect(recordFields('solo', null, null)).toEqual({ pbTicks: null, pbRank: null, recordTicks: null, recordName: null });
+		expect(recordFields('solo', online, solo)).toEqual({ pbTicks: 400, pbRank: null, recordTicks: null, recordName: null, recordTop: null });
+		expect(recordFields('solo', null, null)).toEqual({ pbTicks: null, pbRank: null, recordTicks: null, recordName: null, recordTop: null });
 	});
 });
 

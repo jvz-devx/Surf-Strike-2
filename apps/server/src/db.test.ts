@@ -86,6 +86,104 @@ describe('Db', () => {
 	});
 });
 
+/** The schema as it was before `account_stats` (the production database of 2026-11). */
+const OLD_SCHEMA = `
+	CREATE TABLE players (id TEXT PRIMARY KEY, name TEXT NOT NULL, first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL);
+	CREATE TABLE runs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, player_id TEXT NOT NULL REFERENCES players(id), map TEXT NOT NULL,
+		time_ticks INTEGER NOT NULL, splits_json TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE (player_id, map));
+	CREATE INDEX runs_map_time ON runs (map, time_ticks);
+	CREATE TABLE accounts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, username_lower TEXT NOT NULL UNIQUE,
+		password_hash TEXT NOT NULL, created_at INTEGER NOT NULL, last_login INTEGER NOT NULL);
+	CREATE TABLE sessions (
+		token_hash TEXT PRIMARY KEY, account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+		created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+	CREATE INDEX sessions_account ON sessions (account_id);
+	CREATE TABLE account_runs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+		map TEXT NOT NULL, time_ticks INTEGER NOT NULL, splits_json TEXT NOT NULL, created_at INTEGER NOT NULL,
+		UNIQUE (account_id, map));
+	CREATE INDEX account_runs_map_time ON account_runs (map, time_ticks);
+	CREATE TABLE replays (
+		map TEXT PRIMARY KEY, account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+		time_ticks INTEGER NOT NULL, samples INTEGER NOT NULL, data BLOB NOT NULL, created_at INTEGER NOT NULL);
+	CREATE TABLE map_settings (map_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1);
+	CREATE TABLE bans (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+		player_key TEXT, ip TEXT, username_snapshot TEXT NOT NULL, reason TEXT, created_at INTEGER NOT NULL, created_by TEXT NOT NULL);
+	CREATE INDEX bans_account ON bans (account_id);
+	CREATE INDEX bans_player_key ON bans (player_key);
+	CREATE INDEX bans_ip ON bans (ip);
+	CREATE TABLE admin_log (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL, admin_account_id INTEGER,
+		admin_username TEXT NOT NULL, action TEXT NOT NULL, target TEXT, detail TEXT);
+	INSERT INTO players VALUES ('legacy-uuid', 'Old', 1, 2);
+	INSERT INTO runs (player_id, map, time_ticks, splits_json, created_at) VALUES ('legacy-uuid', 'surf_ember', 5, '[]', 1);
+	INSERT INTO accounts (username, username_lower, password_hash, created_at, last_login) VALUES
+		('Tim', 'tim', 'hash-tim', 10, 20), ('Ana', 'ana', 'hash-ana', 11, 21);
+	INSERT INTO sessions VALUES ('tok', 1, 10, 99999999999999);
+	INSERT INTO account_runs (account_id, map, time_ticks, splits_json, created_at) VALUES
+		(1, 'surf_ember', 9000, '[3000,6000]', 30), (2, 'surf_ember', 8800, '[2900]', 31), (2, 'bhop_meadow', 700, '[]', 32);
+	INSERT INTO replays VALUES ('surf_ember', 2, 8800, 3, x'0102ff', 31);
+	INSERT INTO map_settings VALUES ('surf_aurora', 0);
+	INSERT INTO bans (account_id, username_snapshot, reason, created_at, created_by) VALUES (2, 'Ana', 'why', 40, 'Tim');
+	INSERT INTO admin_log (created_at, admin_username, action) VALUES (41, 'Tim', 'ban');
+`;
+
+describe('account_stats migration', () => {
+	const TABLES = ['players', 'runs', 'accounts', 'sessions', 'account_runs', 'replays', 'map_settings', 'bans', 'admin_log'];
+	const dump = (d: Database.Database) => ({
+		rows: Object.fromEntries(TABLES.map((t) => [t, d.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all()])),
+		columns: Object.fromEntries(TABLES.map((t) => [t, d.prepare(`PRAGMA table_info(${t})`).all()]))
+	});
+
+	it('opens a database of the previous schema with every row and column intact, and only adds the new table', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'surf-db-'));
+		const path = join(dir, 'surf.db');
+		try {
+			const old = new Database(path);
+			old.pragma('journal_mode = WAL');
+			old.exec(OLD_SCHEMA);
+			const before = dump(old);
+			const tablesBefore = old.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`).pluck().all() as string[];
+			old.close();
+
+			const db = new Db(path);
+			assert.deepEqual(dump(db.db), before);
+			const tablesAfter = db.db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`).pluck().all() as string[];
+			assert.deepEqual(tablesAfter, [...tablesBefore, 'account_stats'].sort());
+			assert.equal((db.db.prepare('SELECT COUNT(*) AS n FROM account_stats').get() as { n: number }).n, 0);
+			// Still readable through the API.
+			assert.deepEqual(db.top('surf_ember').map((r) => [r.name, r.ticks]), [['Ana', 8800], ['Tim', 9000]]);
+			assert.deepEqual(db.getPb(1, 'surf_ember'), { ticks: 9000, splits: [3000, 6000], createdAt: 30 });
+			assert.equal(db.sessionAccount('tok')?.username, 'Tim');
+			assert.equal(db.accountByName('TIM')?.passwordHash, 'hash-tim');
+			assert.equal(db.getReplay('surf_ember')?.data.toString('hex'), '0102ff');
+			assert.deepEqual([...db.disabledMaps()], ['surf_aurora']);
+			assert.equal(db.accountBan(2)?.reason, 'why');
+			// Old accounts start at zero and can be counted.
+			assert.deepEqual(db.accountStats(1), { playtimeSecs: 0, pointsTotal: 0, pointsBalance: 0 });
+			db.addPlaytime([{ accountId: 1, secs: 61 }]);
+			db.close();
+
+			// Opening again keeps the new totals and still changes nothing else.
+			const again = new Db(path);
+			assert.deepEqual(again.accountStats(1), { playtimeSecs: 61, pointsTotal: 0, pointsBalance: 0 });
+			assert.deepEqual(dump(again.db), before);
+			again.close();
+
+			// Rolling back to the old server: it ignores the extra table.
+			const rollback = new Database(path);
+			rollback.exec(OLD_SCHEMA.slice(0, OLD_SCHEMA.indexOf('INSERT')).replaceAll('CREATE TABLE ', 'CREATE TABLE IF NOT EXISTS ').replaceAll('CREATE INDEX ', 'CREATE INDEX IF NOT EXISTS '));
+			assert.deepEqual(dump(rollback), before);
+			rollback.close();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe('auth', () => {
 	it('scrypt hashes verify, use a per-user salt and reject wrong passwords', async () => {
 		const h1 = await hashPassword('hunter22');

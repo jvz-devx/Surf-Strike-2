@@ -18,6 +18,8 @@ import type {
 	InfPhase,
 	InfTeam,
 	ModeFamily,
+	ModeState,
+	RecordEntry,
 	ScoreRow,
 	TagPhase,
 	WeaponId,
@@ -316,6 +318,8 @@ export interface HudStateShape {
 	pbRank: number | null;
 	recordTicks: number | null;
 	recordName: string | null;
+	/** Race: the map's leaderboard top (null offline or from an older server). */
+	recordTop: RecordEntry[] | null;
 	// Account (docs/gameplay.md#accounts-and-identity)
 	/** Logged-in account; null = guest (runs are not saved to the leaderboard). */
 	account: { username: string; admin?: boolean } | null;
@@ -335,7 +339,14 @@ export interface HudStateShape {
 	/** No RTV request before `until` (performance.now()): decline cooldown or map-start block. */
 	rtvCooldown: { until: number; reason: 'declined' | 'mapStart' } | null;
 	scoreboardOpen: boolean;
+	/** Rows of the Tab scoreboard and the score panel (solo: one row). */
 	scoreboard: ScoreRow[];
+	/** Id of the local player's row in `scoreboard`. */
+	selfId: number;
+	/** Name shown for the local player. */
+	selfName: string;
+	/** Latest mode state, for score metrics that need it (modes/score.ts); null in race modes. */
+	modeState: ModeState | null;
 	spectating: { targetName: string; freeFly: boolean } | null;
 	// Overlays
 	consoleOpen: boolean;

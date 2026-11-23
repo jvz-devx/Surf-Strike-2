@@ -71,7 +71,7 @@ describe('hns registry and physics', () => {
 		expect(m.family).toBe('hns');
 		expect(m.label).toBe('Hide and Seek');
 		expect(m.minPlayers).toBe(2);
-		expect(m.scoreColumns).toEqual(['role', 'finds', 'survived', 'ping']);
+		expect(m.score.columns.map((c) => c.id)).toEqual(['role', 'finds', 'survived', 'ping']);
 		expect(HNS_CVARS.sv_air_speed_cap).toBe(300);
 		expect(HNS_CVARS.sv_maxspeed).toBe(250);
 		expect(HNS_CVARS.sv_autobunnyhopping).toBe(1);

@@ -15,13 +15,25 @@ The HUD is Svelte components layered over the Three.js canvas.
 | Bottom left | Chat (fades after 8 s; full history while typing) |
 | Left middle | Vote panel (up to 7 options "Surf · Kessler" … "Extend 10 min" with key numbers and live vote counts, countdown bar) |
 | Top centre, below map name | RTV request modal (see [RTV request](#rtv-request)) |
-| Right middle | PB and map record for this map |
+| Right middle | Score panel: map records, PB and gap, or the current standing ([Score panel](#score-panel)) |
 | Centre | Crosshair (configurable) |
 | Below crosshair | Pressed keys (W A S D, jump, crouch) if `cl_showkeys 1` |
 | Full screen (hold Tab) | Scoreboard (see [gameplay.md](gameplay.md#tab-scoreboard)) |
 | Top centre, spectating | `Spectating <name>` bar with controls hint |
 
 The speed number turns green while gaining speed and red while losing speed, as on surf servers.
+
+## Score panel
+
+Always on while playing (`ScorePanel.svelte`), driven by the gamemode's definition in `packages/shared/src/modes/score.ts` ([modes.md](modes.md#score-display)).
+
+- **Surf, bhop:** "Map records" (top 6 of the 10 the server sends), your own row highlighted, then Personal best with your rank and Gap to record (red, or "Record holder" in green). An older server sends only the record: the list is then the record and your own time. Offline: "Offline: no map records" and your local PB. "Unofficial" badge when `sv_*` was changed.
+- **Other modes:** the live standing of the current game, best first, with the round number. Tag: time not IT, `IT` marker. Zombie Run: kills, times turned, and the route progress and checkpoint below. Infected: score, kills, kill streak, `A` / `INF` markers. Hide and seek: role, finds, survived.
+- At most 8 players (6 records). Your own row is always there: further down it replaces the last row, with a dashed line above it and its real position.
+- **Placement.** Vertically centred in the free strip on the right, below the connection status (and a full kill feed) and above the mode's health and weapon bars. `score-panel.ts` holds these areas and `fitPanel`, which decides how much fits: fewer rows in low windows, narrower without minor columns below 1000 px width, only your own row (and the race lines) below 820 px, hidden below 480 px or when there is no height left.
+- Hidden while the Tab scoreboard is open, and with `cl_scorepanel 0` (Settings › HUD › "Show score panel").
+
+Dev preview: `/?mockhud&novote&mode=<gamemode>&players=<n>&self=<position>`, `&old=1` for an older server, `&open=scoreboard` for the Tab scoreboard.
 
 ## RTV request
 
@@ -76,6 +88,7 @@ Opened with `` ` `` or `~`. A CS-style panel in the top half of the screen: scro
 | `cl_showpos` | 0 | Position, angles, velocity readout |
 | `cl_showkeys` | 0 | Pressed-keys display |
 | `cl_hideplayers` | 0 | Hide other players |
+| `cl_scorepanel` | 1 | Show the score panel ([Score panel](#score-panel)) |
 | `cl_ghost` | 1 | Show the race ghost on surf and bhop maps ([Ghost](#ghost)) |
 | `cl_crosshairsize`, `cl_crosshairgap`, `cl_crosshairthickness`, `cl_crosshaircolor_r/g/b`, `cl_crosshairdot` | CS-like | Crosshair |
 | `name <name>` | | Change guest name (logged-in players always show their username) |
@@ -99,7 +112,7 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
 - **Settings**: tabs
   - Mouse: sensitivity (slider + number), `m_yaw`, `m_pitch`
   - Video: FOV, **Fullscreen (blocks Ctrl+W)** (`cl_fullscreen`; in browsers without the Keyboard Lock API a note instead), show FPS, show position
-  - HUD: crosshair colour, size, gap, thickness, centre dot with a live 1:1 preview; show keys, show ghost (`cl_ghost`), hide players (`cl_hideplayers`)
+  - HUD: crosshair colour, size, gap, thickness, centre dot with a live 1:1 preview; show keys, show score panel (`cl_scorepanel`), show ghost (`cl_ghost`), hide players (`cl_hideplayers`)
   - Audio: master volume
 
   Each tab has **Reset … to defaults**, which sets that tab's cvars to the engine defaults (`CLIENT_CVARS`); it is disabled when they already are.

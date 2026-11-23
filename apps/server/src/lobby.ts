@@ -35,6 +35,7 @@ import {
 	TAG_TICK_HZ,
 	usernameKey
 } from '@surf/shared';
+import { AccountStats, PLAYTIME_FLUSH_MS } from './account-stats.ts';
 import { AdminController, ipKey, parseAdminUsernames } from './admin.ts';
 import { Accounts, AttemptLimiter, AUTH_LIMITS, TOO_MANY } from './auth.ts';
 import { HELP_LINES, parseCommand } from './commands.ts';
@@ -66,6 +67,8 @@ export interface LobbyOptions {
 	/** Wall clock in ms, used for rotation and run timing (injectable for tests). */
 	now?: () => number;
 	rng?: () => number;
+	/** Monotonic clock in ms for account playtime (default: `now` when injected, else performance.now). */
+	playClock?: () => number;
 	/** Start interval timers (snapshot, scoreboard, rotation, ping). Default true. */
 	timers?: boolean;
 	maxPlayers?: number;
@@ -151,6 +154,8 @@ export class Lobby {
 	private readonly modeOptions: ModeOptions;
 	private readonly rng: () => number;
 	private readonly accounts: Accounts;
+	/** Playtime and points of the accounts online (docs/gameplay.md#points-and-playtime). */
+	readonly stats: AccountStats;
 	readonly admin: AdminController<Client>;
 	/** Who started the open RTV request (name kept if they leave). */
 	private rtvInitiator: { id: number; name: string } | null = null;
@@ -166,6 +171,7 @@ export class Lobby {
 		this.maxPerIp = opts.maxPerIp ?? 0;
 		this.log = opts.log ?? ((m) => console.log(m));
 		this.accounts = new Accounts(this.db, () => this.now());
+		this.stats = new AccountStats(this.db, opts.playClock ?? opts.now, this.log);
 		const initial = opts.initialMap && this.maps.has(opts.initialMap) ? opts.initialMap : opts.maps[0].id;
 		this.map = this.maps.get(initial)!;
 		this.rng = opts.rng ?? Math.random;
@@ -189,6 +195,7 @@ export class Lobby {
 				setInterval(() => this.sendScoreboard(), SCOREBOARD_MS),
 				setInterval(() => this.updateRotation(), ROTATION_MS),
 				setInterval(() => this.sendPings(), PING_MS),
+				setInterval(() => this.stats.flush(), PLAYTIME_FLUSH_MS),
 				setInterval(() => this.tickMode(), 1000 / MODE_TICK_HZ)
 			);
 		}
@@ -305,6 +312,7 @@ export class Lobby {
 		this.closing = true;
 		for (const t of this.timers) clearInterval(t);
 		this.timers = [];
+		this.stats.close();
 		for (const c of this.clients) c.socket.close(1001, 'server shutting down');
 	}
 
@@ -372,6 +380,7 @@ export class Lobby {
 		c.closed = true;
 		if (c.helloTimer) clearTimeout(c.helloTimer);
 		this.clients.delete(c);
+		if (c.accountId !== null) this.stats.leave(c.accountId, c);
 		if (!c.helloed || this.closing) return;
 		this.mode.leave(c);
 		this.rotation.removeVoter(String(c.id));
@@ -521,6 +530,7 @@ export class Lobby {
 		c.sessionHash = resumed?.hash ?? null;
 		c.admin = admin;
 		c.helloed = true;
+		if (c.accountId !== null) this.stats.join(c.accountId, c);
 		if (c.helloTimer) clearTimeout(c.helloTimer);
 		c.helloTimer = null;
 		this.db.upsertPlayer(c.playerId, guestName, Date.now());
@@ -621,6 +631,7 @@ export class Lobby {
 	private signIn(c: Client, account: AccountRow, sessionHash: string, token: string): void {
 		this.dropAccountDuplicates(c, account.id);
 		c.accountId = account.id;
+		this.stats.join(account.id, c);
 		c.sessionHash = sessionHash;
 		c.admin = this.admin.isAdminAccount(account.username);
 		const old = c.name;
@@ -646,6 +657,7 @@ export class Lobby {
 		if (c.accountId !== null) {
 			if (c.sessionHash) this.accounts.logout(c.sessionHash);
 			const old = c.name;
+			this.stats.leave(c.accountId, c);
 			c.accountId = null;
 			c.sessionHash = null;
 			c.admin = false;
@@ -948,11 +960,20 @@ export class Lobby {
 		for (const c of this.clients) if (c.helloed) this.sendRaw(c, buf);
 	}
 
+	/** The mode's rows plus what is the same in every mode: admin marker and account totals. */
 	scoreRows(): ScoreRow[] {
-		const rows = this.mode.scoreRows();
-		const admins = new Set<number>();
-		for (const c of this.clients) if (c.helloed && c.admin) admins.add(c.id);
-		return admins.size === 0 ? rows : rows.map((r) => (admins.has(r.id) ? { ...r, admin: true } : r));
+		const byId = new Map<number, Client>();
+		for (const c of this.clients) if (c.helloed) byId.set(c.id, c);
+		return this.mode.scoreRows().map((r) => {
+			const c = byId.get(r.id);
+			const totals = c && c.accountId !== null ? this.stats.totals(c.accountId) : null;
+			return {
+				...r,
+				pointsTotal: totals?.pointsTotal ?? null,
+				playtimeSecs: totals?.playtimeSecs ?? null,
+				...(c?.admin ? { admin: true } : {})
+			};
+		});
 	}
 
 	sendScoreboard(): void {

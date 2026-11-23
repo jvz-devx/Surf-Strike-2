@@ -88,6 +88,8 @@ Each client simulates its own movement with zero input lag. The server trusts po
 | S→C | `snapshot` (all players' state) | binary, 32 Hz |
 | C→S | `zone { kind, index, tick }` | JSON |
 | S→C | `runResult { ticks, rank, pb, record, splits, records }` (`records`: the runner's PB, rank and map record after the run, PB or not) | JSON |
+| S→C | `scoreboard { rows[] }` (1 Hz, every mode): `ScoreRow` per player, with the mode's fields and the account totals `pointsTotal` (lifetime earned) and `playtimeSecs`; both are `null` for guests and absent on older servers (shown as `–`) | JSON |
+| S→C | `records` inside `welcome`, `mapChange`, `runResult`, `auth` and `records`: `{ pbTicks, pbSplits, rank, recordTicks, recordName, top? }`; `top` = first 10 times `{ rank, name, ticks, self? }` on race maps, absent on older servers and in other modes | JSON |
 | S→C | `records { map, records }`: pushed to every other player on the map when a run sets a new PB (their rank and the map record may have changed) | JSON |
 | C↔S | `chat { text }` / `chat { from, text, admin? }` (`admin`: server-set marker for admin senders; scoreboard rows carry the same flag) | JSON |
 | C→S | `admin { action }`: `setMapEnabled { mapId, enabled }`, `ban { targetId? \| username?, reason? }`, `unban { banId }`, `forceMap { mapId }`, `extend`, `listBans`. Re-checked on the server; non-admins get `adminResult { ok: false }` and nothing happens | JSON |
@@ -122,6 +124,19 @@ Username + password, no email or verification ([gameplay.md](gameplay.md#account
 | `accounts` | `id`, `username`, `username_lower` (unique), `password_hash`, `created_at`, `last_login` |
 | `sessions` | `token_hash` (SHA-256 hex), `account_id`, `created_at`, `expires_at` |
 | `replays` | `map` (primary key), `account_id`, `time_ticks`, `samples`, `data` (deflate-raw BLOB), `created_at`: one record ghost per map, replaced only by a faster validated account run ([gameplay.md](gameplay.md#ghosts)) |
+
+### Account totals
+
+`apps/server/src/account-stats.ts` (`AccountStats`, owned by the lobby) counts the time online per account and serves the totals for the scoreboard ([gameplay.md](gameplay.md#points-and-playtime)).
+
+- Connections join it at hello-token login, `login` and `register`, and leave it at `logout` and close. Connections are kept per account, so an account connected twice counts once.
+- Whole seconds are added to `account_stats` in one transaction every 60 s (`PLAYTIME_FLUSH_MS`), when an account's last connection leaves, and in `Lobby.close()`. A failed write is logged and retried. The clock is `performance.now()` (monotonic).
+- Points are read when the account comes online and are never written yet. `points_total` (lifetime) and `points_balance` (spendable coins) are independent columns, both in tenths of a point ([economy.md](economy.md)); the wire field is whole points, rounded down.
+- The table is created with `CREATE TABLE IF NOT EXISTS`; no existing table is changed, and an older server ignores it. A missing row means zeros.
+
+| Table | Columns |
+| --- | --- |
+| `account_stats` | `account_id` (primary key, references `accounts`, deleted with it), `playtime_secs`, `points_total`, `points_balance` (integers, default 0) |
 
 ## Connection limit
 

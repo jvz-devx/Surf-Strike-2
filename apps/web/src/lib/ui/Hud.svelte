@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import type { ScorePanelInput } from '@surf/shared';
 	import type { GameApi, HudStateShape } from '#lib/game/contract.js';
 	import { cvarNum } from '#lib/ui/format.js';
 	import Speedometer from '#lib/ui/Speedometer.svelte';
@@ -10,7 +11,7 @@
 	import Chat from '#lib/ui/Chat.svelte';
 	import VotePanel from '#lib/ui/VotePanel.svelte';
 	import RtvRequest from '#lib/ui/RtvRequest.svelte';
-	import RecordPanel from '#lib/ui/RecordPanel.svelte';
+	import ScorePanel from '#lib/ui/ScorePanel.svelte';
 	import Crosshair from '#lib/ui/Crosshair.svelte';
 	import KeysDisplay from '#lib/ui/KeysDisplay.svelte';
 	import PosReadout from '#lib/ui/PosReadout.svelte';
@@ -43,6 +44,22 @@
 	const showFps = $derived(cvarNum(hud.cvars, 'cl_showfps', 0) !== 0);
 	const showKeys = $derived(cvarNum(hud.cvars, 'cl_showkeys', 0) !== 0);
 	const showPos = $derived(cvarNum(hud.cvars, 'cl_showpos', 0) !== 0);
+	const showScorePanel = $derived(cvarNum(hud.cvars, 'cl_scorepanel', 1) !== 0 && !hud.scoreboardOpen);
+	const scoreInput: ScorePanelInput = $derived({
+		rows: hud.scoreboard,
+		selfId: hud.selfId,
+		selfName: hud.selfName,
+		online: hud.online,
+		state: hud.modeState,
+		staged: hud.stageKind === 'stage',
+		records: {
+			pbTicks: hud.pbTicks,
+			pbRank: hud.pbRank,
+			recordTicks: hud.recordTicks,
+			recordName: hud.recordName,
+			top: hud.recordTop
+		}
+	});
 	const modal = $derived(hud.consoleOpen || hud.settingsOpen || hud.authPanelOpen);
 	const clickHint = $derived(!hud.pointerLocked && !modal && !hud.chatOpen && !hud.desktopOnly);
 </script>
@@ -79,20 +96,9 @@
 			<div class="left-middle"><VotePanel vote={hud.vote} {now} /></div>
 		{/if}
 
-		{#if race}
-			<div class="right-middle">
-				<RecordPanel
-					pbTicks={hud.pbTicks}
-					pbRank={hud.pbRank}
-					recordTicks={hud.recordTicks}
-					recordName={hud.recordName}
-					unofficial={hud.unofficial}
-				/>
-			</div>
-		{/if}
-
 		{#if hud.zombies}<ZombiesHud z={hud.zombies} {now} />{/if}
 		{#if hud.infected}<InfectedHud inf={hud.infected} {now} />{/if}
+		{#if showScorePanel}<ScorePanel mode={hud.gameMode} input={scoreInput} unofficial={race && hud.unofficial} />{/if}
 		{#if !hud.zombies?.scoped && !hud.infected?.scoped && !hud.hns?.blindfold}<Crosshair cvars={hud.cvars} />{/if}
 
 		<div class="below-crosshair">
@@ -130,6 +136,8 @@
 				maxPlayers={hud.maxPlayers}
 				staged={hud.stageKind === 'stage'}
 				mode={hud.gameMode}
+				selfId={hud.selfId}
+				state={hud.modeState}
 			/>
 		{/if}
 	</div>
@@ -198,12 +206,6 @@
 	.left-middle {
 		position: absolute;
 		left: 18px;
-		top: 50%;
-		transform: translateY(-50%);
-	}
-	.right-middle {
-		position: absolute;
-		right: 18px;
 		top: 50%;
 		transform: translateY(-50%);
 	}

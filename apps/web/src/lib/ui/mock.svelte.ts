@@ -6,15 +6,73 @@
  * start the Esc menu on a submenu (`&solo=0` makes map changes vote-only; `&view=admin`
  * logs in as an admin and opens the Admin submenu, `&tab=maps|players|bans`; `&rtv=1` shows
  * an RTV request instead of the map vote, `&rtv=cooldown` a declined-request cooldown).
+ * Scores: `&mode=<gamemode>` (its score panel and scoreboard), `&players=<n>` (default 5),
+ * `&self=<n>` your position, `&old=1` an older server (no leaderboard top, no totals),
+ * `&novote=1` without the map vote.
  */
-import { Status, TICK_RATE } from '@surf/shared';
+import { gameMode, isGameModeId, Status, TICK_RATE, type GameModeId, type ModeState, type ScoreRow } from '@surf/shared';
 import type { GameApi, GameHandle, HudStateShape } from '#lib/game/contract.js';
 
 const T = TICK_RATE;
 
+const MOCK_NAMES = ['glidepath', 'you', 'cirrus', 'boreal', 'WWWWWWWWWWWWWWWWWWWWWWWW', 'A name of 24 characters!', 'Guest-4f1a', 'tim'];
+
+/** Scoreboard rows as the mode's server module builds them. */
+function mockRows(mode: GameModeId, n: number, self: number, old: boolean): ScoreRow[] {
+	const rows: ScoreRow[] = [];
+	for (let i = 0; i < n; i++) {
+		const base: ScoreRow = {
+			id: i + 1,
+			name: i === self - 1 ? 'you' : (MOCK_NAMES.filter((x) => x !== 'you')[i] ?? `player ${i + 1}`),
+			rank: null,
+			pbTicks: null,
+			status: Status.Idle,
+			stage: 0,
+			ping: 20 + ((i * 17) % 90),
+			spectating: false,
+			admin: i === 7 || undefined
+		};
+		if (!old) {
+			const guest = i % 3 === 2;
+			base.pointsTotal = guest ? null : i === 0 ? 1_234_567 : 0;
+			base.playtimeSecs = guest ? null : [987 * 3600 + 34 * 60, 45_260, 59, 2_040][i % 4];
+		}
+		const score = Math.max(0, 180 - i * 11.3);
+		const byMode: Record<GameModeId, Partial<ScoreRow>> = {
+			surf: { rank: i < 4 ? i + 1 : null, pbTicks: i < 4 ? Math.round((138.9 + i * 4.2) * T) : null, status: i % 2 ? Status.Running : Status.StartZone, stage: i + 1 },
+			bhop: { rank: i + 1, pbTicks: Math.round((58.9 + i * 4.2) * T), status: Status.Running },
+			tag: { score, it: i === 1, status: i === 1 ? Status.Tagger : Status.Runner },
+			zombies: { kills: Math.max(0, 140 - i * 13), deaths: i % 3, status: i % 4 === 3 ? Status.Down : Status.Alive },
+			infected: {
+				score: Math.max(0, 2450 - i * 150),
+				kills: Math.max(0, 24 - i * 2),
+				deaths: i,
+				status: i === 2 ? Status.Alpha : i % 2 ? Status.Infected : Status.Alive
+			},
+			hns: { score, kills: i % 4, status: i % 3 === 1 ? Status.Seeker : Status.Hider }
+		};
+		rows.push({ ...base, ...byMode[mode] });
+	}
+	if (n > 1) rows.push({ ...rows[0]!, id: 99, name: 'lurker', status: Status.Spectating, spectating: true });
+	return rows;
+}
+
+/** Only what the score metrics read of a mode state. */
+function mockState(mode: GameModeId, rows: ScoreRow[]): ModeState | null {
+	if (mode === 'surf' || mode === 'bhop') return null;
+	const players = rows.map((r, i) => ({ id: r.id, team: r.status === Status.Alive ? 'survivor' : 'infected', streak: i * 3 }));
+	return { mode, phase: 'playing', round: 12, progress: 0.43, checkpoint: 2, checkpoints: 5, players } as unknown as ModeState;
+}
+
 export function createMockGame(canvas: HTMLCanvasElement, open: string | null): GameHandle {
 	const t0 = performance.now();
 	const params = new URLSearchParams(location.search);
+	const modeParam = params.get('mode');
+	const mode: GameModeId = isGameModeId(modeParam) ? modeParam : 'surf';
+	const old = params.has('old');
+	const selfPos = Number(params.get('self') ?? 2);
+	const rows = mockRows(mode, Number(params.get('players') ?? 5), selfPos, old);
+	const race = gameMode(mode).family === 'race';
 	const asAdmin = params.get('view') === 'admin' || params.has('admin');
 	const hud: HudStateShape = $state({
 		online: true,
@@ -24,8 +82,8 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		mapId: 'surf_ember',
 		mapTitle: 'Ember',
 		mapTimeLeft: 462,
-		gameMode: 'surf',
-		modeFamily: 'race',
+		gameMode: mode,
+		modeFamily: gameMode(mode).family,
 		tag: null,
 		zombies: null,
 		infected: null,
@@ -49,10 +107,19 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		stageKind: 'stage',
 		unofficial: false,
 		splitPopup: { label: 'Stage 3', ticks: Math.round(72.402 * T), delta: Math.round(-0.213 * T), at: t0 },
-		pbTicks: Math.round(151.337 * T),
-		pbRank: 4,
-		recordTicks: Math.round(138.902 * T),
-		recordName: 'glidepath',
+		pbTicks: race ? Math.round(151.337 * T) : null,
+		pbRank: race ? selfPos : null,
+		recordTicks: race ? Math.round((selfPos === 1 ? 151.337 : 138.902) * T) : null,
+		recordName: race ? 'glidepath' : null,
+		recordTop:
+			race && !old
+				? Array.from({ length: 10 }, (_, i) => ({
+						rank: i + 1,
+						name: i === selfPos - 1 ? 'you' : (MOCK_NAMES.filter((x) => x !== 'you')[i] ?? `runner ${i + 1}`),
+						ticks: Math.round((i === selfPos - 1 ? 151.337 : 138.902 + i * 4.1) * T),
+						...(i === selfPos - 1 ? { self: true } : {})
+					}))
+				: null,
 		account: open === 'auth' ? null : asAdmin ? { username: 'Tim', admin: true } : { username: 'you' },
 		adminState: asAdmin
 			? {
@@ -86,7 +153,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			{ id: 4, from: null, text: 'New map record by glidepath: 02:18.902', system: true, at: t0 }
 		],
 		chatOpen: open === 'chat',
-		vote: params.has('rtv')
+		vote: params.has('rtv') || params.has('novote')
 			? null
 			: {
 					labels: [
@@ -122,13 +189,10 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 				: null,
 		rtvCooldown: params.get('rtv') === 'cooldown' ? { until: t0 + 45_000, reason: 'declined' } : null,
 		scoreboardOpen: open === 'scoreboard',
-		scoreboard: [
-			{ id: 1, name: 'glidepath', rank: 1, pbTicks: Math.round(138.902 * T), status: Status.Running, stage: 5, ping: 24, spectating: false },
-			{ id: 2, name: 'you', rank: 4, pbTicks: Math.round(151.337 * T), status: Status.Running, stage: 3, ping: 31, spectating: false },
-			{ id: 3, name: 'cirrus', rank: null, pbTicks: null, status: Status.StartZone, stage: 0, ping: 58, spectating: false },
-			{ id: 4, name: 'boreal', rank: 2, pbTicks: Math.round(142.1 * T), status: Status.Finished, stage: 6, ping: 77, spectating: false },
-			{ id: 5, name: 'lurker', rank: 9, pbTicks: Math.round(190 * T), status: Status.Spectating, stage: 0, ping: 40, spectating: true }
-		],
+		scoreboard: rows,
+		selfId: selfPos,
+		selfName: 'you',
+		modeState: mockState(mode, rows),
 		spectating: null,
 		consoleOpen: open === 'console',
 		consoleLines: [
@@ -161,6 +225,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			cl_crosshaircolor_b: 0,
 			cl_crosshairdot: 0,
 			cl_ghost: 1,
+			cl_scorepanel: 1,
 			cl_hideplayers: 0
 		}
 	});

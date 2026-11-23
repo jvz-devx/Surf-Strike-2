@@ -114,6 +114,8 @@ const ZERO_VEC: Vec3 = { x: 0, y: 0, z: 0 };
 const MAX_CHAT_LINES = 100;
 const MAX_CONSOLE_LINES = 500;
 const SOLO_VOTER = 'local';
+/** Scoreboard row id of the local player offline. */
+const SOLO_ROW_ID = 0;
 const FULL_HOLDOFF_MS = 60_000;
 const SV_NAMES = Object.keys(SURF_CVARS) as Array<keyof Cvars>;
 const SV_BOOL = SV_BOOL_CVARS;
@@ -518,6 +520,7 @@ export class Game implements CommandContext {
 		h.mapTitle = mapTitle(def);
 		h.gameMode = this.gameMode.id;
 		h.modeFamily = this.gameMode.family;
+		h.modeState = null;
 		this.tagState = null;
 		this.tagFlash = null;
 		this.refreshTagView(performance.now());
@@ -552,6 +555,7 @@ export class Game implements CommandContext {
 		h.pbRank = f.pbRank;
 		h.recordTicks = f.recordTicks;
 		h.recordName = f.recordName;
+		h.recordTop = f.recordTop;
 	}
 
 	private pbSplits(): number[] | null {
@@ -1699,7 +1703,11 @@ export class Game implements CommandContext {
 		else if (req && req.canVote === !!this.spec) h.rtvRequest = { ...req, canVote: !this.spec };
 		if (h.rtvCooldown && now >= h.rtvCooldown.until) h.rtvCooldown = null;
 
-		if (this.mode === 'solo' && h.scoreboardOpen && now - this.lastSoloBoard > 500) this.refreshSoloBoard(now);
+		if (this.mode === 'solo' && now - this.lastSoloBoard > 500) this.refreshSoloBoard(now);
+		const selfId = this.mode === 'online' ? this.selfId : SOLO_ROW_ID;
+		if (h.selfId !== selfId) h.selfId = selfId;
+		const selfName = this.myName();
+		if (h.selfName !== selfName) h.selfName = selfName;
 		if (!this.isRace()) this.refreshTagView(now);
 
 		if (this.spec) {
@@ -1715,7 +1723,7 @@ export class Game implements CommandContext {
 		const st = this.tracker.state;
 		const race = this.isRace();
 		const row: ScoreRow = {
-			id: 0,
+			id: SOLO_ROW_ID,
 			name: this.myName(),
 			rank: null,
 			pbTicks: race ? (this.soloPb?.ticks ?? null) : null,
@@ -1735,6 +1743,8 @@ export class Game implements CommandContext {
 			Object.assign(row, { status: Status.Alive, kills: z.kills, deaths: z.deaths, score: z.score, it: undefined });
 		}
 		this.hud.scoreboard = [row];
+		const zm = this.zm?.soloState();
+		if (zm) this.hud.modeState = { mode: 'zombies', ...zm };
 	}
 
 	// -----------------------------------------------------------------------
@@ -2194,6 +2204,7 @@ export class Game implements CommandContext {
 				this.hud.scoreboard = m.rows;
 				break;
 			case 'modeState':
+				if (m.mode === this.gameMode.id) this.hud.modeState = m;
 				if (m.mode === 'zombies') this.zm?.onModeState(m, now);
 				else if (m.mode === 'infected') this.inf?.onModeState(m, now);
 				else if (m.mode === 'hns') this.hns?.onModeState(m, now);
@@ -2290,6 +2301,7 @@ export class Game implements CommandContext {
 		this.hud.rtvRequest = null;
 		this.hud.rtvCooldown = null;
 		this.hud.scoreboard = [];
+		this.hud.modeState = null;
 		this.remotes.clear();
 		this.renderer?.players.clear();
 		this.records = null;

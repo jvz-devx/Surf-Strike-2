@@ -78,6 +78,13 @@ export interface ScoreRow {
 	/** Zombies: kills and downs this round. */
 	kills?: number;
 	deaths?: number;
+	/**
+	 * Account totals, any mode (docs/gameplay.md#points-and-playtime): lifetime
+	 * earned points (not the spendable balance) and seconds online. Null for
+	 * guests, absent on older servers: shown as a dash.
+	 */
+	pointsTotal?: number | null;
+	playtimeSecs?: number | null;
 }
 
 /**
@@ -113,12 +120,27 @@ export interface HnsModeState extends HnsStateView {
 
 export type ModeState = TagModeState | ZombiesModeState | InfectedModeState | HnsModeState;
 
+/** One line of a map's leaderboard. */
+export interface RecordEntry {
+	/** 1-based; ties share the better rank. */
+	rank: number;
+	name: string;
+	ticks: number;
+	/** The receiving player's own time. */
+	self?: boolean;
+}
+
+/** Leaderboard entries in `MapRecordInfo.top`. */
+export const RECORDS_TOP = 10;
+
 export interface MapRecordInfo {
 	pbTicks: number | null;
 	pbSplits: number[] | null;
 	rank: number | null;
 	recordTicks: number | null;
 	recordName: string | null;
+	/** Race maps: the first RECORDS_TOP times (absent on older servers and in other modes). */
+	top?: RecordEntry[];
 }
 
 export type ClientMessage =

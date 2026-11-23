@@ -25,7 +25,7 @@ This page covers the race modes (surf, bhop). Tag, Zombie Run and hide and seek 
 - Stored per account per map: best time, splits, date. `!top`, `!pb`, the scoreboard rank/PB and the map record all use accounts and show usernames.
 - `!top` prints the top-10 for the current map in chat. `!pb` prints your own PB and rank.
 - A new map record is announced in chat to everyone.
-- The record panel (right side of the HUD: your PB, rank and the map record) is updated on join, map change, login/logout, after each of your own runs (PB or not), and whenever another player's new PB changes the leaderboard (new map record or a changed rank).
+- The score panel (right side of the HUD: map records, your PB and the gap to the record, [ui.md](ui.md#score-panel)) is updated on join, map change, login/logout, after each of your own runs (PB or not), and whenever another player's new PB changes the leaderboard (new map record or a changed rank).
 - Solo runs (offline) are shown locally but never saved to the leaderboard.
 
 SQLite tables (accounts and sessions: [architecture.md](architecture.md#accounts)):
@@ -35,11 +35,19 @@ SQLite tables (accounts and sessions: [architecture.md](architecture.md#accounts
 | `account_runs` | `id`, `account_id`, `map`, `time_ticks`, `splits_json`, `created_at` (unique per account and map) |
 | `players` | `id` (localStorage UUID), `name`, `first_seen`, `last_seen` (guest bookkeeping only) |
 | `runs` | Legacy, read-only: guest runs from before accounts, keyed by the localStorage UUID |
+| `account_stats` | `account_id` (primary key), `playtime_secs`, `points_total`, `points_balance` ([Points and playtime](#points-and-playtime)) |
 | `replays` | `map` (primary key), `account_id`, `time_ticks`, `samples`, `data` (BLOB), `created_at`: the map's record ghost ([Ghosts](#ghosts)) |
 
 Only each account's best run per map is kept; a slower run is discarded.
 
 Migration: tables are created with `CREATE TABLE IF NOT EXISTS`, so an existing database upgrades in place on start-up. The old `runs` table is left untouched but is no longer read or written: those runs were keyed by a guest UUID that anyone could reuse, and were timed at the old 128 tick, so they are not shown on any leaderboard.
+
+## Points and playtime
+
+Two totals per account, shown to everyone in the Tab scoreboard of every mode. Guests have no account and offline play has no server, so both show `–` there.
+
+- **Total playtime** is the time connected to the server while logged in, in any mode, spectating and idling included, added up across sessions (`12h 34m`). An account connected twice counts once. The server writes it every 60 s, on disconnect or logout and at shutdown, so a crash loses at most a minute.
+- **Total points** is the lifetime number of earned points. Nothing earns points yet ([economy.md](economy.md) is the design), so it is 0 for every account. The spendable balance (`points_balance`, coins) is a separate number, stored but not shown.
 
 ## Ghosts
 
@@ -74,7 +82,9 @@ Chat commands:
 
 ## Tab scoreboard
 
-Hold `Tab`. Columns: name, map rank, PB, status (`Start zone`, `Stage 3`, `Running`, `Spectating`), ping. Sorted by PB, players without a PB last. Header shows map name, time left and player count (`12 / 32`). On tag maps the columns are name (with an `IT` marker), score, status (`IT`, `Runner`, `Spectating`) and ping, sorted by score. On hide and seek maps they are name, role (`Hider`, `Seeker`, `Spectating`), finds, survived (mm:ss as a hider this round) and ping, sorted by survived time, then finds.
+Hold `Tab`. Every mode shows its own columns ([modes.md](modes.md#score-display)) and then **Total points** and **Total playtime** ([Points and playtime](#points-and-playtime)). Your own row is highlighted. Header shows map name, mode, time left and player count (`12 / 32`).
+
+Race columns: name, map rank, PB, status (`Start zone`, `Stage 3`, `Running`, `Spectating`), ping. Sorted by PB, players without a PB last. On tag maps the columns are name (with an `IT` marker), time not IT, status (`IT`, `Runner`, `Spectating`) and ping, sorted by score. On hide and seek maps they are name, role (`Hider`, `Seeker`, `Spectating`), finds, survived (mm:ss as a hider this round) and ping, sorted by survived time, then finds.
 
 ## Spectating
 
