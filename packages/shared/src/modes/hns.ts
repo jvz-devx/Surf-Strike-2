@@ -19,8 +19,8 @@ import { tagSpawns } from './tag.ts';
 export const HNS_MIN_PLAYERS = 2;
 /** Free-roam countdown once enough players are in (before the first round). */
 export const HNS_START_SECS = 5;
-/** Hiding phase: seekers frozen and blindfolded (CS:GO HNS servers: 15-60 s; we use 45). */
-export const HNS_HIDE_SECS = 45;
+/** Hiding phase: seekers frozen and blindfolded (CS:GO HNS servers: 15-60 s; we use 30). */
+export const HNS_HIDE_SECS = 30;
 /** Seeking phase length. */
 export const HNS_SEEK_SECS = 240;
 /** Round summary before the next round. */
