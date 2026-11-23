@@ -41,5 +41,6 @@ export type RunEvent =
 	| { type: 'zone'; kind: 'start' | 'stage' | 'checkpoint' | 'end'; index: number; tick: number }
 	| { type: 'split'; index: number; ticks: number }
 	| { type: 'finish'; ticks: number; splits: number[] }
-	| { type: 'teleport'; reason: 'trigger' | 'restart' | 'back' | 'finish' }
+	/** `dest`: a fixed-destination teleport zone moved the player there (view yaw = dest.yaw). */
+	| { type: 'teleport'; reason: 'trigger' | 'restart' | 'back' | 'finish'; dest?: Spawn }
 	| { type: 'enterStart' };

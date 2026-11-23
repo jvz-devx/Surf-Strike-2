@@ -451,7 +451,8 @@ export class Lobby {
 			case 'throwKnife':
 			case 'placeBeacon':
 			case 'callMoab':
-				// Zombies/infected weapons (docs/modes.md); the mode validates every field.
+			case 'knife':
+				// Zombies/infected weapons and hide-and-seek knife (docs/modes.md); the mode validates every field.
 				if (!c.spectating) this.mode.message?.(c, msg);
 				return;
 			case 'admin':

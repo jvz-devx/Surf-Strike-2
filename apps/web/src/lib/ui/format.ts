@@ -71,6 +71,10 @@ export function statusText(row: Pick<ScoreRow, 'status' | 'stage' | 'spectating'
 			return 'Alpha';
 		case Status.Infected:
 			return 'Infected';
+		case Status.Hider:
+			return 'Hider';
+		case Status.Seeker:
+			return 'Seeker';
 		default:
 			return 'Idle';
 	}

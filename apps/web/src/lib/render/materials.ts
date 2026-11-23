@@ -181,3 +181,25 @@ export function createBrushMaterial(def: MaterialDef, shared: SharedUniforms): T
 		...(see ? { transparent: true, depthWrite: false, side: THREE.DoubleSide } : {})
 	});
 }
+
+/** Fraction of its view distance a line vertex is pulled towards the camera in depth. */
+const LINE_DEPTH_PULL = 0.002;
+
+function pullLineDepth(shader: THREE.WebGLProgramParametersWithUniforms): void {
+	shader.vertexShader = shader.vertexShader.replace(
+		'#include <project_vertex>',
+		`#include <project_vertex>
+	gl_Position = projectionMatrix * vec4(mvPosition.xyz * ${(1 - LINE_DEPTH_PULL).toFixed(4)}, 1.0);`
+	);
+}
+
+/**
+ * Edge and outline lines lie exactly on brush faces, and WebGL ignores
+ * polygonOffset for lines, so they z-fight with those faces (stippled, flickering
+ * edges while the camera moves). Scaling the view-space position towards the eye
+ * keeps the line's screen position and only moves its depth slightly forward.
+ */
+export function biasLineDepth<T extends THREE.Material>(mat: T): T {
+	mat.onBeforeCompile = pullLineDepth;
+	return mat;
+}

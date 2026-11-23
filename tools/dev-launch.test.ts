@@ -83,11 +83,16 @@ test('parseArgs: bad input throws CliError', () => {
 	assert.equal(parseArgs(['--web-port', '27016', '--server-only']).webPort, 27016);
 });
 
-test('resolveTarget: every mode picks its first map', () => {
+test('resolveTarget: every mode with maps picks its first map, mapless modes throw CliError', () => {
 	for (const mode of GAME_MODE_IDS) {
+		const modeMaps = mapsForMode(mode);
+		if (modeMaps.length === 0) {
+			assert.throws(() => resolveTarget(mode), CliError);
+			continue;
+		}
 		const t = resolveTarget(mode);
 		assert.equal(t.mode, mode);
-		assert.equal(t.mapId, mapsForMode(mode)[0]!.id);
+		assert.equal(t.mapId, modeMaps[0]!.id);
 	}
 	assert.deepEqual(resolveTarget('infected'), { mapId: 'infected_outpost', mode: 'infected' });
 });

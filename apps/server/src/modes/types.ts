@@ -74,7 +74,7 @@ export interface ServerMode {
 }
 
 /** Client messages the lobby forwards to the mode as they are. */
-export type ModeClientMessage = Extract<ClientMessage, { type: 'fire' | 'reload' | 'loadout' | 'throwKnife' | 'placeBeacon' | 'callMoab' }>;
+export type ModeClientMessage = Extract<ClientMessage, { type: 'fire' | 'reload' | 'loadout' | 'throwKnife' | 'placeBeacon' | 'callMoab' | 'knife' }>;
 
 export const EMPTY_RECORDS: MapRecordInfo = Object.freeze({
 	pbTicks: null,

@@ -2,9 +2,9 @@
  * CS-style zone outlines: glowing box edges plus faint gradient walls.
  * Start green, end red, stages/checkpoints blue; teleports are invisible.
  */
-import type { MapDef, Zone } from '@surf/shared';
+import { isRaceMode, type MapDef, type Zone } from '@surf/shared';
 import * as THREE from 'three';
-import type { SharedUniforms } from './materials.js';
+import { biasLineDepth, type SharedUniforms } from './materials.js';
 
 const ZONE_COLORS: Record<string, number> = {
 	start: 0x3dff6e,
@@ -58,7 +58,11 @@ export function buildZoneMeshes(map: MapDef, shared: SharedUniforms): ZoneMeshes
 	const disposables: Array<{ dispose(): void }> = [];
 	const byColor = new Map<number, { lines: number[]; walls: number[]; h: number[] }>();
 
+	// Race zones (start, stages, checkpoints) only mean something in race modes;
+	// other modes (e.g. Zombies) use checkpoints internally, so only their end zone is drawn.
+	const race = isRaceMode(map.kind);
 	for (const z of map.zones) {
+		if (!race && z.type !== 'end') continue;
 		const color = ZONE_COLORS[z.type];
 		if (color === undefined) continue;
 		let b = byColor.get(color);
@@ -92,13 +96,15 @@ export function buildZoneMeshes(map: MapDef, shared: SharedUniforms): ZoneMeshes
 	for (const [color, b] of byColor) {
 		const lineGeo = new THREE.BufferGeometry();
 		lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(b.lines, 3));
-		const lineMat = new THREE.LineBasicMaterial({
-			color,
-			transparent: true,
-			blending: THREE.AdditiveBlending,
-			depthWrite: false,
-			fog: false
-		});
+		const lineMat = biasLineDepth(
+			new THREE.LineBasicMaterial({
+				color,
+				transparent: true,
+				blending: THREE.AdditiveBlending,
+				depthWrite: false,
+				fog: false
+			})
+		);
 		const lines = new THREE.LineSegments(lineGeo, lineMat);
 		lines.renderOrder = 2;
 		group.add(lines);
@@ -113,7 +119,13 @@ export function buildZoneMeshes(map: MapDef, shared: SharedUniforms): ZoneMeshes
 			transparent: true,
 			depthWrite: false,
 			side: THREE.DoubleSide,
-			blending: THREE.AdditiveBlending
+			blending: THREE.AdditiveBlending,
+			// Zones are usually sized to their room, so these walls are coplanar with the
+			// map's walls and floor edges: pull them towards the camera in depth so the glow
+			// always wins the depth test instead of z-fighting (flickering stripes) with the wall.
+			polygonOffset: true,
+			polygonOffsetFactor: -1,
+			polygonOffsetUnits: -4
 		});
 		const walls = new THREE.Mesh(wallGeo, wallMat);
 		walls.renderOrder = 2;

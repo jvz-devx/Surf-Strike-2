@@ -83,6 +83,19 @@ describe('RunValidator', () => {
 		assert.deepEqual(x.onZone('end', 0, 512, MS(512)), { ok: false, reason: 'position jump' });
 	});
 
+	it('accepts teleports to a fixed teleporter destination', () => {
+		const map = testMap();
+		map.zones.push({ type: 'teleport', min: { x: 500, y: -100, z: 0 }, max: { x: 600, y: 100, z: 100 }, to: 'stage', dest: { pos: { x: 1900, y: 0, z: 0 }, yaw: 90 } });
+		const v = new RunValidator(map);
+		v.onZone('start', 0, 0, 0);
+		v.onState(netState(2, 300));
+		v.onZone('stage', 2, 100, MS(100));
+		v.onState(netState(150, 550));
+		v.onState(netState(152, 1900, { flags: FLAG_TELEPORTED }));
+		v.onState(netState(512, 2050));
+		assert.equal((v.onZone('end', 0, 512, MS(512)) as { ok: boolean }).ok, true);
+	});
+
 	it('checks ticks against wall-clock time', () => {
 		const mk = () => {
 			const v = new RunValidator(testMap());

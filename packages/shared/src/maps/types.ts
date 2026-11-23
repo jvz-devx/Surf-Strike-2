@@ -22,6 +22,8 @@ export interface MapDef {
 	spawns?: Spawn[];
 	/** Zombies maps (required there): the route zombies follow and where they spawn (docs/maps.md). */
 	zombies?: ZombieRoute;
+	/** Hide and seek maps (required there): hider/seeker spawns and the seeker cage (docs/modes.md#hide-and-seek). */
+	hns?: HnsMapInfo;
 	brushes: BrushDef[];
 	zones: Zone[];
 	theme: Theme;
@@ -54,6 +56,22 @@ export interface ZombieRoute {
 	gates: ZombieGate[];
 }
 
+/**
+ * Hide and seek spawns (docs/modes.md#hide-and-seek). Hiders spawn spread over
+ * `hiderSpawns` at round start; seekers (and players converted mid-round)
+ * spawn at `seekerSpawns`. During the hiding phase seekers are frozen and
+ * blindfolded at their spawn; `seekerCage` (optional) is the box their spawns
+ * sit in, used by the server to keep frozen seekers there.
+ */
+export interface HnsMapInfo {
+	/** >= 8 spread-out hider start positions. */
+	hiderSpawns: Spawn[];
+	/** >= 2 seeker start positions (ideally inside `seekerCage`). */
+	seekerSpawns: Spawn[];
+	/** Box around the seeker spawns (feet positions inside it). */
+	seekerCage?: { min: Vec3; max: Vec3 };
+}
+
 export interface ZombieGate {
 	min: Vec3;
 	max: Vec3;
@@ -81,7 +99,17 @@ export interface Spawn {
  * Brush descriptions. The collision module turns each into a convex solid
  * (planes + bevels + face polygons); the renderer draws the face polygons.
  */
-export type BrushDef =
+/**
+ * Fields every brush may carry. `solid: false` makes a "fake" brush: rendered
+ * like any other but with no collision (players pass through it — hide and
+ * seek clip-through walls/props). Defaults to solid.
+ */
+export interface BrushCommon {
+	solid?: boolean;
+}
+
+export type BrushDef = BrushCommon &
+	(
 	| { type: 'box'; min: Vec3; max: Vec3; material: string }
 	| {
 			/**
@@ -101,7 +129,8 @@ export type BrushDef =
 			side: 'both' | 'left' | 'right';
 			material: string;
 	  }
-	| { type: 'convex'; planes: Plane[]; material: string };
+	| { type: 'convex'; planes: Plane[]; material: string }
+	);
 
 export type Zone =
 	| { type: 'start' | 'end'; min: Vec3; max: Vec3 }
@@ -112,7 +141,18 @@ export type Zone =
 			max: Vec3;
 			respawn: Spawn;
 	  }
-	| { type: 'teleport'; min: Vec3; max: Vec3; to: 'stage' | 'start' };
+	| {
+			type: 'teleport';
+			min: Vec3;
+			max: Vec3;
+			to: 'stage' | 'start';
+			/**
+			 * Fixed destination (map teleporters, e.g. hide and seek secret
+			 * passages). When set it overrides `to`: the player is moved to
+			 * `dest.pos` facing `dest.yaw` with velocity zeroed.
+			 */
+			dest?: Spawn;
+	  };
 
 export interface MaterialDef {
 	/** Base albedo, hex (0xRRGGBB). */

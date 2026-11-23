@@ -254,6 +254,15 @@ export class GameAudio {
 		else if (name === 'perk' || name === 'moabReady') this.recordChime();
 	}
 
+	/**
+	 * Hide and seek sounds (docs/modes.md#hide-and-seek). The seeker release
+	 * reuses the vote gavel (a real CC0 recording, CREDITS.md); the knife swing
+	 * and hit stay silent until real CC0 recordings are sourced.
+	 */
+	hns(name: 'swing' | 'hit' | 'release'): void {
+		if (name === 'release') this.voteChime();
+	}
+
 	/** The one click voice (chat messages). */
 	chatTick(): void {
 		this.play('click', eventDb('click'), false);

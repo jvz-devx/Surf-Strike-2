@@ -29,6 +29,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		tag: null,
 		zombies: null,
 		infected: null,
+		hns: null,
 		maps: [
 			{ id: 'surf_aurora', title: 'Aurora', kind: 'surf', difficulty: 'easy' },
 			{ id: 'surf_ember', title: 'Ember', kind: 'surf', difficulty: 'hard' },

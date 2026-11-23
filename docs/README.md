@@ -4,7 +4,7 @@ Browser-based surf and bhop game with Source-engine movement. One shared lobby, 
 
 Status: design agreed 2026-11-21. Milestones 0–10 implemented 2026-11-21; milestone 11 (deploy, playtest) pending.
 
-Run with Node 24 (`.node-version`, picked up by `fnm`): `pnpm install`, then `pnpm dev` (client), `pnpm server` (dev game server on `:27016`; dev builds connect there, production `./start.sh` uses `:27015`), `pnpm host` (server + tunnel + discovery; for the public Vercel site run `./start.sh` from the repo root, which preflights `.env`, `cloudflared`, deps and the port, then runs `pnpm host`; `--port`, `--db`, `--help`), `pnpm check`, `pnpm test`, `pnpm build`.
+Local dev instance: `./start_test.sh` (web client with hot reload on `:5173` + dev game server on `:27016` with its own `apps/server/data/dev.db`; `--web-port`, `--db`, `--fresh`, `--help`; Ctrl+C stops both). Run with Node 24 (`.node-version`, picked up by `fnm`): `pnpm install`, then `pnpm dev` (client), `pnpm server` (dev game server on `:27016`; dev builds connect there, production `./start.sh` uses `:27015`), `pnpm host` (server + tunnel + discovery; for the public Vercel site run `./start.sh` from the repo root, which preflights `.env`, `cloudflared`, deps and the port, then runs `pnpm host`; `--port`, `--db`, `--help`), `pnpm check`, `pnpm test`, `pnpm build`.
 
 ## Quick launch and testing scripts
 
@@ -59,15 +59,15 @@ In solo mode (no server), `?map=<id>` opens that map directly, e.g. `http://loca
 | Netcode | Client simulates its own movement; server validates runs and relays state |
 | Physics | CS2 movement: 64 tick with subtick input on a Source `CGameMovement` port, SharpTimer CS2 surf/bhop cvars |
 | Rendering/collision | Three.js; custom convex-brush AABB traces, no physics engine |
-| Gamemodes | `MapDef.kind` is the gamemode: surf and bhop (race: timer, zones, PBs) and tag (server-run rounds, score = time not IT); rotation mixes all modes ([modes.md](modes.md)) |
+| Gamemodes | `MapDef.kind` is the gamemode: surf and bhop (race: timer, zones, PBs), tag (server-run rounds, score = time not IT) and zombies (co-op escape with weapons against AI zombies, gates, turned players fight for the zombies); rotation mixes all modes ([modes.md](modes.md)) |
 | Features | Timer, zones, stages, PBs, top-10 leaderboard, chat, Tab scoreboard, spectate |
-| Not included | Practice `!saveloc`/`!tele`, weapons, anti-cheat, mobile |
+| Not included | Practice `!saveloc`/`!tele`, weapons outside zombies, anti-cheat, mobile |
 | Identity | Simple accounts (username + password, no email/verification) in the server's SQLite; only accounts' runs reach the leaderboard. Guests pick a name and play everything without saving runs |
 | Settings | Developer console (`~`) plus an Esc menu (Change map, Settings, Account) |
 | Admin | Esc › Admin for accounts in `ADMIN_USERNAMES` (default `tim`; by account, never display name): enable/disable maps, force map change, ban/unban (account, guest key + IP, close 4009) |
 | HUD | CS2-era layout and feel, original art, open fonts |
 | Map vote | 15:00 per map; vote at 0:30 left; 3 other maps + "Extend 10 min"; `!rtv` at 60% |
-| Maps | 9 original: surf (aurora, ember, skyrend, hadal: all rated easy), bhop (meadow easy, circuit / reliquary / rimefall hard), tag (quayside); themed, stylised |
+| Maps | original: surf (aurora, ember, skyrend, hadal: all rated easy), bhop (meadow easy, circuit / reliquary / rimefall hard), tag (quayside), zombies (lowtide); themed, stylised |
 | Lobby | 32 players max, no player collision, low-poly humanoids with name tags |
 | Platform | Desktop browsers, mouse + keyboard, pointer lock |
 | Audio | Real CC0 field/foley recordings (Freesound), one measured hall IR; no synthesised sound ([ui.md](ui.md#audio), [CREDITS.md](../CREDITS.md)) |

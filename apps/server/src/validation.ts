@@ -56,6 +56,8 @@ export class RunValidator {
 		const ends: Box[] = [];
 		for (const z of map.zones) {
 			if (z.type === 'end') ends.push(z);
+			// Fixed-destination teleporters: a FLAG_TELEPORTED jump to `dest` is legal.
+			else if (z.type === 'teleport' && z.dest) respawns.push(z.dest.pos);
 			else if (z.type === 'stage' || z.type === 'checkpoint') {
 				respawns.push((z.respawn as Spawn).pos);
 				if (z.type === this.progressKind) last = Math.max(last, z.index);

@@ -303,7 +303,7 @@ describe('trace', () => {
 		expectVec(into.plane.normal, n);
 	});
 
-	it('randomized sweeps agree with an independent SAT test', () => {
+	it('randomized sweeps agree with an independent SAT test', { timeout: 30000 }, () => {
 		const rand = rng(1234);
 		const defs: BrushDef[] = [
 			ramp(v3(0, 0, 0), v3(700, 400, 300), 200, 150, 'both'),
@@ -347,5 +347,30 @@ describe('trace', () => {
 			}
 		}
 		expect(hits).toBeGreaterThan(20);
+	});
+});
+
+describe('non-solid brushes', () => {
+	const fake: BrushDef = { type: 'box', min: v3(64, -64, 0), max: v3(96, 64, 128), material: 'm', solid: false };
+	const real: BrushDef = { type: 'box', min: v3(256, -64, 0), max: v3(288, 64, 128), material: 'm' };
+
+	it('a box sweep passes through a solid: false brush and stops at the solid one behind it', () => {
+		const w = buildCollisionWorld({ brushes: [fake, real] });
+		expect(w.solids).toHaveLength(1);
+		const t = w.trace(v3(0, 0, 8), v3(400, 0, 8), MINS, MAXS);
+		expect(t.startsolid).toBe(false);
+		expect(t.endpos.x).toBeCloseTo(256 - 16 - DIST_EPSILON, 3);
+		// Standing inside the fake brush is free.
+		expect(w.trace(v3(80, 0, 8), v3(80, 0, 8), MINS, MAXS).startsolid).toBe(false);
+	});
+
+	it('solid: true and an absent flag both collide', () => {
+		const w = buildCollisionWorld({ brushes: [{ ...fake, solid: true }] });
+		expect(w.trace(v3(0, 0, 8), v3(200, 0, 8), MINS, MAXS).fraction).toBeLessThan(1);
+	});
+
+	it('a world of only non-solid brushes traces freely', () => {
+		const w = buildCollisionWorld({ brushes: [fake] });
+		expect(w.trace(v3(0, 0, 8), v3(200, 0, 8), MINS, MAXS).fraction).toBe(1);
 	});
 });

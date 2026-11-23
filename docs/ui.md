@@ -13,7 +13,8 @@ The HUD is Svelte components layered over the Three.js canvas.
 | Top centre | Map name and time left (`surf_ember · 07:42`) |
 | Top right | Connection status (`Online · 12 / 32` or `Offline — solo`), FPS if `cl_showfps 1` |
 | Bottom left | Chat (fades after 8 s; full history while typing) |
-| Left middle | Vote panel (options with key numbers and live vote counts, countdown bar) |
+| Left middle | Vote panel (up to 7 options "Surf · Kessler" … "Extend 10 min" with key numbers and live vote counts, countdown bar) |
+| Top centre, below map name | RTV request modal (see [RTV request](#rtv-request)) |
 | Right middle | PB and map record for this map |
 | Centre | Crosshair (configurable) |
 | Below crosshair | Pressed keys (W A S D, jump, crouch) if `cl_showkeys 1` |
@@ -21,6 +22,22 @@ The HUD is Svelte components layered over the Three.js canvas.
 | Top centre, spectating | `Spectating <name>` bar with controls hint |
 
 The speed number turns green while gaining speed and red while losing speed, as on surf servers.
+
+## RTV request
+
+A small CS2-style vote notice (like the kick or pause vote) at the top centre, under the map name, while an RTV request is open ([gameplay.md](gameplay.md#map-rotation-and-voting); `RtvRequest.svelte`):
+
+- Header "Map vote request" and the seconds left; text "**<name>** wants to vote for a new map (Bhop · Meadow)" (the nominated map, if any).
+- Two buttons **1 Yes** / **2 No** with live counts, your own answer highlighted (the initiator starts on Yes), a 20 s countdown bar, and "1 = Yes · 2 = No · 2/4 yes needed".
+- Keys `1` / `2` answer while the request is open (they do not trigger their binds then; `3`+ keep theirs). With a free cursor (pointer not locked), the buttons can be clicked.
+- Spectators see it with "Spectating: you cannot vote".
+- When it closes it shows "Passed: map vote starting" (green) or "Declined" (red) for 2.5 s; a passed request is replaced by the vote panel at once.
+
+Key routing (`apps/web/src/lib/game/vote.ts` `routeVoteKey`, ahead of binds): map vote open: `1`–`7` vote; else RTV request open: `1` yes, `2` no; else the key's bind runs (for example zombies weapon slots).
+
+## Zombies HUD
+
+Shown on zombies maps (`ZombiesHud.svelte`, [modes.md](modes.md#zombies)): a round banner under the map name (countdown; Survivor/Zombie, round clock, zone, zombies alive, your kills / team kills; result summary), route progress bar and the gate line ("Gate 2/5: get half the survivors into the green area" or "Gate 2/5 opens in 23 s"), short flash banners (checkpoint, gate, turned), kill feed top right, health (5 pips; a bar as a zombie) and weapon / ammo / reload bar bottom right, a loadout list (keys 1-4) while it is open, hit markers (white, yellow for headshots, red for kills), a red vignette when hit, and the sniper scope overlay. Binds in zombies: mouse1 fire, mouse2 scope, R reload, 1-4 weapon (map vote while one is open).
 
 ## Account panel
 
@@ -66,7 +83,7 @@ Main menu (left column): brand, current map and mode, then the entries **Resume*
 
 Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the open submenu, `←`/`→` (and `Home`/`End`) switch tabs. `Esc` goes back one level (submenu to main menu), then resumes. In the map filter, `Esc` first clears the text. Focus is always visible.
 
-- **Change map**: tabs **All** plus one per gamemode with maps, in `GAME_MODES` registry order and labels (Surf, Bhop, Tag, …), so new modes appear without UI changes. Opens on the current map's mode. Within a mode, maps sort by difficulty (easy first), then title. Each row shows title, id, an easy/hard badge, and marks the current map. A filter box matches title or id. Picking a map switches at once and resumes. This works in solo or when you are alone on the server (`canChangeMap`); otherwise the list is read-only under the notice "Map changes go through the vote (!rtv)".
+- **Change map**: tabs **All** plus one per gamemode with maps, in `GAME_MODES` registry order and labels (Surf, Bhop, Tag, …), so new modes appear without UI changes. Opens on the current map's mode. Within a mode, maps sort by difficulty (easy first), then title. Each row shows title, id, an easy/hard badge, and marks the current map. A filter box matches title or id. Picking a map switches at once and resumes in solo or when you are alone on the server (`canChangeMap`). With others online every map stays clickable (button tooltip and tag "Request map vote"): picking one starts an RTV request nominating it and resumes, so the modal is visible. The notice above the list says so, or, when requests are not possible, why and for how long: "Map vote declined — try again in 45 s", "Map vote requests open in 12 s" (first 20 s of a map), "A map vote is in progress", "A map vote request is open", or "Spectators cannot request a map vote" (rows read-only then). The current map and admin-disabled maps ("Disabled by admin") cannot be nominated. State logic: `mapMenuState` / `mapRowPickable` in `menu.ts`.
 - **Settings**: tabs
   - Mouse: sensitivity (slider + number), `m_yaw`, `m_pitch`
   - Video: FOV, show FPS, show position
@@ -99,7 +116,7 @@ The race ghost ([gameplay.md](gameplay.md#ghosts)) is the remote-player humanoid
 | `Ctrl` | Crouch |
 | `Y` | Chat |
 | `Tab` | Scoreboard |
-| `1`–`4` | Vote (when no vote is open: Zombies weapons; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B.) |
+| `1`–`8` | Map vote (while open); `1` / `2` = yes / no on an RTV request; else their binds (Zombies weapons `1`–`4`; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B.) |
 | `M` | Toggle spectate |
 | `R` | Restart run (`!r`); Zombies / Infected reload |
 | `E` | Infected: plant a respawn beacon (`beacon`) |

@@ -4,6 +4,7 @@
  */
 import type { Cvars } from './cvars.ts';
 import type { GameModeId } from './modes/index.ts';
+import type { HnsEvent, HnsStateView } from './modes/hns.ts';
 import type { InfEvent, InfStateView } from './modes/infected/game.ts';
 import type { TagPhase, TagScore } from './modes/tag.ts';
 import type { ZmEvent, ZmStateView } from './modes/zombies/game.ts';
@@ -31,10 +32,14 @@ export const Status = {
 	Alive: 7,
 	/** Zombies: down, waiting for the next checkpoint. */
 	Down: 8,
+	/** Hide and seek: hiding this round. */
+	Hider: 9,
+	/** Hide and seek: seeking (picked at round start or found). */
+	Seeker: 10,
 	/** Infected: Patient Zero (first infected, keeps gun until first infection). */
-	Alpha: 9,
+	Alpha: 11,
 	/** Infected: turned player hunting with claws and throwing knife. */
-	Infected: 10
+	Infected: 12
 } as const;
 export type Status = (typeof Status)[keyof typeof Status];
 
@@ -98,7 +103,12 @@ export interface InfectedModeState extends InfStateView {
 	mode: 'infected';
 }
 
-export type ModeState = TagModeState | ZombiesModeState | InfectedModeState;
+/** Hide and seek round state (docs/modes.md#hide-and-seek). */
+export interface HnsModeState extends HnsStateView {
+	mode: 'hns';
+}
+
+export type ModeState = TagModeState | ZombiesModeState | InfectedModeState | HnsModeState;
 
 export interface MapRecordInfo {
 	pbTicks: number | null;
@@ -152,6 +162,12 @@ export type ClientMessage =
 	| { type: 'placeBeacon' }
 	/** Infected: a survivor calls their earned M.O.A.B. (kill streak; detonates after a countdown). */
 	| { type: 'callMoab' }
+	/**
+	 * Hide and seek (docs/modes.md#hide-and-seek): a seeker's knife swing.
+	 * `origin` is the eye, `dir` a unit vector; the server resolves the hit
+	 * (lag-compensated against the hiders' recent positions).
+	 */
+	| { type: 'knife'; origin: Vec3; dir: Vec3 }
 	/** Admin menu (docs/gameplay.md#admin): re-checked on the server, ignored for non-admins. */
 	| { type: 'admin'; action: AdminAction };
 
@@ -286,6 +302,8 @@ export type ServerMessage =
 	| { type: 'zm'; ev: ZmEvent }
 	/** Infected event (spawn, alpha, infect, hit, kill, shot, hurt, ammo, throwing knife, UAV pulse, round end). */
 	| { type: 'inf'; ev: InfEvent }
+	/** Hide and seek event (spawn/teleport to that player; swing, found, round flow to everyone). */
+	| { type: 'hns'; ev: HnsEvent }
 	| { type: 'timeLeft'; mapTimeLeft: number }
 	| { type: 'scoreboard'; rows: ScoreRow[] }
 	| { type: 'ping'; t: number }

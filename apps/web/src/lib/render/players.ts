@@ -26,6 +26,8 @@ interface Avatar {
 	zombie: boolean;
 	/** Infected mode: 'infected' (blood-red look, red tag) or 'alpha' (Patient Zero: charred, orange glow and tag). */
 	infected: InfectedRole;
+	/** Hide and seek: a seeker (red tint, red SEEKER tag). */
+	seeker: boolean;
 	skin: THREE.MeshLambertMaterial;
 	baseSkin: THREE.Color;
 	shirt: THREE.MeshLambertMaterial;
@@ -60,14 +62,15 @@ const ALPHA_EYES = 0xffb21e;
 
 export type InfectedRole = 'none' | 'infected' | 'alpha';
 
-type TagStyle = 'plain' | 'it' | 'zombie' | 'infected' | 'alpha';
+type TagStyle = 'plain' | 'it' | 'zombie' | 'infected' | 'alpha' | 'seeker';
 
 const TAG_STYLE: Record<TagStyle, { prefix: string; bg: string }> = {
 	plain: { prefix: '', bg: 'rgba(8, 12, 18, 0.55)' },
 	it: { prefix: 'IT · ', bg: 'rgba(200, 24, 24, 0.85)' },
 	zombie: { prefix: 'ZOMBIE · ', bg: 'rgba(40, 110, 40, 0.85)' },
 	infected: { prefix: 'INFECTED · ', bg: 'rgba(150, 16, 24, 0.88)' },
-	alpha: { prefix: 'PATIENT ZERO · ', bg: 'rgba(214, 104, 12, 0.92)' }
+	alpha: { prefix: 'PATIENT ZERO · ', bg: 'rgba(214, 104, 12, 0.92)' },
+	seeker: { prefix: 'SEEKER · ', bg: 'rgba(200, 24, 24, 0.85)' }
 };
 
 function makeTag(name: string, style: TagStyle = 'plain'): { tex: THREE.CanvasTexture; aspect: number } {
@@ -187,6 +190,7 @@ export class RemotePlayers {
 			it: false,
 			zombie: false,
 			infected: 'none',
+			seeker: false,
 			skin,
 			baseSkin: skin.color.clone(),
 			shirt,
@@ -216,7 +220,7 @@ export class RemotePlayers {
 
 	private retag(a: Avatar): void {
 		a.tagTex.dispose();
-		const style: TagStyle = a.infected !== 'none' ? a.infected : a.zombie ? 'zombie' : a.it ? 'it' : 'plain';
+		const style: TagStyle = a.infected !== 'none' ? a.infected : a.zombie ? 'zombie' : a.seeker ? 'seeker' : a.it ? 'it' : 'plain';
 		const { tex } = makeTag(a.name, style);
 		(a.tag.material as THREE.SpriteMaterial).map = tex;
 		(a.tag.material as THREE.SpriteMaterial).needsUpdate = true;
@@ -260,7 +264,7 @@ export class RemotePlayers {
 			[skin, shirt, pants, glow, hunch] = [INF_SKIN, INF_SHIRT, INF_PANTS, INF_GLOW, -0.22];
 		} else if (a.zombie) {
 			[skin, shirt, pants, hunch] = [ZOMBIE_SKIN, ZOMBIE_SHIRT, ZOMBIE_PANTS, -0.2];
-		} else if (a.it) {
+		} else if (a.it || a.seeker) {
 			[shirt, pants, glow] = [IT_SHIRT, IT_PANTS, IT_GLOW];
 		}
 		a.skin.color.copy(skin);
@@ -274,6 +278,20 @@ export class RemotePlayers {
 		if (a.visor) a.visor.visible = !eyes;
 		a.eyeMat.color.setHex(a.infected === 'alpha' ? ALPHA_EYES : INF_EYES);
 		this.retag(a);
+	}
+
+	/** Hide and seek: mark a seeker (red tint and SEEKER tag) or a hider. */
+	setSeeker(id: number, seeker: boolean): void {
+		const a = this.avatars.get(id);
+		if (!a || a.seeker === seeker) return;
+		a.seeker = seeker;
+		this.restyle(a);
+	}
+
+	/** Show or hide a player's name tag (hide and seek: only up close and in sight). */
+	setTagVisible(id: number, visible: boolean): void {
+		const a = this.avatars.get(id);
+		if (a) a.tag.visible = visible;
 	}
 
 	has(id: number): boolean {

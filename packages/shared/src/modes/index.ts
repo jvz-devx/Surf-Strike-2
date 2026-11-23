@@ -10,16 +10,16 @@
 import { BHOP_CVARS, SURF_CVARS, type Cvars } from '../cvars.ts';
 import type { MapDef } from '../maps/types.ts';
 
-export type GameModeId = 'surf' | 'bhop' | 'tag' | 'zombies' | 'infected';
+export type GameModeId = 'surf' | 'bhop' | 'tag' | 'zombies' | 'infected' | 'hns';
 
 /**
  * Rule family. 'race': RunTracker timer, start/end/stage/checkpoint zones,
  * run validation and leaderboards. Any other family has its own rules module.
  */
-export type ModeFamily = 'race' | 'tag' | 'coop' | 'infected';
+export type ModeFamily = 'race' | 'tag' | 'coop' | 'infected' | 'hns';
 
 /** Scoreboard columns besides the name (shown in this order). */
-export type ScoreColumn = 'rank' | 'pb' | 'score' | 'kills' | 'deaths' | 'status' | 'ping';
+export type ScoreColumn = 'rank' | 'pb' | 'score' | 'kills' | 'deaths' | 'status' | 'ping' | 'role' | 'finds' | 'survived';
 
 export interface GameModeDef {
 	id: GameModeId;
@@ -60,6 +60,19 @@ export const ZOMBIES_CVARS: Readonly<Cvars> = Object.freeze({
  * air acceleration, movement speeds driven by the held weapon / claws).
  */
 export const INFECTED_CVARS: Readonly<Cvars> = ZOMBIES_CVARS;
+
+/**
+ * Hide and seek physics (docs/modes.md#hide-and-seek): CS2 ground movement
+ * (surf profile: accelerate 6.5, friction 5.2, 250 run speed), autobhop on,
+ * CS:GO-community-HNS air acceleration 100, and a hard 300 u/s horizontal
+ * cap while airborne so bhopping helps but never outruns the map.
+ */
+export const HNS_CVARS: Readonly<Cvars> = Object.freeze({
+	...SURF_CVARS,
+	sv_airaccelerate: 100,
+	sv_maxspeed: 250,
+	sv_air_speed_cap: 300
+});
 
 const RACE_COLUMNS: readonly ScoreColumn[] = ['rank', 'pb', 'status', 'ping'];
 
@@ -108,6 +121,15 @@ export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.free
 		cvars: INFECTED_CVARS,
 		minPlayers: 2,
 		scoreColumns: ['score', 'kills', 'deaths', 'status', 'ping']
+	},
+	hns: {
+		id: 'hns',
+		label: 'Hide and Seek',
+		description: 'Hiders hide; seekers hunt them with knives. Found hiders become seekers. Hiders win if anyone survives the clock.',
+		family: 'hns',
+		cvars: HNS_CVARS,
+		minPlayers: 2,
+		scoreColumns: ['role', 'finds', 'survived', 'ping']
 	}
 });
 
@@ -136,6 +158,7 @@ export function mapCvars(map: Pick<MapDef, 'kind' | 'cvars'>): Cvars {
 	return { ...modeOf(map).cvars, ...map.cvars } as Cvars;
 }
 
+export * from './hns.ts';
 export * from './tag.ts';
 export * from './zombies/index.ts';
 export * from './infected/index.ts';

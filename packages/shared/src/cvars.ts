@@ -36,6 +36,11 @@ export interface Cvars {
 	sv_staminalandcost: number;
 	sv_staminarecoveryrate: number;
 	sv_stepsize: number;
+	/**
+	 * Hard cap on horizontal speed while airborne (bhop/strafe/surf), in u/s; 0 = off.
+	 * Not a CS2 cvar: hide and seek servers capped bhop speed with plugins (docs/modes.md#hide-and-seek).
+	 */
+	sv_air_speed_cap: number;
 }
 
 /** CS2 MAX_VELOCITY_HARD: no velocity component ever exceeds this, whatever sv_maxvelocity says. */
@@ -69,7 +74,8 @@ export const SURF_CVARS: Readonly<Cvars> = Object.freeze({
 	sv_staminajumpcost: 0,
 	sv_staminalandcost: 0,
 	sv_staminarecoveryrate: 60,
-	sv_stepsize: 18
+	sv_stepsize: 18,
+	sv_air_speed_cap: 0
 });
 
 /**
