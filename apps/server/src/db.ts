@@ -343,6 +343,9 @@ export class Db {
 			),
 			countedSince: d.prepare(`SELECT COALESCE(SUM(counted), 0) AS n FROM point_log WHERE account_id = ? AND created_at > ?`),
 			lastPaid: d.prepare(`SELECT MAX(created_at) AS at FROM point_log WHERE account_id = ? AND reason = ? AND (? IS NULL OR map = ?)`),
+			countPaid: d.prepare(
+				`SELECT COUNT(*) AS n FROM point_log WHERE account_id = ? AND created_at > ? AND reason = ? AND map = ? AND (? IS NULL OR label = ?)`
+			),
 			recentPoints: d.prepare(
 				`SELECT created_at AS at, reason, label, amount, multiplier AS mult FROM point_log WHERE account_id = ? ORDER BY id DESC LIMIT ?`
 			),
@@ -509,6 +512,11 @@ export class Db {
 	/** When this reason was last paid to the account (on `map`, or anywhere); null = not in the log. */
 	lastPaid(accountId: number, reason: string, map: string | null): number | null {
 		return (this.st.lastPaid.get(accountId, reason, map, map) as { at: number | null }).at;
+	}
+
+	/** How often this reason (with this label, if given) was paid to the account on `map` after `since`. */
+	countPaid(accountId: number, reason: string, map: string, since: number, label: string | null = null): number {
+		return (this.st.countPaid.get(accountId, since, reason, map, label, label) as { n: number }).n;
 	}
 
 	/** Newest first. */

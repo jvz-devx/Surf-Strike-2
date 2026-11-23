@@ -7,14 +7,17 @@
 import type { MapRecordInfo, NetState, ScoreRow, ServerMessage, ZmEvent } from '@surf/shared';
 import {
 	buildCollisionWorld,
+	decayed,
 	encodeZombies,
 	FLAG_DUCKED,
 	mapCvars,
+	REPEAT_MS,
 	Status,
 	WEAPONS,
 	WEAPON_IDS,
 	ZombiesGame,
 	ZOMBIE_HP,
+	ZOMBIES_PAY,
 	zmEventRoute,
 	type ZombieNet,
 	type ZombiesGameOptions
@@ -179,6 +182,10 @@ export class ZombiesMode implements ServerMode {
 	private dispatch(events: ZmEvent[]): void {
 		const h = this.host;
 		for (const ev of events) {
+			if (ev.e === 'pass') {
+				this.payGate(ev.id, ev.index + 1);
+				continue;
+			}
 			const route = zmEventRoute(ev);
 			const msg: ServerMessage = { type: 'zm', ev };
 			if (route.to !== undefined) {
@@ -190,12 +197,62 @@ export class ZombiesMode implements ServerMode {
 		}
 	}
 
+	// ---------------------------------------------------------------------
+	// Coins (docs/economy.md#zombie-run). The tallies are per person, so leaving
+	// and coming back does not pay a gate twice or undo being turned.
+
+	/** Base after the repeat decay of one award: this map session, and the last hour on this map. */
+	private decayedFor(id: number, base: number, key: string, reason: 'zombiesGate' | 'zombiesEvac', label?: string): number {
+		const e = this.host.economy;
+		const repeats = Math.max(e.tally(id, key, 'session') - 1, e.paidWithin(id, reason, REPEAT_MS, label));
+		return decayed(base, ZOMBIES_PAY.repeat, repeats);
+	}
+
+	/** Turned in this round: someone who comes back as a survivor (reconnect, spectate) earns nothing for it. */
+	private wasTurned(id: number): boolean {
+		return this.host.economy.tallied(id, 'turned', 'round') > 0;
+	}
+
+	private payGate(id: number, n: number): void {
+		const e = this.host.economy;
+		if (this.wasTurned(id) || e.tally(id, `gate${n}`, 'round') > 1) return;
+		e.tally(id, 'gates', 'round');
+		const label = `Gate ${n}`;
+		e.award(id, this.decayedFor(id, ZOMBIES_PAY.gate(n), `gate${n}`, 'zombiesGate', label), 'zombiesGate', { label });
+	}
+
+	/** Every living survivor who passed the last gate and enough of the others. */
+	private payEvac(): void {
+		const e = this.host.economy;
+		const gates = this.host.map.zombies?.gates.length ?? 0;
+		for (const p of this.host.players()) {
+			const v = p.spectating ? null : this.game.playerView(p.id);
+			if (!v?.alive || v.team !== 'survivor' || this.wasTurned(p.id)) continue;
+			if (gates > 0 && e.tallied(p.id, `gate${gates}`, 'round') === 0) continue;
+			if (e.tallied(p.id, 'gates', 'round') < gates * ZOMBIES_PAY.evacShare) continue;
+			// An account connected twice is evacuated once.
+			if (e.tally(p.id, 'evac', 'round') > 1) continue;
+			e.award(p.id, this.decayedFor(p.id, ZOMBIES_PAY.evac(gates), 'evac', 'zombiesEvac'), 'zombiesEvac');
+		}
+	}
+
+	/** A survivor went down, `by` a player-zombie or not. Each survivor pays once per round. */
+	private payTurned(id: number, by: number | undefined): void {
+		const e = this.host.economy;
+		const first = e.tally(id, 'turned', 'round') === 1;
+		if (by === undefined) return;
+		e.contact(by, id);
+		if (first) e.award(by, ZOMBIES_PAY.turnedKill, 'zombiesKill', { against: id });
+	}
+
 	private announce(ev: ZmEvent): void {
 		const h = this.host;
 		const g = this.game;
 		switch (ev.e) {
 			case 'phase':
 				this.dirty = true;
+				if (ev.phase === 'playing') h.economy.roundStart();
+				else if (ev.phase === 'waiting') h.economy.roundEnd();
 				if (ev.phase === 'countdown')
 					h.system(`Round ${ev.round} starts in ${Math.round(g.view(h.now()).timeLeft)} s. Pick a weapon: ${LOADOUT_HINT}.`);
 				else if (ev.phase === 'playing')
@@ -207,6 +264,7 @@ export class ZombiesMode implements ServerMode {
 				break;
 			case 'down':
 				this.dirty = true;
+				this.payTurned(ev.id, ev.by);
 				h.system(
 					`${this.name(ev.id)} ${ev.by !== undefined ? `was caught by ${this.name(ev.by)} and ` : ''}turned! They hunt the survivors for the rest of the round.`
 				);
@@ -223,6 +281,8 @@ export class ZombiesMode implements ServerMode {
 				break;
 			case 'end': {
 				this.dirty = true;
+				if (ev.won) this.payEvac();
+				h.economy.roundEnd();
 				const top = ev.topId !== null ? `, top killer ${this.name(ev.topId)} (${ev.topKills})` : '';
 				h.system(
 					ev.won

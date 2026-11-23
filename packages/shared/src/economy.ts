@@ -57,6 +57,12 @@ export function decayed(base: number, percents: readonly number[], repeats: numb
 // Payouts
 // ---------------------------------------------------------------------------
 
+/**
+ * Finishes, gates and evacs of the same map decay over this time too, not only
+ * within a map session: a lone player can change the map at any time.
+ */
+export const REPEAT_MS = 3600_000;
+
 /** Playtime: points per stretch of active online time, carried over between sessions. */
 export const PLAYTIME = Object.freeze({ points: pts(10), everyMs: 15 * 60_000 });
 
@@ -66,7 +72,7 @@ export const RACE_PAY = Object.freeze({
 		surf: Object.freeze({ easy: pts(4), hard: pts(15) }),
 		bhop: Object.freeze({ easy: pts(5), hard: pts(12) })
 	}),
-	/** Finishes of the same map in one map session, percent. */
+	/** Finishes of the same map in one map session, and within `REPEAT_MS`, percent. */
 	repeat: Object.freeze([100, 50, 25, 0]),
 	personalBest: pts(2),
 	record: Object.freeze({ easy: pts(5), hard: pts(15) }),
@@ -80,12 +86,14 @@ export function raceFinish(map: { kind: GameModeId; difficulty: 'easy' | 'hard' 
 }
 
 export const ZOMBIES_PAY = Object.freeze({
-	/** Passing gate n (1-based) alive. */
+	/** Passing gate n (1-based) alive, before the repeat decay. */
 	gate: (n: number): number => pts(n),
 	/** Reaching the evac alive, before the repeat decay. */
 	evac: (gates: number): number => pts(gates + 3),
-	/** Wins on the same map in one map session, percent (stays at the last). */
-	repeat: Object.freeze([100, 75, 50, 25]),
+	/** The same gate (or the evac) of the same map in one map session, and within `REPEAT_MS`, percent (stays at the last). */
+	repeat: Object.freeze([100, 50, 25, 10]),
+	/** Share of the gates a player must have passed in the round for the evac (besides the last one). */
+	evacShare: 0.5,
 	/** As a player-zombie, per survivor killed. */
 	turnedKill: pts(1)
 });

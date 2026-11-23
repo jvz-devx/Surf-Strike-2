@@ -15,7 +15,9 @@
  * Gates: the route is split into zones by solid gates (MapDef.zombies.gates).
  * When at least half of the living survivors stand in a gate's unlock area at
  * once, a ZM_GATE_COUNTDOWN_SECS countdown starts (never cancelled); then the
- * gate opens and its collision is removed.
+ * gate opens and its collision is removed. A living survivor who moves through
+ * an open gate passes it (event `pass`), in order and each gate at most once;
+ * gates skipped by a teleport (late join, fall-out) are never passed.
  *
  * AI zombies are bodies simulated with the real `playerMove` (hull, gravity,
  * steps, collision incl. closed gates) at ZM_SIM_HZ, driven by AI UserCmds.
@@ -27,7 +29,7 @@ import { HULL_MAX, HULL_MIN, IN_JUMP, VIEW_HEIGHT, type PlayerState, type UserCm
 import { createPlayer, playerMove } from '../../movement/gamemovement.ts';
 import type { Vec3 } from '../../types.ts';
 import { hullInBox } from '../tag.ts';
-import { gatedWorld, unlockReached, ZM_GATE_COUNTDOWN_SECS, type GatedWorld, type GateState } from './gates.ts';
+import { gatedWorld, gateFarSide, unlockReached, ZM_GATE_COUNTDOWN_SECS, type GatedWorld, type GateState } from './gates.ts';
 import { meleeZombie, rayZombie, type HitboxPose } from './hitbox.ts';
 import { ZombiePath } from './path.ts';
 import { DEFAULT_WEAPON, hitDamage, isLoadoutWeapon, isWeaponId, WEAPONS, WeaponState, ZOMBIE_HP, type WeaponId } from './weapons.ts';
@@ -204,6 +206,8 @@ export type ZmEvent =
 	| { e: 'down'; id: number; by?: number }
 	| { e: 'checkpoint'; index: number; by: number }
 	| { e: 'gate'; index: number; state: GateState; secs: number }
+	/** A living survivor passed gate `index` (for the server's payouts; not sent to clients). */
+	| { e: 'pass'; id: number; index: number }
 	/** To `id`: authoritative ammo (rejected shot, checkpoint refill, loadout change). */
 	| { e: 'ammo'; id: number; weapon: WeaponId; mag: number; reserve: number }
 	| { e: 'end'; won: boolean; round: number; secs: number; kills: number; topId: number | null; topKills: number; by: number | null };
@@ -214,6 +218,7 @@ export function zmEventRoute(ev: ZmEvent): { to?: number; except?: number } {
 		case 'spawn':
 		case 'ammo':
 		case 'zhurt':
+		case 'pass':
 			return { to: ev.id };
 		case 'hit':
 			return { to: ev.by };
@@ -275,6 +280,8 @@ interface ZmPlayer {
 	pos: ZmPlayerPos | null;
 	/** Route progress of `pos`, refreshed every sim step. */
 	s: number;
+	/** Gates behind this survivor: passed, or skipped by a spawn at a checkpoint. */
+	zone: number;
 	iframesUntil: number;
 	loadoutUntil: number;
 	graceUntil: number;
@@ -286,6 +293,9 @@ interface ZmPlayer {
 
 interface Gate {
 	def: ZombieGate;
+	/** Route progress of the gate, and the box right behind it. */
+	s: number;
+	far: { min: Vec3; max: Vec3 };
 	state: GateState;
 	opensAt: number;
 }
@@ -374,8 +384,13 @@ export class ZombiesGame {
 		if (!route) throw new Error(`${opts.map.id} has no zombie route`);
 		this.map = opts.map;
 		this.world = gatedWorld(opts.world, route.gates);
-		this.gates = route.gates.map((def) => ({ def, state: 'closed', opensAt: 0 }));
 		this.path = new ZombiePath(route.path);
+		this.gates = route.gates.map((def) => {
+			const s = this.path.project((def.min.x + def.max.x) / 2, (def.min.y + def.max.y) / 2, def.min.z);
+			const a = this.path.pointAt(s - 32);
+			const b = this.path.pointAt(s + 32);
+			return { def, s, far: gateFarSide(def, { x: b.x - a.x, y: b.y - a.y }), state: 'closed', opensAt: 0 };
+		});
 		this.rng = opts.rng ?? Math.random;
 		this.countdownMs = (opts.countdownSecs ?? ZM_COUNTDOWN_SECS) * 1000;
 		this.endMs = (opts.endSecs ?? ZM_END_SECS) * 1000;
@@ -417,6 +432,7 @@ export class ZombiesGame {
 				loadout: DEFAULT_WEAPON,
 				pos: null,
 				s: 0,
+				zone: 0,
 				iframesUntil: 0,
 				loadoutUntil: now + ZM_LOADOUT_SECS * 1000,
 				graceUntil: 0,
@@ -489,6 +505,7 @@ export class ZombiesGame {
 
 	private spawnAtStart(p: ZmPlayer, i: number, now: number, reason: SpawnReason): void {
 		this.makeSurvivor(p, now);
+		p.zone = 0;
 		p.loadoutUntil = Math.max(this.endsAt, now) + ZM_LOADOUT_SECS * 1000;
 		this.spawnEvent(p, this.startSpawns[i % this.startSpawns.length]!, now, reason);
 	}
@@ -499,11 +516,26 @@ export class ZombiesGame {
 		return cp ? cp.respawn : this.startSpawns[i % this.startSpawns.length]!;
 	}
 
+	/** Gates on the route before a checkpoint. */
+	private gatesBefore(cp: Extract<Zone, { index: number }> | undefined): number {
+		if (!cp) return 0;
+		const o = cp.respawn.pos;
+		const s = this.path.project(o.x, o.y, o.z);
+		return this.gates.filter((g) => g.s < s).length;
+	}
+
+	/** The team's checkpoint moved this survivor: gates before it are skipped, not passed. */
+	private skipGates(p: ZmPlayer): void {
+		p.zone = Math.max(p.zone, this.gatesBefore(this.checkpoints.find((c) => c.index === this.checkpoint)));
+	}
+
 	/** Late joiner during a round: a survivor at the team's checkpoint. */
 	private joinSurvivor(p: ZmPlayer, now: number): void {
 		this.makeSurvivor(p, now);
 		p.iframesUntil = now + 1000;
 		p.loadoutUntil = now + ZM_LOADOUT_SECS * 1000;
+		p.zone = 0;
+		this.skipGates(p);
 		this.spawnEvent(p, this.checkpointSpawn(p.id), now, 'join');
 	}
 
@@ -816,6 +848,7 @@ export class ZombiesGame {
 		}
 		if (this.rearS === Infinity) this.rearS = 0;
 
+		if (this.phase === 'playing') this.updatePasses(now);
 		if (this.phase === 'playing' || this.phase === 'countdown') this.playerZones(now);
 		if (this.phase === 'playing') {
 			this.updateGates(now);
@@ -840,6 +873,7 @@ export class ZombiesGame {
 				if (p.team === 'zombie') this.spawnEvent(p, this.zombieSpawnPoint(), now, 'fall');
 				else {
 					if (playing) this.hurt(p, 0, now, true);
+					if (playing) this.skipGates(p);
 					if (p.alive) this.spawnEvent(p, playing ? this.checkpointSpawn(p.id) : this.startSpawns[0]!, now, 'fall');
 				}
 				continue;
@@ -878,6 +912,25 @@ export class ZombiesGame {
 		g.state = 'counting';
 		g.opensAt = now + this.gateMs;
 		this.pending.push({ e: 'gate', index: i, state: 'counting', secs: this.gateMs / 1000 });
+	}
+
+	/**
+	 * Living survivors who are behind their next gate now. Being in a checkpoint
+	 * or the evac beyond it counts too (a long gap between position packets). A
+	 * gate that is not open cannot be passed: being behind it then skips it.
+	 */
+	private updatePasses(now: number): void {
+		for (const p of this.survivors()) {
+			const pos = p.pos;
+			if (!pos || now < p.graceUntil) continue;
+			const next = this.gates[p.zone];
+			if (!next) continue;
+			let zone = p.zone;
+			if (inBox(pos, next.far)) zone++;
+			else if (this.endZone && hullInBox(pos, pos.ducked, this.endZone)) zone = this.gates.length;
+			else for (const cp of this.checkpoints) if (hullInBox(pos, pos.ducked, cp)) zone = Math.max(zone, this.gatesBefore(cp));
+			for (; p.zone < zone; p.zone++) if (this.gates[p.zone]!.state === 'open') this.pending.push({ e: 'pass', id: p.id, index: p.zone });
+		}
 	}
 
 	private reachCheckpoint(index: number, by: number): void {
@@ -1152,5 +1205,8 @@ export class ZombiesGame {
 		};
 	}
 }
+
+const inBox = (p: Vec3, b: { min: Vec3; max: Vec3 }): boolean =>
+	p.x >= b.min.x && p.x <= b.max.x && p.y >= b.min.y && p.y <= b.max.y && p.z >= b.min.z && p.z <= b.max.z;
 
 const ZERO: Vec3 = { x: 0, y: 0, z: 0 };

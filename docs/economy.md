@@ -1,6 +1,6 @@
 # Points and coins
 
-Status: the core is implemented (ledger, activity, playtime points, abuse detection, client views, the API for modes). The awards of the single modes and the shop are not. The owner asked for a balanced point system and left the final numbers to us. Change the numbers here first, then in `packages/shared/src/economy.ts`, which holds all of them.
+Status: the core is implemented (ledger, activity, playtime points, abuse detection, client views, the API for modes), and the awards of surf, bhop and Zombie Run. The awards of the other modes and the shop are not. The owner asked for a balanced point system and left the final numbers to us. Change the numbers here first, then in `packages/shared/src/economy.ts`, which holds all of them.
 
 ## Terms
 
@@ -20,6 +20,13 @@ A basic shop item costs 75 coins. The intent is that the first one takes about 4
 | Very good player in any mode, including playtime | 150–190 |
 
 No mode should pay clearly more per hour than another at the same skill. Where a mode can be repeated quickly, the awards decay.
+
+Estimates for the race modes and Zombie Run, playtime included:
+
+| Mode | Average player | Very good player | From |
+| --- | --- | --- | --- |
+| Surf and bhop | 75–90 | 110–155 without changing the map early, up to about 190 with `!rtv` | Clean runs of 30–50 s (easy surf), 45 s (bhop), 55 s and 89 s (hard surf), 15-minute map sessions |
+| Zombie Run | 105–145 | 155–175 | 16–18 rounds per hour, nearly all won; average 22–35 per hour, mostly lost at gate 2–4 (bots with human aim errors in the real rules) |
 
 Both ranges are at multiplier ×1.0. In the multiplayer modes a full lobby pays up to twice as much.
 
@@ -52,10 +59,11 @@ Only validated runs count.
 | Hard bhop | 12 |
 | Hard surf | 15 |
 
-- **Repeats** on the same map within one map session (until the map changes): 100 %, 50 %, 25 %, then 0, rounded up.
-- **First finish ever** of a map: a bonus equal to the finish award.
-- **Personal best** beaten: +2, once per map session. The first run is not a PB.
-- **Server record** beaten: +5 easy, +15 hard. Only when it beats another account's record, at most once per map per account per 24 hours.
+- **Repeats** on the same map within one map session (until the map changes), and within 60 minutes whatever the sessions: 100 %, 50 %, 25 %, then 0, rounded up. The hour is there because a lone player can change the map at any time: two hard maps in turn would pay over 600 points per hour.
+- **First finish ever** of a map: a bonus equal to the finish award. "Ever" means there was no stored run of the account on the map before this one, so maps finished before coins existed do not pay it.
+- **Personal best** beaten: +2, once per map session and at most once per map in 60 minutes. The first run is not a PB, an equal time neither.
+- **Server record** beaten: +5 easy, +15 hard. Only when it beats another account's record, at most once per map per account per 24 hours. The first time on a map beats nobody. Of two equal times the older one holds the record.
+- Guests' finishes only show the login hint.
 
 The owner's suggestion (bhop 4, surf 2, hard surf 3) paid an easy map almost as much as a hard one. A hard map can take several map sessions to finish once, so it pays three to four times as much.
 
@@ -63,11 +71,16 @@ The owner's suggestion (bhop 4, surf 2, hard surf 3) paid an easy map almost as 
 
 The mode has no numbered rounds; the gates are its steps. One run is one round of points, matching "round 2 gives 2, round 3 gives 3".
 
-- Passing gate *n* alive as a survivor: *n* points. A gate counts when it opens and the player reaches the next zone alive.
-- Reaching the evac as a living survivor: the number of gates + 3.
-- A survivor who was turned keeps what they earned. As a player-zombie: 1 point per survivor killed, at most 3 per run.
-- Repeated wins on the same map session: 100 %, 75 %, 50 %, then 25 % of the evac award, rounded up to whole points.
+- **Gate *n*:** *n* points for each living survivor who passes it: the whole body is behind the gate on the route's side (or, after a gap in the position packets, in a checkpoint or the evac beyond it) while the gate is open. Once per player, gate and round; reconnecting or an account connected twice does not pay it again.
+- **In order.** Only the next gate on the player's own way counts. Gates skipped by a late join at a checkpoint, by a fall-out teleport to a checkpoint further on, or by being behind a gate that is not open are never passed, also not by walking back through them.
+- **Evac:** the number of gates + 3 (8 on Low Tide). The round ends when the first survivor reaches the boat, so it pays every living survivor who has passed the last gate by then, in that round, and at least half of all gates (3 of 5). Whoever joins for the last gates gets those gates but not the evac.
+- **Turned.** A survivor who was turned keeps what they earned, and gets nothing more for gates or the evac in that round, also not when they come back as a survivor (reconnect, spectate).
+- **As a player-zombie:** 1 point per survivor killed, each survivor once per round, at most 3 per run.
+- **Repeats** of the same gate, and of the evac, on the same map within one map session and within 60 minutes whatever the sessions: 100 %, 50 %, 25 %, then 10 %, rounded up to whole points. A gate therefore never pays less than 1. Whole runs pay 23, 13, 8 and then 6.
+- A lost round pays nothing by itself; the gates passed in it stay.
 - More survivors mean more zombies, so there is no solo bonus or penalty.
+
+The first draft only let the evac decay (100, 75, 50, 25 %). A round that is won takes 200 seconds on Low Tide (150 of them are gate countdowns), so that paid a good player over 350 points per hour, and an average one about 240.
 
 ## Tag
 
@@ -196,6 +209,7 @@ A mode calls `host.economy` (`ModeEconomy`) and nothing else. Every rule of this
 | `tally(playerId, key, 'round' \| 'session')` | Count something; returns the count so far. Survives a reconnect. `tallied(...)` reads it |
 | `earned(playerId, reason, 'round' \| 'session')` | Base tenths paid so far |
 | `sinceLastPaid(playerId, reason)` | ms since the last time on this map, or null (the 24 h record rule) |
+| `paidWithin(playerId, reason, ms, label?)` | How often it was paid on this map in the last `ms`, across map sessions (repeat decay) |
 | `activePlayers()`, `isActive(playerId)`, `multiplier()`, `enoughPlayers(reason?)` | Current values |
 | `contact(byId, targetId)` | Call for **every** tag, find or infection, paid or not |
 | `report('shadow', [hunterId, targetId], evidence)`, `report('impossible', [playerId], evidence)` | Abuse evidence |
@@ -208,7 +222,7 @@ Optional on `ServerMode`: `stillness(p)` returns `'held'` while the game keeps a
 A repeated race finish and a first one:
 
 ```ts
-const n = host.economy.tally(p.id, 'finish', 'session') - 1; // earlier finishes
+const n = Math.max(host.economy.tally(p.id, 'finish', 'session') - 1, host.economy.paidWithin(p.id, 'raceFinish', REPEAT_MS)); // earlier finishes
 host.economy.award(p.id, decayed(raceFinish(host.map), RACE_PAY.repeat, n), 'raceFinish');
 if (firstEver) host.economy.award(p.id, raceFinish(host.map), 'raceFirst');
 ```

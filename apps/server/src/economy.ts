@@ -123,6 +123,8 @@ export interface ModeEconomy {
 	earned(playerId: number, reason: AwardReason, scope: 'round' | 'session'): number;
 	/** ms since this reason was last paid to the account on this map; null: never (or over 30 days ago). */
 	sinceLastPaid(playerId: number, reason: AwardReason): number | null;
+	/** How often this reason (with this label, if given) was paid to the account on this map in the last `ms`; map changes do not reset it. */
+	paidWithin(playerId: number, reason: AwardReason, ms: number, label?: string): number;
 	/** Every tag, find or infection, paid or not: too many of one pair is a signal. */
 	contact(byId: number, targetId: number): void;
 	/** Abuse evidence the mode found: `shadow` (hunter, target) or `impossible` (player). */
@@ -486,6 +488,10 @@ export class Economy {
 				const accountId = this.player(id)?.accountId ?? null;
 				const at = accountId === null ? null : this.host.db.lastPaid(accountId, reason, this.map.id);
 				return at === null ? null : Math.max(0, this.host.now() - at);
+			},
+			paidWithin: (id, reason, ms, label) => {
+				const accountId = this.player(id)?.accountId ?? null;
+				return accountId === null ? 0 : this.host.db.countPaid(accountId, reason, this.map.id, this.host.now() - ms, label);
 			},
 			contact: (by, target) => this.contact(session, by, target),
 			report: (signal, ids, evidence) => this.report(session, signal, ids, evidence),

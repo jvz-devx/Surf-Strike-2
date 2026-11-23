@@ -4,7 +4,7 @@
  */
 import { deflateRawSync } from 'node:zlib';
 import type { GameModeId, GhostTrack, MapRecordInfo, NetState, ScoreRow } from '@surf/shared';
-import { encodeGhostFrame, formatTicks, GhostRecorder, packGhost, RECORDS_TOP, Status } from '@surf/shared';
+import { decayed, encodeGhostFrame, formatTicks, GhostRecorder, packGhost, RACE_PAY, raceFinish, RECORDS_TOP, REPEAT_MS, Status } from '@surf/shared';
 import type { Command } from '../commands.ts';
 import { RunValidator } from '../validation.ts';
 import type { ModeHost, ModePlayer, ServerMode, ZoneKind } from './types.ts';
@@ -99,10 +99,12 @@ export class RaceMode implements ServerMode {
 		if (p.accountId === null) {
 			h.guestRunNotice(p, `Finished in ${time} (guest run, not saved).`);
 			h.log(`guest run #${p.id} ${p.name} ${map.id} ${time}`);
+			h.economy.award(p.id, raceFinish(map), 'raceFinish'); // shows the login hint
 			return;
 		}
 		if (track) this.saveGhost(p, p.accountId, verdict.ticks, track);
 		const prevRecord = h.db.top(map.id, 1)[0] ?? null;
+		const firstEver = h.db.getPb(p.accountId, map.id) === null;
 		const saved = h.db.saveRun(p.accountId, map.id, verdict.ticks, verdict.splits, Date.now());
 		if (saved.pb) this.ranksCache = null;
 		const record = saved.pb && (!prevRecord || verdict.ticks < prevRecord.ticks);
@@ -127,6 +129,27 @@ export class RaceMode implements ServerMode {
 			h.systemTo(p, `Finished in ${time}. PB: ${formatTicks(saved.previous ?? verdict.ticks)}.`);
 		}
 		h.log(`run #${p.id} ${p.name} ${map.id} ${time} pb=${saved.pb} record=${record}`);
+		this.pay(p, {
+			firstEver,
+			pb: saved.pb && !firstEver,
+			beatsOther: record && prevRecord !== null && prevRecord.accountId !== p.accountId
+		});
+	}
+
+	/** Coins for a validated account run (docs/economy.md#race-modes). */
+	private pay(p: ModePlayer, run: { firstEver: boolean; pb: boolean; beatsOther: boolean }): void {
+		const { economy, map } = this.host;
+		const finish = raceFinish(map);
+		const before = economy.tally(p.id, 'finish', 'session') - 1;
+		const repeats = Math.max(before, economy.paidWithin(p.id, 'raceFinish', REPEAT_MS));
+		economy.award(p.id, decayed(finish, RACE_PAY.repeat, repeats), 'raceFinish');
+		if (run.firstEver) economy.award(p.id, finish, 'raceFirst');
+		// Once per map session is the cap in AWARDS; a new session does not help within the hour.
+		if (run.pb && economy.paidWithin(p.id, 'racePb', REPEAT_MS) === 0) economy.award(p.id, RACE_PAY.personalBest, 'racePb');
+		if (run.beatsOther) {
+			const since = economy.sinceLastPaid(p.id, 'raceRecord');
+			if (since === null || since >= RACE_PAY.recordEveryMs) economy.award(p.id, RACE_PAY.record[map.difficulty], 'raceRecord');
+		}
 	}
 
 	/** Send every other player on the map their current records (after a PB changed the leaderboard). */

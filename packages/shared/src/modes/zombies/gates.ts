@@ -18,6 +18,29 @@ export function unlockReached(inside: number, alive: number): boolean {
 	return alive > 0 && inside > 0 && inside * 2 >= alive;
 }
 
+/** Depth of a gate's far side, for `gateFarSide`. */
+const FAR_DEPTH = 512;
+/** Half the hull: past the gate means the whole hull is. */
+const HULL_HALF = 16;
+
+/**
+ * Box behind a gate (seen along the route) that a player's origin is in right
+ * after passing it. `heading`: route direction at the gate.
+ */
+export function gateFarSide(g: ZombieGate, heading: { x: number; y: number }): { min: Vec3; max: Vec3 } {
+	const min = { x: g.min.x, y: g.min.y, z: g.min.z - 64 };
+	const max = { x: g.max.x, y: g.max.y, z: g.max.z + 64 };
+	const axis = g.max.x - g.min.x < g.max.y - g.min.y ? 'x' : 'y';
+	if (heading[axis] >= 0) {
+		min[axis] = g.max[axis] + HULL_HALF;
+		max[axis] = min[axis] + FAR_DEPTH;
+	} else {
+		max[axis] = g.min[axis] - HULL_HALF;
+		min[axis] = max[axis] - FAR_DEPTH;
+	}
+	return { min, max };
+}
+
 export interface GatedWorld extends CollisionWorld {
 	/** Open flags by gate index (true = no collision). */
 	readonly open: boolean[];

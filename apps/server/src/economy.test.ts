@@ -133,6 +133,24 @@ describe('ledger', () => {
 		assert.equal(w.mode.sinceLastPaid(a!.id, 'raceRecord'), null);
 	});
 
+	it('counts how often a reason was paid on this map lately, across map sessions', () => {
+		const w = world(SURF);
+		const [a, b] = w.join(2);
+		w.active();
+		w.mode.award(a!.id, pts(1), 'zombiesGate', { label: 'Gate 1' });
+		w.mode.award(a!.id, pts(2), 'zombiesGate', { label: 'Gate 2' });
+		w.now += 5000;
+		w.changeMap(testMap('surf_y'));
+		assert.equal(w.mode.paidWithin(a!.id, 'zombiesGate', 60_000), 0);
+		w.changeMap(SURF);
+		assert.equal(w.mode.paidWithin(a!.id, 'zombiesGate', 60_000), 2);
+		assert.equal(w.mode.paidWithin(a!.id, 'zombiesGate', 60_000, 'Gate 2'), 1);
+		assert.equal(w.mode.paidWithin(a!.id, 'zombiesGate', 5000), 0);
+		assert.equal(w.mode.paidWithin(a!.id, 'zombiesEvac', 60_000), 0);
+		assert.equal(w.mode.paidWithin(b!.id, 'zombiesGate', 60_000), 0);
+		assert.equal(w.mode.paidWithin(w.guest().id, 'zombiesGate', 60_000), 0);
+	});
+
 	it('spend never goes below zero, keeps the lifetime total and is logged', () => {
 		const w = world(SURF);
 		const [a] = w.join(1);

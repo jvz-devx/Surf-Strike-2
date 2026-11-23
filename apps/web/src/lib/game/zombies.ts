@@ -536,7 +536,7 @@ export class ZombiesClient {
 			phase: s?.phase ?? 'waiting',
 			round: s?.round ?? 0,
 			endsAt: s && (s.phase === 'countdown' || s.phase === 'ended') ? this.stateAt + s.timeLeft * 1000 : 0,
-			startedAt: s && s.phase === 'playing' ? this.stateAt - s.elapsed * 1000 : 0,
+			startedAt: s && s.phase === 'playing' ? this.stateAt - s.elapsed * 1000 : null,
 			team: this.team,
 			gate: this.gateView(),
 			respawnAt: this.alive ? 0 : this.respawnAt,

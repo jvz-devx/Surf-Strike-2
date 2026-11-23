@@ -23,7 +23,7 @@ packages/shared/src/modes/
   hns.ts     HnsGame: pure hide and seek rules (clock-injected), knifeHit, hnsSpawns, HNS_* constants
 apps/server/src/modes/
   types.ts   ServerMode interface, ModeHost, ModePlayer
-  race.ts    RaceMode: RunValidator per player, PB/leaderboard, !top/!pb, race scoreboard
+  race.ts    RaceMode: RunValidator per player, PB/leaderboard, !top/!pb, race scoreboard, coins
   tag.ts     TagMode: runs TagGame on the latest state packets, chat announcements, modeState
   hns.ts     HnsMode: runs HnsGame, knife messages, event routing, announcements, speed-cap check
   index.ts   createServerMode(host): picks the module by GAME_MODES[kind].family
@@ -117,6 +117,9 @@ Mode id `zombies` (family `coop`), label "Zombie Run" (the id, map ids, protocol
 - **Checkpoints** (one per zone, before its gate): the first survivor in one heals all survivors to full and refills reserve ammo. Late joiners spawn there as survivors.
 - **Survivors** have 5 HP. Each zombie hit takes 1 (300 ms of invulnerability after a hit, no regeneration). Falling into the water costs 1 HP and teleports back to the checkpoint.
 - **Turning.** A survivor at 0 HP joins the **zombie side** for the rest of the round: after 3 s they rise at a zombie spawn area as a player-controlled zombie. They have zombie stats: 265 u/s (slowed by hits like AI zombies), 8 HP, the zombie hitboxes (headshot = kill), claws only (melee, 64 reach, 0.9 s between swings, 1 HP per hit on survivors). Killed player-zombies respawn after 4 s. Their kills on survivors count. They cannot pick weapons, trigger checkpoints, gates or the evac. Remote player-zombies are drawn in zombie colours with a green `ZOMBIE · name` tag. Everyone starts the next round as a survivor.
+
+- **Passing a gate.** A living survivor passes the next gate on their own way when the gate is open and their hull is behind it (a 512-deep box on the route's side, `gateFarSide`; a checkpoint or the evac beyond it also counts, for gaps in the packets). `ZmPlayer.zone` counts the gates behind a survivor. A spawn at a checkpoint (late join, fall-out) moves `zone` forward without passing anything, and for 1 s after a teleport nothing is passed. The game reports it as event `pass { id, index }`, which the server uses for coins and does not send.
+- **Coins** ([economy.md](economy.md#zombie-run)): passing a gate, the evac (every living survivor who passed the last gate and half of all gates), survivors caught as a player-zombie. `roundStart` when the round starts, `roundEnd` after the end (or when everyone left), `contact` for every survivor caught by a player-zombie.
 
 ### Weapons
 

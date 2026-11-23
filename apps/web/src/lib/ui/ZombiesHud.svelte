@@ -9,7 +9,7 @@
 	const ammo = $derived(ammoText(z.mag, z.magSize, z.reserve));
 	const reload = $derived(z.reloadEndsAt > 0 ? reloadProgress(now, z.reloadEndsAt, z.reloadMs) : 1);
 	const left = $derived(z.endsAt > 0 ? Math.max(0, (z.endsAt - now) / 1000) : 0);
-	const elapsed = $derived(z.startedAt > 0 ? (now - z.startedAt) / 1000 : 0);
+	const elapsed = $derived(z.startedAt !== null ? (now - z.startedAt) / 1000 : 0);
 	const gateLeft = $derived(z.gate && z.gate.opensAt > 0 ? Math.max(0, (z.gate.opensAt - now) / 1000) : 0);
 	const loadoutLeft = $derived(z.loadoutEndsAt > 0 ? Math.max(0, (z.loadoutEndsAt - now) / 1000) : 0);
 	const flashOpacity = $derived(z.flash ? fadeOpacity(now - z.flash.at, 2000, 800) : 0);

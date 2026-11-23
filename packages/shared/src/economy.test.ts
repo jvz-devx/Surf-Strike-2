@@ -48,8 +48,8 @@ describe('decay', () => {
 		expect([0, 1, 2, 3, 9].map((n) => decayed(pts(5), RACE_PAY.repeat, n))).toEqual([50, 30, 20, 0, 0]);
 		expect([0, 1, 2, 3].map((n) => decayed(pts(15), RACE_PAY.repeat, n))).toEqual([150, 80, 40, 0]);
 	});
-	it('Zombie Run wins: 100, 75, 50, then 25', () => {
-		expect([0, 1, 2, 3, 4].map((n) => decayed(pts(8), ZOMBIES_PAY.repeat, n))).toEqual([80, 60, 40, 20, 20]);
+	it('Zombie Run gates and wins: 100, 50, 25, then 10', () => {
+		expect([0, 1, 2, 3, 4].map((n) => decayed(pts(8), ZOMBIES_PAY.repeat, n))).toEqual([80, 40, 20, 10, 10]);
 	});
 });
 

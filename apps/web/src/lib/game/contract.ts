@@ -104,8 +104,8 @@ export interface ZombiesView {
 	round: number;
 	/** performance.now() when the countdown / round summary ends (0 otherwise). */
 	endsAt: number;
-	/** performance.now() when the round started (playing), 0 otherwise. */
-	startedAt: number;
+	/** performance.now() when the round started (playing; negative if that was before the page loaded), null otherwise. */
+	startedAt: number | null;
 	/** Survivor, or turned into a zombie (claws, zombie HP) for the rest of the round. */
 	team: ZmTeam;
 	/** The next gate that is not open: closed (go to its unlock area) or counting down. */

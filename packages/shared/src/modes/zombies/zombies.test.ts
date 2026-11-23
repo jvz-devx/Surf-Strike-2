@@ -24,7 +24,7 @@ import {
 } from './game.ts';
 import { headCentre, meleeZombie, rayCylinder, raySphere, rayZombie, ZOMBIE_BODY, ZOMBIE_HEAD } from './hitbox.ts';
 import { decodeZombies, encodeZombies } from './net.ts';
-import { unlockReached, ZM_GATE_COUNTDOWN_SECS } from './gates.ts';
+import { gateFarSide, unlockReached, ZM_GATE_COUNTDOWN_SECS } from './gates.ts';
 import { HULL_MAX, HULL_MIN } from '../../movement/api.ts';
 import { ZombiePath } from './path.ts';
 import { hitDamage, shotsToKill, weaponForSlot, WEAPONS, WeaponState, WEAPON_IDS, ZOMBIE_HP } from './weapons.ts';
@@ -458,6 +458,55 @@ describe('gates (fake clock)', () => {
 		expect(game.gateState(0)).toBe('open');
 		expect(events.some((e) => e.e === 'gate' && e.state === 'open' && e.index === 0)).toBe(true);
 		expect(across()).toBe(1);
+	});
+
+	it('the far side of a gate is on the side the route leads to', () => {
+		const g = { min: { x: 0, y: 100, z: 0 }, max: { x: 200, y: 116, z: 190 } };
+		const gate = { ...g, unlock: g, node: 0 };
+		expect(gateFarSide(gate, { x: 0, y: 1 })).toEqual({ min: { x: 0, y: 132, z: -64 }, max: { x: 200, y: 644, z: 254 } });
+		expect(gateFarSide(gate, { x: 0, y: -1 })).toEqual({ min: { x: 0, y: -428, z: -64 }, max: { x: 200, y: 84, z: 254 } });
+	});
+
+	it('walking the route of a real map passes every gate once, in order; closed gates are skipped', () => {
+		const map = getMap('zombies_lowtide')!;
+		const walk = (gatesOpen: boolean) => {
+			const { game, events, advance, clock } = newGame(map, { gatesOpen });
+			game.syncPlayers([1], clock.now);
+			advance(1100);
+			for (let s = 0; s < game.path.length - 200; s += 8) {
+				const q = game.path.pointAt(s);
+				game.setPlayerPos(1, { x: q.x, y: q.y, z: 0.25, ducked: false });
+				advance(1000 / 64);
+			}
+			return events.filter((e) => e.e === 'pass');
+		};
+		expect(walk(true)).toEqual(map.zombies!.gates.map((_, index) => ({ e: 'pass', id: 1, index })));
+		expect(walk(false)).toEqual([]);
+	});
+
+	it('only living survivors pass, and not while a teleport is fresh', () => {
+		const g = newGame(testMap(), { gatesOpen: true });
+		g.game.syncPlayers([1, 2], g.clock.now);
+		g.advance(1100);
+		const behind = { x: 1340, y: 0, z: 0, ducked: false };
+		g.game.setPlayerPos(2, { x: 200, y: 0, z: -600, ducked: false }); // falls out
+		g.advance(50);
+		g.game.setPlayerPos(2, behind); // a packet from before the teleport
+		g.advance(100);
+		g.game.setPlayerPos(2, { x: 200, y: 0, z: 0, ducked: false });
+		g.advance(1100);
+		expect(g.events.filter((e) => e.e === 'pass')).toEqual([]);
+		for (let i = 0; i < 4; i++) {
+			g.game.setPlayerPos(1, { x: 200, y: 0, z: -600, ducked: false });
+			g.advance(1100);
+		}
+		g.game.setPlayerPos(1, { x: 200, y: 0, z: -600, ducked: false });
+		g.advance(1100);
+		expect(g.game.playerView(1)!.team).toBe('zombie');
+		g.game.setPlayerPos(1, behind);
+		g.game.setPlayerPos(2, behind);
+		g.advance(100);
+		expect(g.events.filter((e) => e.e === 'pass')).toEqual([{ e: 'pass', id: 2, index: 0 }]);
 	});
 
 	it('no zombies spawn behind a closed gate', () => {
