@@ -7,7 +7,7 @@
 import { buildSolid, type AABB, type MapDef, type MaterialDef } from '@surf/shared';
 import * as THREE from 'three';
 import { pushThree } from './coords.js';
-import { createBrushMaterial, DEFAULT_MATERIAL, materialOpacity, type SharedUniforms } from './materials.js';
+import { biasLineDepth, createBrushMaterial, DEFAULT_MATERIAL, materialOpacity, type SharedUniforms } from './materials.js';
 
 export interface WorldMeshes {
 	group: THREE.Group;
@@ -82,14 +82,16 @@ export function buildWorldMeshes(map: MapDef, shared: SharedUniforms): WorldMesh
 
 		if (def.edgeColor !== undefined) {
 			const edges = new THREE.EdgesGeometry(geo, 20);
-			const lineMat = new THREE.LineBasicMaterial({
-				color: def.edgeColor,
-				fog: true,
-				transparent: true,
-				opacity: 0.95,
-				blending: THREE.AdditiveBlending,
-				depthWrite: false
-			});
+			const lineMat = biasLineDepth(
+				new THREE.LineBasicMaterial({
+					color: def.edgeColor,
+					fog: true,
+					transparent: true,
+					opacity: 0.95,
+					blending: THREE.AdditiveBlending,
+					depthWrite: false
+				})
+			);
 			const lines = new THREE.LineSegments(edges, lineMat);
 			lines.name = `edges:${name}`;
 			lines.matrixAutoUpdate = false;
