@@ -462,7 +462,7 @@ export class ZombieRenderer {
 	}
 
 	/**
-	 * Barrett .50cal: long gunmetal receiver, big box magazine, fluted heavy
+	 * .50 cal rifle: long gunmetal receiver, big box magazine, fluted heavy
 	 * barrel, arrowhead muzzle brake, high scope on rings, carry handle, bipod.
 	 */
 	private buildBarrett(mat: (color: number, rough?: number) => THREE.MeshStandardMaterial): THREE.Group {

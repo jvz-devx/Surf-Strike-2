@@ -760,7 +760,7 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 	});
 });
 
-describe('infected respawn beacon (Tactical Insertion)', () => {
+describe('infected respawn beacon', () => {
 	before(async () => {
 		clock = 4_000_000_000;
 		server = await startServer({

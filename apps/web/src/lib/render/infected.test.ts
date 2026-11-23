@@ -258,7 +258,7 @@ const beaconRoots = (r: InfectedRenderer) => beaconLayer(r).children.filter((c) 
 const meshes = (o: THREE.Object3D) => o.children.filter((c): c is THREE.Mesh => c instanceof THREE.Mesh);
 const basic = (m: THREE.Mesh) => m.material as THREE.MeshBasicMaterial;
 
-describe('respawn beacons (Tactical Insertion)', () => {
+describe('respawn beacons', () => {
 	it('pools meshes and keeps knife roots unaffected', () => {
 		const r = new InfectedRenderer();
 		r.syncBeacons([beacon(1), beacon(2)], 9, 'survivor', 0);

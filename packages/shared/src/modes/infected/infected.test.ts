@@ -1183,7 +1183,7 @@ describe('multi-round cycle', () => {
 	});
 });
 
-describe('respawn beacon (Tactical Insertion)', () => {
+describe('respawn beacon', () => {
 	/** Aim from `id`'s eye at a beacon's hit centre. */
 	const atBeacon = (g: ReturnType<typeof playing>, id: number, b: { x: number; y: number; z: number }) => {
 		const o = g.eye(id);
@@ -1387,7 +1387,7 @@ const lcg = (seed: number) => () => {
 	return seed / 4294967296;
 };
 
-describe('MW3 primaries and the three-slot loadout', () => {
+describe('survivor primaries and the three-slot loadout', () => {
 	/** A shot along `dir` from the eye. */
 	const fireDir = (g: ReturnType<typeof playing>, id: number, dir: Vec3, origin = g.eye(id)) => {
 		const r = g.game.fire(id, { weapon: g.game.weaponOf(id)!.weapon, origin, dir, tick: g.game.tick }, g.clock.now);
@@ -1395,7 +1395,7 @@ describe('MW3 primaries and the three-slot loadout', () => {
 		return r;
 	};
 
-	it('Barrett .50cal: one body shot kills or infects, and a bullet pierces lined-up infected', () => {
+	it('.50 cal rifle: one body shot kills or infects, and a bullet pierces lined-up infected', () => {
 		const g = playing([1, 2, 3, 4]);
 		expect(g.game.roundLoadout).toBe('barrett');
 		g.put(1, -600, 0);

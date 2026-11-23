@@ -955,7 +955,7 @@ export class InfectedClient {
 			case 'moabCall':
 				this.moab = { callerId: ev.by, endsAt: now + ev.secs * 1000 };
 				if (ev.by === me) this.moabReady = false;
-				this.flash = { text: 'TACTICAL NUKE INBOUND!', at: now, tone: 'infected' };
+				this.flash = { text: 'M.O.A.B. INBOUND!', at: now, tone: 'infected' };
 				this.line(`${this.name(ev.by)} · called in a M.O.A.B.`, ev.by === me, false, now);
 				this.host.sound('moab');
 				break;

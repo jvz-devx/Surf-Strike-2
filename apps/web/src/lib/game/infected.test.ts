@@ -939,7 +939,7 @@ describe('disposal (map switch)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Respawn beacons (Tactical Insertion)
+// Respawn beacons
 
 const placeEv = (id: number, ownerId: number, x = 100, y = 0, z = 0, yaw = 90): InfEvent => ({ e: 'beaconPlace', id, ownerId, x, y, z, yaw });
 
@@ -1106,7 +1106,7 @@ describe('respawn beacon client (synthetic)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// MW3 classes: 3 slots, perks, M.O.A.B.
+// Survivor classes: 3 slots, perks, M.O.A.B.
 
 /** Me (id 1) as a playing survivor holding `weapon` (round preset `weapon`). */
 function survivorMe(weapon: WeaponId = 'lmg', mag = WEAPONS[weapon].magazine, reserve = 50) {
@@ -1182,7 +1182,7 @@ describe('3-slot survivor classes (real InfectedGame)', () => {
 	});
 });
 
-describe('MW3 primaries (client prediction)', () => {
+describe('survivor primaries (client prediction)', () => {
 	it('Barrett: Mouse2 scopes (38 FOV), the semi-auto stays scoped after a shot, viewmodel hidden while scoped', () => {
 		const u = survivorMe('barrett', 10, 20);
 		u.c.press('attack2', true, 10);
@@ -1352,7 +1352,7 @@ describe('specialist perks (client prediction)', () => {
 	});
 });
 
-describe('M.O.A.B. tactical nuke (synthetic)', () => {
+describe('M.O.A.B. (synthetic)', () => {
 	it('ready → [N]/4 call → inbound countdown → detonation flash survives the end event → grace resets', () => {
 		const u = survivorMe();
 		expect(u.c.callMoab(5)).toBe(false); // not earned
@@ -1371,7 +1371,7 @@ describe('M.O.A.B. tactical nuke (synthetic)', () => {
 		u.c.onEvent({ e: 'moabCall', by: 1, secs: INF_MOAB_COUNTDOWN_SECS }, 100);
 		v = u.c.frame(110, true, 0);
 		expect(v.moab).toEqual({ callerName: 'You', endsAt: 100 + INF_MOAB_COUNTDOWN_SECS * 1000 });
-		expect(v.flash).toMatchObject({ text: 'TACTICAL NUKE INBOUND!', tone: 'infected' });
+		expect(v.flash).toMatchObject({ text: 'M.O.A.B. INBOUND!', tone: 'infected' });
 		expect(v.killFeed[0]!.text).toContain('M.O.A.B.');
 		expect(u.sounds).toContain('moab');
 		// A state mid-countdown does not re-anchor (rounded timeLeft would jitter).

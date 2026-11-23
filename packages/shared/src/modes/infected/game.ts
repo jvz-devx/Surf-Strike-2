@@ -55,7 +55,7 @@
  *   with the scavenger perk also the pistol) even while another slot is held:
  *   clients should treat `scavenger: true` as a reserve update only.
  *
- * Survivor kill streak perks (MW3 Infected style): kills of infected in one
+ * Survivor kill streak perks: kills of infected in one
  * survivor life build `streak`; perks unlock at INF_PERK_KILLS (hardline is
  * the base, always on). The kill that reaches a threshold already gets that
  * perk's effect (the streak is counted first). A `perk` event announces each
@@ -66,7 +66,7 @@
  * its caller has turned or left (no credit then if they left). The perks of
  * infected players are reported as [] (they have no streak).
  *
- * Respawn beacons (MW3 Tactical Insertion): a living infected standing on
+ * Respawn beacons: a living infected standing on
  * walkable ground may place one beacon (INF_BEACON_COOLDOWN_MS between
  * placements; a new one replaces the old). Their next respawn uses it up and
  * puts them on it (reason 'beacon') instead of the far map spawn. Survivors
@@ -131,7 +131,7 @@ export const INF_AMMO: Readonly<Partial<Record<WeaponId, InfAmmo>>> = Object.fre
 	sniper: { mag: 5, reserve: 15, scavenger: 5 }
 });
 
-/** Survivor kill streak perks (MW3 Infected style); see INF_PERK_KILLS. */
+/** Survivor kill streak perks; see INF_PERK_KILLS. */
 export type InfPerkId = 'hardline' | 'sleight' | 'scavenger' | 'steady' | 'specialist';
 /** Survivor kill streak at which each perk unlocks (hardline: the base perk). */
 export const INF_PERK_KILLS: Readonly<Record<InfPerkId, number>> = Object.freeze({
@@ -256,7 +256,7 @@ export interface InfPlayerView {
 	moabReady: boolean;
 }
 
-/** A placed respawn beacon (Tactical Insertion); `z` is its floor point. */
+/** A placed respawn beacon; `z` is its floor point. */
 export interface InfBeaconView {
 	id: number;
 	ownerId: number;

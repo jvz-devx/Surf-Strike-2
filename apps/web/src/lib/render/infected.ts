@@ -1,7 +1,7 @@
 /**
  * Infected visuals (docs/modes.md#infected): throwing knives (tumbling in
  * flight, embedded when stuck, a pulsing pickup ring on your own), respawn
- * beacons (Tactical Insertion flares: puck, flare tube, burning tip, ground
+ * beacons (beacon flares: puck, flare tube, burning tip, ground
  * halo and a rising glow; your own also gets a trim ring and a marker seen
  * through walls), the last-survivor UAV pulse, drawn through walls, plus
  * sparks where a knife bounces or sticks and a flare burst where a beacon is
@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 
 const DEG = Math.PI / 180;
-/** Spin rate in radians per ms (MW3-style end-over-end tumble). */
+/** Spin rate in radians per ms (end-over-end tumble). */
 const SPIN = 0.025;
 const UAV_MS = 3200;
 const UAV_RADIUS = 720;
@@ -198,7 +198,7 @@ export class InfectedRenderer {
 	private sparks: SparkBurst[] = [];
 	private sparkFree: SparkBurst[] = [];
 	private lockGeo = new THREE.RingGeometry(0.93, 1, 64);
-	// Respawn beacons (Tactical Insertion)
+	// Respawn beacons
 	/** Holds the beacon roots (an Object3D, so knife-root queries on Groups stay unaffected). */
 	private readonly rbLayer = new THREE.Object3D();
 	private rbColumnGeo = new THREE.CylinderGeometry(0.2, 1, 1, 14, 1, true);
@@ -368,7 +368,7 @@ export class InfectedRenderer {
 	}
 
 	// ---------------------------------------------------------------------
-	// Respawn beacons (Tactical Insertion)
+	// Respawn beacons
 
 	private createBeacon(): BeaconMesh {
 		const root = new THREE.Group();

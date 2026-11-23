@@ -156,9 +156,9 @@ export type ClientMessage =
 	| { type: 'reload' }
 	/** Zombies: pick the weapon for this life (only while the loadout window is open). */
 	| { type: 'loadout'; weapon: WeaponId }
-	/** Infected: throw an MW3-style throwing knife from eye `origin` along unit `dir`. */
+	/** Infected: throw a throwing knife from eye `origin` along unit `dir`. */
 	| { type: 'throwKnife'; origin: Vec3; dir: Vec3 }
-	/** Infected: place an MW3-style respawn beacon (Tactical Insertion) at the feet. */
+	/** Infected: place a respawn beacon at the feet. */
 	| { type: 'placeBeacon' }
 	/** Infected: a survivor calls their earned M.O.A.B. (kill streak; detonates after a countdown). */
 	| { type: 'callMoab' }
