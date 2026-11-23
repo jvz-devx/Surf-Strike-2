@@ -131,6 +131,8 @@ export interface ModeEconomy {
 	report(signal: 'shadow' | 'impossible', playerIds: readonly number[], evidence: string): void;
 	/** The mode moved this player other than by a `spawn` event or to a map spawn. */
 	teleported(playerId: number): void;
+	/** The player did something the server verified that counts as moving (Infected: a gunshot). Not input for playtime. */
+	acted(playerId: number): void;
 }
 
 /** Same person across reconnects. */
@@ -498,6 +500,10 @@ export class Economy {
 			teleported: (id) => {
 				const p = this.player(id);
 				if (p) this.activities.get(p)?.expectTeleport(this.host.clock());
+			},
+			acted: (id) => {
+				const p = this.player(id);
+				if (p && !p.spectating) this.activities.get(p)?.acted();
 			}
 		};
 	}

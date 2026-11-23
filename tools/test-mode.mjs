@@ -40,9 +40,9 @@ const SUITES = {
 		web: () => ['src/lib/game/records.test.ts', 'src/lib/game/ghost.test.ts']
 	},
 	tag: {
-		about: 'shared tag rules + tag maps + maps, server tag.test.ts',
+		about: 'shared tag rules + tag maps + maps, server tag*.test.ts',
 		shared: () => ['src/modes/tag.test.ts', 'src/maps/maps.test.ts', ...byPrefix(SHARED, 'src/maps', ['tag_'])],
-		server: () => ['src/tag.test.ts'],
+		server: () => byPrefix(SERVER, 'src', ['tag']),
 		web: () => []
 	},
 	zombies: {
@@ -54,7 +54,7 @@ const SUITES = {
 	infected: {
 		about: 'shared infected rules + infected_outpost + maps, server infected.test.ts, web infected game/render + format',
 		shared: () => ['src/modes/infected/infected.test.ts', 'src/maps/maps.test.ts', ...byPrefix(SHARED, 'src/maps', ['infected_'])],
-		server: () => ['src/infected.test.ts'],
+		server: () => byPrefix(SERVER, 'src', ['infected']),
 		web: () => ['src/lib/game/infected.test.ts', 'src/lib/render/infected.test.ts', 'src/lib/ui/format.test.ts']
 	}
 };

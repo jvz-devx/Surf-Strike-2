@@ -9,10 +9,13 @@ import type { InfEvent, InfPerkId, InfPhase, MapRecordInfo, NetState, ScoreRow, 
 import {
 	buildCollisionWorld,
 	FLAG_DUCKED,
+	INF_PERK_KILLS,
+	INF_ROUND_SECS,
 	INF_SECONDARY,
 	INF_SIM_HZ,
 	INF_UAV_INTERVAL_MS,
 	InfectedGame,
+	INFECTED_PAY,
 	infEventRoute,
 	Status,
 	WEAPONS,
@@ -85,12 +88,26 @@ export class InfectedMode implements ServerMode {
 	private gunDropSaid = false;
 	/** Phase of the last `phase` event (a drop to waiting only says "cancelled" mid-round). */
 	private phaseSaid: InfPhase = 'waiting';
+	/** Coins: normal length of the playing phase (ms) and when the running one started. */
+	private readonly clockMs: number;
+	private playingSince: number | null = null;
+	/** Coins: survivors when the round began, and how many were infected by someone. */
+	private firstSurvivors = 0;
+	private infected = 0;
+	/** Coins: infections the lobby can still be paid for (`INFECTED_PAY.infectStock`). */
+	private stock: number = INFECTED_PAY.infectStock.max;
+	private stockAt: number | null = null;
+	/** Coins: infected killed in the current survivor life, by survivor id. */
+	private readonly streakVictims = new Map<number, Set<string>>();
+	/** PlayerId of whoever called the M.O.A.B. (the id may be someone else's by now). */
+	private moabCaller: string | null = null;
 
 	constructor(
 		private readonly host: ModeHost,
 		opts: InfectedModeOptions = {}
 	) {
 		const map = host.map;
+		this.clockMs = (opts.roundSecs ?? INF_ROUND_SECS) * 1000;
 		this.game = new InfectedGame({
 			...opts,
 			map,
@@ -114,11 +131,13 @@ export class InfectedMode implements ServerMode {
 		if (this.game.phase === 'waiting') this.host.systemTo(p, 'Waiting for more players: Infected needs 2+ to start a round.');
 	}
 
-	leave(): void {
+	leave(p: ModePlayer): void {
+		this.streakVictims.delete(p.id);
 		this.tick();
 	}
 
-	spectate(): void {
+	spectate(p: ModePlayer): void {
+		this.streakVictims.delete(p.id);
 		this.tick();
 	}
 
@@ -146,6 +165,8 @@ export class InfectedMode implements ServerMode {
 						? this.game.tick - Math.round(((Math.max(0, p.ping) * 0.5) / 1000) * INF_SIM_HZ)
 						: rawTick;
 				const res = this.game.fire(p.id, { weapon: msg.weapon, origin: msg.origin, dir: msg.dir, tick }, now);
+				// Holding an angle and shooting is playing (docs/economy.md): a real shot of a gun, not a swing.
+				if (res.ok && this.game.phase === 'playing' && (WEAPONS[msg.weapon]?.magazine ?? 0) > 0) this.host.economy.acted(p.id);
 				this.dispatch(res.events);
 				break;
 			}
@@ -267,6 +288,125 @@ export class InfectedMode implements ServerMode {
 			if (URGENT.has(ev.e)) this.urgent = true;
 			else if (ev.e !== 'shot') this.dirty = true;
 			this.announce(ev);
+			this.pay(ev);
+		}
+	}
+
+	private player(id: number): ModePlayer | null {
+		for (const p of this.host.players()) if (p.id === id) return p;
+		return null;
+	}
+
+	/** Same person across reconnects and double connections. */
+	private person(id: number): string {
+		const p = this.player(id);
+		return !p ? `#${id}` : p.accountId !== null ? `a${p.accountId}` : `g${p.playerId}`;
+	}
+
+	/** Coins of a rules event (docs/economy.md#infected). M.O.A.B. victims have no `kill` event. */
+	private pay(ev: InfEvent): void {
+		const eco = this.host.economy;
+		switch (ev.e) {
+			case 'phase':
+				if (ev.phase === 'playing') {
+					eco.roundStart();
+					this.playingSince = this.stockAt = this.host.now();
+					this.firstSurvivors = this.game.view(this.host.now()).survivors; // Patient Zero is picked already
+					this.infected = 0;
+					this.streakVictims.clear();
+					this.moabCaller = null;
+				} else if (ev.phase === 'waiting') {
+					// Cancelled: what was earned stays, nothing for surviving or winning.
+					this.refillStock();
+					this.playingSince = this.stockAt = null;
+					eco.roundEnd();
+				}
+				break;
+			case 'alpha':
+				eco.tally(ev.id, 'zero', 'round');
+				this.streakVictims.delete(ev.id);
+				break;
+			case 'kill':
+				this.payKill(ev.by, ev.targetId);
+				break;
+			case 'infect':
+				this.streakVictims.delete(ev.id);
+				if (ev.by !== null) this.payInfection(ev.by, ev.id, ev.method === 'bank');
+				break;
+			case 'beaconDestroy':
+				if (ev.by !== null && this.person(ev.by) !== this.person(ev.ownerId)) eco.award(ev.by, INFECTED_PAY.beacon, 'infBeacon', { against: ev.ownerId });
+				break;
+			case 'moabCall':
+				this.moabCaller = this.player(ev.by)?.playerId ?? null;
+				break;
+			case 'moabDetonate':
+				for (const p of this.host.players()) if (p.playerId === this.moabCaller) eco.award(p.id, INFECTED_PAY.moab, 'infMoab');
+				this.moabCaller = null;
+				break;
+			case 'end':
+				this.payEnd(ev.winner);
+				eco.roundEnd();
+				this.refillStock();
+				this.playingSince = this.stockAt = null;
+				break;
+		}
+	}
+
+	private payKill(by: number, target: number): void {
+		const eco = this.host.economy;
+		const P = INFECTED_PAY;
+		const victim = this.person(target);
+		eco.contact(by, target);
+		eco.tally(by, 'fought', 'round');
+		if (eco.tally(by, `kill:${victim}`, 'round') <= P.kills.perVictim && eco.tally(by, 'kills', 'round') % P.kills.every === 0)
+			eco.award(by, P.kills.points, 'infKills', { against: target });
+		const victims = this.streakVictims.get(by) ?? new Set();
+		this.streakVictims.set(by, victims.add(victim));
+		if ((this.game.playerView(by)?.streak ?? 0) >= INF_PERK_KILLS.specialist && victims.size >= P.specialistVictims)
+			eco.award(by, P.specialist, 'infSpecialist');
+	}
+
+	private refillStock(): void {
+		if (this.stockAt === null) return;
+		const { max, everyMs } = INFECTED_PAY.infectStock;
+		const now = this.host.now();
+		this.stock = Math.min(max, this.stock + (now - this.stockAt) / everyMs);
+		this.stockAt = now;
+	}
+
+	private payInfection(by: number, target: number, bank: boolean): void {
+		const eco = this.host.economy;
+		this.infected++;
+		eco.contact(by, target);
+		eco.tally(by, 'infected', 'round');
+		this.refillStock();
+		if (this.stock < 1) return;
+		if (eco.award(by, INFECTED_PAY.infect, 'infInfect', { against: target }).paid > 0) this.stock--;
+		if (bank) eco.award(by, INFECTED_PAY.bankShot, 'infBank', { against: target });
+	}
+
+	/** Round end: the winners of it. A survivor who turned counts as infected from then on. */
+	private payEnd(winner: 'survivors' | 'infected'): void {
+		const eco = this.host.economy;
+		const P = INFECTED_PAY;
+		const played = this.playingSince === null ? 0 : this.host.now() - this.playingSince;
+		const players = this.game.view(this.host.now()).players;
+		if (winner === 'infected') {
+			if (played < this.clockMs * P.winShare) return;
+			for (const p of players) {
+				if (p.team !== 'infected') continue;
+				if (eco.tallied(p.id, 'zero', 'round') > 0) eco.award(p.id, P.winPatientZero, 'infWin');
+				else if (eco.tallied(p.id, 'infected', 'round') > 0) eco.award(p.id, P.winInfected, 'infWin');
+			}
+			return;
+		}
+		if (played < this.clockMs * P.surviveShare) return;
+		const left = players.filter((p) => p.team === 'survivor' && p.alive);
+		const hard = this.infected * 2 >= this.firstSurvivors;
+		for (const p of left) {
+			const full = hard && eco.tallied(p.id, 'fought', 'round') > 0;
+			eco.award(p.id, full ? P.survive : P.surviveEasy, 'infSurvive');
+			if (full && left.length === 1) eco.award(p.id, P.lastSurvivor, 'infLast');
 		}
 	}
 

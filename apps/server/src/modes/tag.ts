@@ -4,13 +4,34 @@
  * non-spectating player; clients only display the result.
  */
 import type { MapRecordInfo, ScoreRow, ServerMessage, TagEvent, TagPos } from '@surf/shared';
-import { FLAG_DUCKED, Status, TAG_PODIUM, TagGame, type TagGameOptions } from '@surf/shared';
+import {
+	buildSight,
+	FLAG_DUCKED,
+	HUNT_RANGE,
+	HuntTracker,
+	Status,
+	TAG_PAY,
+	TAG_PODIUM,
+	TagGame,
+	tagPlacements,
+	TimeMeter,
+	type HuntBody,
+	type TagGameOptions,
+	type TagScore
+} from '@surf/shared';
 import type { Command } from '../commands.ts';
 import type { ModeHost, ModePlayer, ServerMode } from './types.ts';
 import { EMPTY_RECORDS } from './types.ts';
 
 /** Mode state is re-sent at least this often (ms). */
 export const MODE_STATE_MS = 1000;
+
+/**
+ * An IT this close to a runner (units) is trying to tag them: there is no swing
+ * in tag, and a close chase between equally fast players is normal play.
+ */
+const ATTEMPT_RANGE = 64;
+const ATTEMPT_HEIGHT = 72;
 
 export type TagModeOptions = Pick<TagGameOptions, 'roundSecs' | 'intermissionSecs' | 'immunitySecs'>;
 
@@ -20,12 +41,23 @@ export class TagMode implements ServerMode {
 	readonly id = 'tag' as const;
 	readonly game: TagGame;
 	private lastSent = -Infinity;
+	/** Chases of the running round (docs/economy.md#chase-and-view). */
+	private readonly hunt: HuntTracker;
+	/** By playerId: an id can go to someone else. */
+	private readonly chased = new TimeMeter<string>(TAG_PAY.chased.everyMs);
+	/** Time chased this round (ms), by playerId: placement. */
+	private readonly chasedMs = new Map<string, number>();
+	/** Id → playerId of everyone who has played the running round from its start. */
+	private readonly starters = new Map<number, string>();
+	/** PlayerIds that have been IT this round. */
+	private readonly wasIt = new Set<string>();
 
 	constructor(
 		private readonly host: ModeHost,
 		opts: TagModeOptions = {}
 	) {
 		this.game = new TagGame({ ...opts, now: host.now(), rng: () => host.rng() });
+		this.hunt = new HuntTracker({ sight: buildSight(host.map), chaseRange: HUNT_RANGE.tagChase });
 	}
 
 	join(p: ModePlayer): void {
@@ -81,17 +113,93 @@ export class TagMode implements ServerMode {
 	tick(): void {
 		const now = this.host.now();
 		const active = new Map<number, TagPos | null>();
+		const playing = new Map<number, ModePlayer>();
 		for (const p of this.host.players()) {
 			if (p.spectating) continue;
+			playing.set(p.id, p);
 			const s = p.state;
 			active.set(p.id, s ? { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0 } : null);
 		}
 		const events = this.game.update(now, active);
-		for (const e of events) this.announce(e);
+		// Leaving or spectating ends "played from the start", also when coming back.
+		for (const [id, key] of this.starters) if (playing.get(id)?.playerId !== key) this.starters.delete(id);
+		for (const e of events) {
+			this.announce(e);
+			this.pay(e, playing);
+		}
+		if (this.game.phase === 'playing') this.payChases(now, playing);
 		if (events.length > 0 || now - this.lastSent >= MODE_STATE_MS) {
 			this.lastSent = now;
 			this.host.broadcast(this.stateMessage());
 		}
+	}
+
+	/** Coins of a rules event (docs/economy.md#tag). */
+	private pay(e: TagEvent, playing: ReadonlyMap<number, ModePlayer>): void {
+		const eco = this.host.economy;
+		switch (e.type) {
+			case 'roundStart':
+				eco.roundStart();
+				this.hunt.reset();
+				this.chased.reset();
+				this.chasedMs.clear();
+				this.wasIt.clear();
+				this.starters.clear();
+				for (const p of playing.values()) this.starters.set(p.id, p.playerId);
+				break;
+			case 'tag': {
+				this.hunt.attempt(e.by);
+				const target = playing.get(e.target);
+				const key = target && (target.accountId !== null ? `a${target.accountId}` : `g${target.playerId}`);
+				if (key && eco.tally(e.by, `tag:${key}`, 'round') === 1) eco.award(e.by, TAG_PAY.tag, 'tagTag', { against: e.target });
+				eco.contact(e.by, e.target);
+				break;
+			}
+			case 'roundEnd':
+				this.payPlaces(e.ranking, playing);
+				eco.roundEnd();
+				break;
+			case 'waiting': // cancelled: no placement
+				eco.roundEnd();
+				break;
+		}
+	}
+
+	/** Placement among those who played the whole round and met the action. */
+	private payPlaces(ranking: readonly TagScore[], playing: ReadonlyMap<number, ModePlayer>): void {
+		const rows = [];
+		for (const s of ranking) {
+			const key = playing.get(s.id)?.playerId;
+			if (key === undefined || this.starters.get(s.id) !== key) continue;
+			const chasedMs = this.chasedMs.get(key) ?? 0;
+			if (chasedMs < TAG_PAY.placeChasedMs && !this.wasIt.has(key)) continue;
+			rows.push({ id: s.id, score: s.score, chasedMs });
+		}
+		for (const { id, base, place } of tagPlacements(rows)) this.host.economy.award(id, base, 'tagPlace', { label: `Place ${place}` });
+	}
+
+	/** Runners near an IT, and ITs that only stand by. */
+	private payChases(now: number, playing: ReadonlyMap<number, ModePlayer>): void {
+		const its: HuntBody[] = [];
+		const runners: HuntBody[] = [];
+		for (const p of playing.values()) {
+			const it = this.game.isIt(p.id);
+			if (it) this.wasIt.add(p.playerId);
+			const s = p.state;
+			if (!s) continue;
+			const body = { id: p.id, x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, ducked: (s.flags & FLAG_DUCKED) !== 0 };
+			(it ? its : runners).push(body);
+		}
+		for (const a of its)
+			if (runners.some((b) => Math.hypot(a.x - b.x, a.y - b.y) <= ATTEMPT_RANGE && Math.abs(a.z - b.z) <= ATTEMPT_HEIGHT)) this.hunt.attempt(a.id);
+		const sample = this.hunt.update(now, its, runners);
+		if (!sample) return;
+		for (const [id, e] of sample.chased) {
+			const key = playing.get(id)!.playerId;
+			this.chasedMs.set(key, (this.chasedMs.get(key) ?? 0) + e.ms);
+			if (this.chased.add(key, e.ms) > 0) this.host.economy.award(id, TAG_PAY.chased.points, 'tagChased', { against: e.by });
+		}
+		for (const { hunter, target } of sample.shadows) this.host.economy.report('shadow', [hunter, target], '20 s without a tag attempt');
 	}
 
 	stateMessage(): Extract<ServerMessage, { type: 'modeState' }> {

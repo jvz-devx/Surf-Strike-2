@@ -1,6 +1,6 @@
 # Points and coins
 
-Status: the core is implemented (ledger, activity, playtime points, abuse detection, client views, the API for modes), and the awards of surf, bhop and Zombie Run. The awards of the other modes and the shop are not. The owner asked for a balanced point system and left the final numbers to us. Change the numbers here first, then in `packages/shared/src/economy.ts`, which holds all of them.
+Status: the core is implemented (ledger, activity, playtime points, abuse detection, client views, the API for modes), and the awards of surf, bhop, Zombie Run, Tag and Infected. The awards of Hide and seek and the shop are not. The owner asked for a balanced point system and left the final numbers to us. Change the numbers here first, then in `packages/shared/src/economy.ts`, which holds all of them.
 
 ## Terms
 
@@ -87,8 +87,10 @@ The first draft only let the evac decay (100, 75, 50, 25 %). A round that is won
 Needs at least 3 active players. Rounds are 3 minutes.
 
 - **Chased:** 1 point per 20 seconds as a runner while an IT is within 500 units, in line of sight, and both are moving. At most 3 per round. Hiding away from the action pays nothing.
-- **Tags:** 1 point per different runner tagged, at most 3 per round.
-- **Placement,** with 4 or more players and a round played from the start: 3 / 2 / 1 points for the top three.
+- **Tags:** 1 point per different runner tagged, at most 3 per round. A runner who reconnects is the same one.
+- **Placement,** with 4 or more players and a round played from the start: 3 / 2 / 1 points for the top three by time not IT. Players tied on that time (0.1 s, as shown) are ordered by how long they were chased; still tied players share the points of their places, rounded down, at least 1. Who was never IT and was chased for less than 10 s in the round takes no place: hiding pays nothing. Late joiners, and players who left or spectated in between, are skipped.
+- **A round cancelled** by too few players pays no placement; chases and tags already paid stay.
+- Coming within 64 units of a runner counts as a tag attempt for the `shadow` signal.
 
 ## Hide and seek
 
@@ -106,14 +108,19 @@ Triggered with more than 4 players (5 or more active). Below that the mode pays 
 
 Needs at least 4 active players. Rounds are 2–4 minutes.
 
-- **Survivor kills:** 1 point per 4 infected killed, at most 4 per round.
-- **Infections:** 1 point per survivor infected, at most 5 per round; +1 for a bank shot, once per round.
-- **Survive the round:** 4 points.
-- **Last survivor alive when the survivors win:** +3.
-- **Specialist (7-kill streak):** 2 points, once per round.
-- **M.O.A.B. detonated:** 8 points.
-- **Beacon smashed:** 1 point, once per round.
-- **Infected win:** 2 points for Patient Zero, 1 point for every other infected who infected someone.
+- **Survivor kills:** 1 point per 4 infected killed, at most 4 per round. The same infected counts for at most 4 kills per survivor and round.
+- **Infections:** 1 point per survivor infected, at most 5 per round; +1 for a bank shot, once per round. The whole lobby shares a stock of 16 payable infections that refills by 1 per 15 s of a running round: normal play does not notice it, rounds thrown away in seconds use it up.
+- **Survive the round:** 4 points when at least half of the first survivors were infected and you killed at least one infected, else 2.
+- **Last survivor alive when the survivors win:** +3, with the same conditions as the 4 points.
+- **Specialist (7-kill streak):** 2 points, once per round, when the streak has kills of at least 2 different infected.
+- **M.O.A.B. detonated:** 8 points to the caller, once per map session. Its victims count for nothing else. Surviving pays only when the normal clock (2 minutes) was played, so not after an earlier M.O.A.B.
+- **Beacon smashed:** 1 point, once per round, for somebody else's beacon.
+- **Infected win:** 2 points for Patient Zero, 1 point for every other infected who infected someone, when at least half of the normal clock was played.
+- **Survivor first, infected later in the same round:** both halves pay. Kills, specialist, beacon and a called M.O.A.B. stay; from then on infections and the infected win count; surviving does not. Late joiners start as infected and are paid like the others.
+- **A round cancelled** by too few players pays nothing for surviving or winning.
+- **AFK:** 30 seconds without moving, as everywhere; a gunshot during the round counts as moving, so holding an angle and shooting is playing. Looking around or swinging the knife does not.
+
+The limits beyond the first draft come from a bot simulation (2026-11-24, points per hour at ×1.0 including 40 playtime). Without them Patient Zero being let to infect everyone in seconds paid 240–249, an infected team that refuses to attack 144–152, protecting one survivor 156–160, and a very good player 198. With them: 54–59, 90–95, 108–110 and 142–166; average play 98–108. Tag: average 90–133, very good 134–186, hiding only the playtime. Bots on a simple arena, so rough.
 
 The mode's own score (`+100` per kill and so on) stays as it is and only ranks players inside the round.
 
@@ -167,6 +174,7 @@ Guests see "Log in or register to earn coins for this." once per session, the fi
 | `apps/server/src/activity.ts` | Activity, input and suspect movement per connection |
 | `apps/server/src/abuse.ts` | Strikes, decay, warning, pause, ban decision |
 | `apps/server/src/economy-helpers.ts` | Simulated lobby for tests |
+| `apps/server/src/payout-helpers.ts` | A real mode on that lobby for the payout tests |
 | `apps/web/src/lib/game/coins.ts` | Popups and the Coins view on the client |
 
 ### Storage
@@ -213,6 +221,7 @@ A mode calls `host.economy` (`ModeEconomy`) and nothing else. Every rule of this
 | `activePlayers()`, `isActive(playerId)`, `multiplier()`, `enoughPlayers(reason?)` | Current values |
 | `contact(byId, targetId)` | Call for **every** tag, find or infection, paid or not |
 | `report('shadow', [hunterId, targetId], evidence)`, `report('impossible', [playerId], evidence)` | Abuse evidence |
+| `acted(playerId)` | A verified action that counts as moving for the 30 s (Infected: a gunshot); not input for playtime |
 | `teleported(playerId)` | Only for a move that is neither a `spawn` event sent with `host.send` (`zm`, `inf`, `hns`) nor to a spawn or destination of the map |
 
 A map session is one mode instance: from map change to map change, extensions included. Its handle stops paying afterwards. Outside a round (before the first `roundStart`) the caps of `AWARDS` run for the whole session.

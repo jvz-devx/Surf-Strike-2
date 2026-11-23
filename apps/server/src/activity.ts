@@ -137,6 +137,11 @@ export class PlayerActivity {
 		this.expectUntil = now + EXPECT_TELEPORT_MS;
 	}
 
+	/** The mode saw the player act (fired a gun): as good as moving, but not before the first movement. */
+	acted(): void {
+		if (Number.isFinite(this.stillMs)) this.stillMs = 0;
+	}
+
 	/** New map: the position starts over; waiting for the first packet holds the clock. */
 	newMap(): void {
 		this.forget();

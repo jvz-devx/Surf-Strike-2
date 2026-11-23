@@ -102,8 +102,30 @@ export const TAG_PAY = Object.freeze({
 	chased: Object.freeze({ points: pts(1), everyMs: 20_000 }),
 	tag: pts(1),
 	/** First, second and third place. */
-	placement: Object.freeze([pts(3), pts(2), pts(1)])
+	placement: Object.freeze([pts(3), pts(2), pts(1)]),
+	/** No placement for a runner chased for less than this in the round (never IT either): hiding. */
+	placeChasedMs: 10_000
 });
+
+/**
+ * Tag placement: most time not IT first; tied (as shown, 0.1 s) by time chased;
+ * still tied players share the places' points, rounded down to whole ones, at least 1.
+ */
+export function tagPlacements(
+	rows: readonly { id: number; score: number; chasedMs: number }[]
+): { id: number; place: number; base: number }[] {
+	const shown = (r: { score: number }) => Math.round(r.score * 10);
+	const order = [...rows].sort((a, b) => shown(b) - shown(a) || b.chasedMs - a.chasedMs || a.id - b.id);
+	const out: { id: number; place: number; base: number }[] = [];
+	for (let i = 0; i < order.length && i < TAG_PAY.placement.length; ) {
+		const tied = order.slice(i).filter((r) => shown(r) === shown(order[i]!) && r.chasedMs === order[i]!.chasedMs);
+		const sum = tied.reduce((n, _, k) => n + (TAG_PAY.placement[i + k] ?? 0), 0);
+		const base = pts(Math.max(1, Math.floor(sum / tied.length / POINTS_SCALE)));
+		for (const r of tied) out.push({ id: r.id, place: i + 1, base });
+		i += tied.length;
+	}
+	return out;
+}
 
 export const HNS_PAY = Object.freeze({
 	seekerChase: Object.freeze({ points: pts(1), everyMs: 20_000 }),
@@ -121,16 +143,26 @@ export const HNS_PAY = Object.freeze({
 });
 
 export const INFECTED_PAY = Object.freeze({
-	kills: Object.freeze({ points: pts(1), every: 4 }),
+	/** The same infected counts for at most `perVictim` kills of one survivor and round. */
+	kills: Object.freeze({ points: pts(1), every: 4, perVictim: 4 }),
 	infect: pts(1),
+	/** Infections (and bank shots) the lobby can still be paid for: a stock that refills while a round is played. */
+	infectStock: Object.freeze({ max: 16, everyMs: 15_000 }),
 	bankShot: pts(1),
 	survive: pts(4),
+	/** Fewer than half of the first survivors were infected, or the survivor killed no infected. */
+	surviveEasy: pts(2),
 	lastSurvivor: pts(3),
+	/** The streak needs kills of at least `victims` different infected. */
 	specialist: pts(2),
+	specialistVictims: 2,
 	moab: pts(8),
 	beacon: pts(1),
 	winPatientZero: pts(2),
-	winInfected: pts(1)
+	winInfected: pts(1),
+	/** Share of the round clock that must have been played for the infected win, and for survive / last survivor (a M.O.A.B. can end a round early). */
+	winShare: 0.5,
+	surviveShare: 1
 });
 
 /** Chase and view ranges (units) for `HuntTracker` (modes/hunt.ts). */
@@ -184,7 +216,7 @@ const defs = {
 	infSurvive: { label: 'Survived', perRound: INFECTED_PAY.survive },
 	infLast: { label: 'Last survivor', perRound: INFECTED_PAY.lastSurvivor },
 	infSpecialist: { label: 'Specialist', perRound: INFECTED_PAY.specialist },
-	infMoab: { label: 'M.O.A.B.' },
+	infMoab: { label: 'M.O.A.B.', perSession: INFECTED_PAY.moab },
 	infBeacon: { label: 'Beacon smashed', perRound: INFECTED_PAY.beacon },
 	infWin: { label: 'Infected win', perRound: INFECTED_PAY.winPatientZero }
 } satisfies Record<string, AwardDef>;

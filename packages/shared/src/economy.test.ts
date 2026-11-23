@@ -20,6 +20,7 @@ import {
 	SPEED_LIMIT,
 	raceFinish,
 	TAG_PAY,
+	tagPlacements,
 	ZOMBIES_PAY,
 	type AwardDef
 } from './economy.ts';
@@ -64,12 +65,22 @@ describe('payouts', () => {
 		expect(ZOMBIES_PAY.evac(5)).toBe(80);
 		expect(TAG_PAY.placement).toEqual([30, 20, 10]);
 		expect([HNS_PAY.find, HNS_PAY.bagMin, HNS_PAY.bagMax]).toEqual([30, 40, 100]);
-		expect([INFECTED_PAY.survive, INFECTED_PAY.moab]).toEqual([40, 80]);
+		expect([INFECTED_PAY.survive, INFECTED_PAY.surviveEasy, INFECTED_PAY.moab, AWARDS.infMoab.perSession]).toEqual([40, 20, 80, 80]);
 		expect(MIN_ACTIVE).toEqual({ tag: 3, hns: 5, infected: 4 });
 		const caps = Object.fromEntries(Object.entries(AWARDS as Record<string, AwardDef>).map(([k, d]) => [k, d.perRound]));
 		expect(caps).toMatchObject({ tagChased: 30, tagTag: 30, hnsChase: 40, hnsChased: 80, hnsView: 60, infKills: 40, infInfect: 50, zombiesKill: 30 });
 		expect(AWARDS.tagPlace.minActive).toBe(4);
 		expect((Object.keys(AWARDS) as (keyof typeof AWARDS)[]).filter((k) => AWARDS[k].exempt)).toEqual(['raceFirst', 'raceRecord']);
+	});
+	it('tag placement: time not IT, then time chased, ties share', () => {
+		const row = (id: number, score: number, chasedMs = 0) => ({ id, score, chasedMs });
+		const paid = (...rows: ReturnType<typeof row>[]) => tagPlacements(rows).map((r) => [r.id, r.place, r.base]);
+		expect(paid(row(1, 90), row(2, 180), row(3, 120.04), row(4, 10))).toEqual([[2, 1, 30], [3, 2, 20], [1, 3, 10]]);
+		expect(paid(row(1, 180, 5000), row(2, 180, 9000), row(3, 180, 7000))).toEqual([[2, 1, 30], [3, 2, 20], [1, 3, 10]]);
+		expect(paid(row(1, 180), row(2, 180), row(3, 50))).toEqual([[1, 1, 20], [2, 1, 20], [3, 3, 10]]);
+		expect(paid(row(1, 9), row(2, 5), row(3, 1), row(4, 1))).toEqual([[1, 1, 30], [2, 2, 20], [3, 3, 10], [4, 3, 10]]);
+		expect(paid(...[1, 2, 3, 4, 5].map((i) => row(i, 180)))).toEqual([1, 2, 3, 4, 5].map((i) => [i, 1, 10]));
+		expect(paid()).toEqual([]);
 	});
 	it('labels', () => {
 		expect(awardLabel('hnsFind')).toBe('Found a hider');
