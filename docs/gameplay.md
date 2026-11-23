@@ -65,7 +65,7 @@ Chat commands:
 | --- | --- |
 | `!r`, `!restart` | Back to start, reset timer |
 | `!back` | Back to current stage or checkpoint |
-| `!rtv` | Rock the vote |
+| `!rtv` | Request a map vote (RTV request); on an open request: vote yes |
 | `!top` | Top-10 for this map |
 | `!pb` | Your PB and rank |
 | `!spec [name]` | Spectate (a player, or the next one) |
@@ -87,12 +87,18 @@ Hold `Tab`. Columns: name, map rank, PB, status (`Start zone`, `Stage 3`, `Runni
 
 - Each map runs for 15:00.
 - At 0:30 left, a 20-second vote opens for everyone.
-- Options: the other 3 maps, plus "Extend 10 min". Keys `1`–`4` vote; changing a vote is allowed until it closes.
-- Most votes wins. Ties are broken at random. No votes at all: a random other map.
+- Options: up to 6 maps, picked at random from the enabled maps other than the current one: 2 surf, 2 bhop, 1 tag, 1 zombies. A category with too few maps leaves free slots, filled with random maps of the other categories, so there are still 6 distinct maps (fewer only when fewer maps are enabled). They are listed by category (surf, bhop, tag, zombies), each labelled with it ("Surf · Kessler", "Zombies · …"), in the panel and in the chat lines. The timed vote adds "Extend 10 min" as the last option (option 7 with 6 maps). Keys `1`–`7` vote while the vote is open, instead of their binds (no weapon switch); changing a vote is allowed until it closes.
+- Most votes wins. Ties are broken at random. No votes at all: a random map from the options.
 - "Extend" adds 10:00 to the current map. At most 2 extends per map; after that, the option is not offered.
-- `!rtv` (rock the vote): when a third (33%) of connected non-spectator players have typed it (rounded up: 1–3 players need 1, 4–6 need 2, 7–9 need 3, …), a vote opens at once, without the extend option. Minimum 1 player. `!rtv` is blocked for the first 20 seconds of a map.
+- **RTV request** (rock the vote): `!rtv` (or console `rtv`), or picking a map in Esc › Change map while others are online, asks everyone "<name> wants to vote for a new map (<map>)" in a modal at the top of the screen ([ui.md](ui.md#rtv-request)). It is open for 20 s. The initiator votes yes; every other non-spectating player presses `1` = yes or `2` = no (changing the answer is allowed). Spectators see it but cannot vote or start one.
+  - It passes as soon as the yes votes reach a third of the non-spectating players, rounded up (1–3 players need 1, 4–6 need 2, 7–9 need 3, …; minimum 1). With 1–3 players the initiator's own yes is enough, so the vote opens at once. A passed request opens the map vote at once, without the extend option.
+  - It is declined when the 20 s run out, or as soon as the remaining players cannot reach the threshold any more (enough no votes). Players who leave or start spectating lose their vote and the threshold is recomputed.
+  - After a declined request nobody can start another for 60 s ("Map vote declined — try again in 45 s"). A passed request has no cooldown.
+  - One request at a time; `!rtv` during an open request is a yes vote. No request in the first 20 s of a map, while a map vote is open, or during the change countdown. The scheduled 0:30 vote cancels an open request (no cooldown).
+  - Nomination: a map picked from Change map is guaranteed a slot in the vote if the request passes (it replaces a random slot of its own category). The current map and admin-disabled maps cannot be nominated.
+  - Chat gets short system lines (request started, passed or declined); the modal is the main UI.
 - After a vote, a 5-second countdown, then everyone switches map. Running timers are cancelled.
-- Alone in the lobby (the only connected client, spectators included), you can switch map at once from the Esc menu (Change map) or with console `map <name>`: the same change as a vote win (any vote is cancelled, the 15:00 timer and extends reset). With anyone else connected, the server refuses and map changes go through the vote.
+- Alone in the lobby (the only connected client, spectators included), you can switch map at once from the Esc menu (Change map) or with console `map <name>`: the same change as a vote win (any vote is cancelled, the 15:00 timer and extends reset). With anyone else connected, the same pick (or `map <name>`) starts an RTV request nominating that map instead.
 - Maps an admin disabled never come up in votes, `!rtv` or random picks, and normal players cannot pick them from Change map (shown greyed "Disabled by admin"). See [Admin](#admin).
 - Maps are generated from code in the client bundle, so a map change has no download.
 

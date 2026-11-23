@@ -397,7 +397,9 @@ export class MapRotation {
 		const max = Math.max(...v.counts);
 		let winner: VoteOption;
 		if (max <= 0) {
-			const m = this.randomOther();
+			// No votes: a random map from the ballot (any other map if it has none).
+			const onBallot = v.options.flatMap((o) => (o.kind === 'map' && this.maps.includes(o.mapId) ? [o.mapId] : []));
+			const m = onBallot.length > 0 ? onBallot[this.randomIndex(onBallot.length)] : this.randomOther();
 			winner = m ? { kind: 'map', mapId: m } : { kind: 'extend' };
 		} else {
 			const tied = v.options.filter((_, i) => v.counts[i] === max);

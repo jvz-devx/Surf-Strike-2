@@ -293,6 +293,16 @@ describe('MapRotation vote options by category', () => {
 		expect(mapIds(timedVote(catRotation({ maps: ['s1', 's2', 'b1', 'z1'] })).options)).toEqual(['s2', 'b1', 'z1']);
 	});
 
+	it('no votes: the winner is a random map from the ballot', () => {
+		for (const x of [0, 0.5, 0.99]) {
+			const r = catRotation({ rng: () => x });
+			const ids = mapIds(timedVote(r).options);
+			const end = ofType(r.update((MAP_DURATION - VOTE_AT + VOTE_DURATION) * S, 1), 'voteEnd')[0];
+			expect(end.winner.kind).toBe('map');
+			expect(ids).toContain((end.winner as { mapId: string }).mapId);
+		}
+	});
+
 	it('excludes disabled and current maps', () => {
 		const off = new Set(['s2', 's3', 'z1', 'z2']);
 		const ids = mapIds(timedVote(catRotation({ isEnabled: (id) => !off.has(id) })).options);
