@@ -133,12 +133,74 @@ const OLD_SCHEMA = `
 
 describe('account_stats migration', () => {
 	const TABLES = ['players', 'runs', 'accounts', 'sessions', 'account_runs', 'replays', 'map_settings', 'bans', 'admin_log'];
+	/** Columns a later schema added, with their value in old rows. */
+	const ADDED: Record<string, Record<string, unknown>> = { bans: { expires_at: null } };
+	/** Every old row and column; added columns are checked and left out. */
 	const dump = (d: Database.Database) => ({
-		rows: Object.fromEntries(TABLES.map((t) => [t, d.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all()])),
-		columns: Object.fromEntries(TABLES.map((t) => [t, d.prepare(`PRAGMA table_info(${t})`).all()]))
+		rows: Object.fromEntries(
+			TABLES.map((t) => [
+				t,
+				(d.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all() as Record<string, unknown>[]).map((row) => {
+					for (const [col, v] of Object.entries(ADDED[t] ?? {})) {
+						if (!(col in row)) continue;
+						assert.equal(row[col], v, `${t}.${col}`);
+						delete row[col];
+					}
+					return row;
+				})
+			])
+		),
+		columns: Object.fromEntries(
+			TABLES.map((t) => [t, (d.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).filter((c) => !(c.name in (ADDED[t] ?? {})))])
+		)
+	});
+	const NEW_TABLES = ['account_stats', 'point_log', 'point_rollup', 'abuse_log'];
+
+	it('the schema with account_stats (before points): totals and permanent bans stay, new columns start empty', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'surf-db-'));
+		const path = join(dir, 'surf.db');
+		try {
+			const old = new Database(path);
+			old.exec(
+				OLD_SCHEMA +
+					`CREATE TABLE account_stats (
+						account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+						playtime_secs INTEGER NOT NULL DEFAULT 0, points_total INTEGER NOT NULL DEFAULT 0, points_balance INTEGER NOT NULL DEFAULT 0);
+					INSERT INTO account_stats VALUES (1, 3600, 0, 0), (2, 77, 509, 120);`
+			);
+			old.close();
+			for (let i = 0; i < 2; i++) {
+				const db = new Db(path); // the second time nothing is left to migrate
+				assert.deepEqual(db.accountStats(2), { playtimeSecs: 77, pointsTotal: 509, pointsBalance: 120 });
+				assert.equal(db.accountStats(1).playtimeSecs, 3600);
+				assert.equal(db.activeMs(1), 0);
+				const ban = db.accountBan(2, Number.MAX_SAFE_INTEGER);
+				assert.equal(ban?.reason, 'why');
+				assert.equal(ban?.expiresAt, null, 'old bans are permanent');
+				assert.equal(db.deleteExpiredBans(Number.MAX_SAFE_INTEGER), 0);
+				assert.equal(db.bans().length, 1);
+				db.close();
+			}
+			const db = new Db(path);
+			db.payPoints({ accountId: 2, at: 1, mode: 'hns', map: 'm', reason: 'hnsFind', label: 'x', base: 30, counted: 30, mult: 15, amount: 45 });
+			db.setActiveMs(1, 1234.4);
+			assert.deepEqual(db.accountStats(2), { playtimeSecs: 77, pointsTotal: 554, pointsBalance: 165 });
+			assert.deepEqual(db.accountStats(1), { playtimeSecs: 3600, pointsTotal: 0, pointsBalance: 0 });
+			assert.equal(db.activeMs(1), 1234);
+			// The previous server's statements still work on it (rollback).
+			db.db.exec(`INSERT INTO account_stats (account_id, playtime_secs) SELECT id, 5 FROM accounts WHERE id = 2
+				ON CONFLICT(account_id) DO UPDATE SET playtime_secs = playtime_secs + excluded.playtime_secs`);
+			db.db.exec(`INSERT INTO bans (account_id, player_key, ip, username_snapshot, reason, created_at, created_by) VALUES (1, NULL, NULL, 'Tim', NULL, 1, 'x')`);
+			assert.equal(db.accountStats(2).playtimeSecs, 82);
+			assert.equal(db.accountBan(1, 5)?.expiresAt, null);
+			assert.equal(db.db.pragma('integrity_check', { simple: true }), 'ok');
+			db.close();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
-	it('opens a database of the previous schema with every row and column intact, and only adds the new table', () => {
+	it('opens a database of the previous schema with every row and column intact, and only adds new tables and columns', () => {
 		const dir = mkdtempSync(join(tmpdir(), 'surf-db-'));
 		const path = join(dir, 'surf.db');
 		try {
@@ -152,7 +214,7 @@ describe('account_stats migration', () => {
 			const db = new Db(path);
 			assert.deepEqual(dump(db.db), before);
 			const tablesAfter = db.db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`).pluck().all() as string[];
-			assert.deepEqual(tablesAfter, [...tablesBefore, 'account_stats'].sort());
+			assert.deepEqual(tablesAfter, [...tablesBefore, ...NEW_TABLES].sort());
 			assert.equal((db.db.prepare('SELECT COUNT(*) AS n FROM account_stats').get() as { n: number }).n, 0);
 			// Still readable through the API.
 			assert.deepEqual(db.top('surf_ember').map((r) => [r.name, r.ticks]), [['Ana', 8800], ['Tim', 9000]]);
@@ -161,7 +223,7 @@ describe('account_stats migration', () => {
 			assert.equal(db.accountByName('TIM')?.passwordHash, 'hash-tim');
 			assert.equal(db.getReplay('surf_ember')?.data.toString('hex'), '0102ff');
 			assert.deepEqual([...db.disabledMaps()], ['surf_aurora']);
-			assert.equal(db.accountBan(2)?.reason, 'why');
+			assert.equal(db.accountBan(2, Date.now())?.reason, 'why');
 			// Old accounts start at zero and can be counted.
 			assert.deepEqual(db.accountStats(1), { playtimeSecs: 0, pointsTotal: 0, pointsBalance: 0 });
 			db.addPlaytime([{ accountId: 1, secs: 61 }]);

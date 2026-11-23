@@ -5,8 +5,10 @@
  * rows) lives behind `ServerMode`. One instance per map; replaced on map change.
  */
 import type { ClientMessage, GameModeId, MapDef, MapRecordInfo, NetState, ScoreRow, ServerMessage } from '@surf/shared';
+import type { Stillness } from '../activity.ts';
 import type { Command } from '../commands.ts';
 import type { Db } from '../db.ts';
+import type { ModeEconomy } from '../economy.ts';
 import type { ZoneKind } from '../validation.ts';
 
 export type { ZoneKind };
@@ -28,6 +30,8 @@ export interface ModePlayer {
 export interface ModeHost {
 	readonly map: MapDef;
 	readonly db: Db;
+	/** Points and coins (docs/economy.md#paying-from-a-mode). */
+	readonly economy: ModeEconomy;
 	now(): number;
 	rng(): number;
 	/** Helloed players (spectators included). */
@@ -68,6 +72,12 @@ export interface ServerMode {
 	/** Chat command for this mode (!top, !pb); return false if not handled. */
 	command(p: ModePlayer, cmd: Command): boolean;
 	scoreRows(): ScoreRow[];
+	/**
+	 * Why this player may stand still without being AFK (docs/economy.md):
+	 * 'held' by the game (frozen, waiting to respawn), 'look' when looking
+	 * around is enough (a hider). Absent or null: moving is needed.
+	 */
+	stillness?(p: ModePlayer): Stillness;
 	/** Called at TAG_TICK_HZ (and from tests). */
 	tick(): void;
 	dispose(): void;

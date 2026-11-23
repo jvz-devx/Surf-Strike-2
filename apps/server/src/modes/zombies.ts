@@ -135,6 +135,12 @@ export class ZombiesMode implements ServerMode {
 		return rows;
 	}
 
+	/** Dead players wait for their respawn. */
+	stillness(p: ModePlayer): 'held' | null {
+		const v = this.game.playerView(p.id);
+		return v && !v.alive ? 'held' : null;
+	}
+
 	tick(): void {
 		const now = this.host.now();
 		const ids: number[] = [];

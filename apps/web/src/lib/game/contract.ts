@@ -19,6 +19,7 @@ import type {
 	InfTeam,
 	ModeFamily,
 	ModeState,
+	PointLogEntry,
 	RecordEntry,
 	ScoreRow,
 	TagPhase,
@@ -281,6 +282,34 @@ export interface InfSpecView {
 	moabReady: boolean;
 }
 
+/** One award popup or coins notice (docs/ui.md#award-popups). */
+export interface AwardPopup {
+	id: number;
+	at: number; // performance.now()
+	/** `+4.5`; '' for a notice. */
+	amount: string;
+	text: string;
+	/** `×1.5`; '' for a notice. */
+	mult: string;
+	tone: 'award' | 'info' | 'warn';
+}
+
+/** The account's coins (docs/economy.md); amounts in tenths. */
+export interface CoinsView {
+	total: number;
+	balance: number;
+	/** Newest first. */
+	recent: readonly PointLogEntry[];
+}
+
+export interface BanView {
+	reason: string | null;
+	/** performance.now() when it lifts by itself; null = permanent. */
+	until: number | null;
+	/** The player chose to play solo meanwhile (small notice instead of the screen). */
+	minimized: boolean;
+}
+
 export interface HudStateShape {
 	// Connection / lobby
 	online: boolean;
@@ -323,6 +352,14 @@ export interface HudStateShape {
 	// Account (docs/gameplay.md#accounts-and-identity)
 	/** Logged-in account; null = guest (runs are not saved to the leaderboard). */
 	account: { username: string; admin?: boolean } | null;
+	/** Coins of the account; null for guests, offline and on servers without coins. */
+	coins: CoinsView | null;
+	/** Coins multiplier (tenths), active players and how many this mode needs; null offline and on servers without coins. */
+	multiplier: { mult: number; active: number; need: number } | null;
+	/** Award popups, oldest first. */
+	awardPopups: readonly AwardPopup[];
+	/** Banned from the server (docs/ui.md#ban-screen). */
+	ban: BanView | null;
 	/** Admin menu data (docs/ui.md#admin); only sent by the server to admin accounts, null otherwise. */
 	adminState: AdminState | null;
 	/** Result of the last admin action (shown in the Admin menu). */
@@ -406,6 +443,8 @@ export interface GameApi {
 	 * see canChangeMap), otherwise start an RTV request nominating it.
 	 */
 	changeMap(id: string): void;
+	/** Ban screen: play solo until the ban is over (or go back to the screen). */
+	minimizeBan(minimized: boolean): void;
 	/** Admin menu request (re-checked by the server); replies land in adminState / adminNotice. */
 	admin(action: AdminAction): void;
 }

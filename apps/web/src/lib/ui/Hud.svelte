@@ -24,6 +24,8 @@
 	import TagHud from '#lib/ui/TagHud.svelte';
 	import ZombiesHud from '#lib/ui/ZombiesHud.svelte';
 	import InfectedHud from '#lib/ui/InfectedHud.svelte';
+	import AwardPopups from '#lib/ui/AwardPopups.svelte';
+	import BanScreen from '#lib/ui/BanScreen.svelte';
 	import HnsHud from '#lib/ui/HnsHud.svelte';
 
 	let { hud, api }: { hud: HudStateShape; api: GameApi } = $props();
@@ -58,9 +60,10 @@
 			recordTicks: hud.recordTicks,
 			recordName: hud.recordName,
 			top: hud.recordTop
-		}
+		},
+		coins: hud.multiplier
 	});
-	const modal = $derived(hud.consoleOpen || hud.settingsOpen || hud.authPanelOpen);
+	const modal = $derived((hud.ban !== null && !hud.ban.minimized) || hud.consoleOpen || hud.settingsOpen || hud.authPanelOpen);
 	const clickHint = $derived(!hud.pointerLocked && !modal && !hud.chatOpen && !hud.desktopOnly);
 </script>
 
@@ -88,9 +91,11 @@
 			/>
 		</div>
 
-		{#if showPos}
-			<div class="top-left"><PosReadout pos={hud.pos} speed={hud.speed} /></div>
-		{/if}
+		<div class="top-left">
+			{#if showPos}<PosReadout pos={hud.pos} speed={hud.speed} />{/if}
+			{#if hud.ban?.minimized}<BanScreen ban={hud.ban} {now} {api} />{/if}
+			<AwardPopups popups={hud.awardPopups} {now} max={hud.vote ? 2 : 5} />
+		</div>
 
 		{#if hud.vote}
 			<div class="left-middle"><VotePanel vote={hud.vote} {now} /></div>
@@ -147,6 +152,8 @@
 			{api}
 			account={hud.account}
 			online={hud.online}
+			coins={hud.coins}
+			multiplier={hud.multiplier}
 			maps={hud.maps}
 			mapId={hud.mapId}
 			canChangeMap={hud.canChangeMap}
@@ -167,6 +174,7 @@
 			busy={hud.authBusy}
 			guestName={String(hud.cvars.name ?? '')}
 		/>{/if}
+	{#if hud.ban && !hud.ban.minimized}<BanScreen ban={hud.ban} {now} {api} />{/if}
 	{#if hud.consoleOpen}<Console lines={hud.consoleLines} {api} isOpen={() => hud.consoleOpen} />{/if}
 {/if}
 
@@ -202,6 +210,10 @@
 		position: absolute;
 		top: 14px;
 		left: 18px;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
 	}
 	.left-middle {
 		position: absolute;

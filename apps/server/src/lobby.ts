@@ -39,7 +39,8 @@ import { AccountStats, PLAYTIME_FLUSH_MS } from './account-stats.ts';
 import { AdminController, ipKey, parseAdminUsernames } from './admin.ts';
 import { Accounts, AttemptLimiter, AUTH_LIMITS, TOO_MANY } from './auth.ts';
 import { HELP_LINES, parseCommand } from './commands.ts';
-import type { AccountRow, Db } from './db.ts';
+import type { AccountRow, BanRow, Db } from './db.ts';
+import { Economy } from './economy.ts';
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
 import type { ZoneKind } from './validation.ts';
 
@@ -154,6 +155,8 @@ export class Lobby {
 	private readonly modeOptions: ModeOptions;
 	private readonly rng: () => number;
 	private readonly accounts: Accounts;
+	/** Points, coins and abuse detection (docs/economy.md). */
+	readonly economy: Economy;
 	/** Playtime and points of the accounts online (docs/gameplay.md#points-and-playtime). */
 	readonly stats: AccountStats;
 	readonly admin: AdminController<Client>;
@@ -176,8 +179,9 @@ export class Lobby {
 		this.map = this.maps.get(initial)!;
 		this.rng = opts.rng ?? Math.random;
 		this.modeOptions = opts.modes ?? {};
-		this.mode = this.createMode();
 		this.admin = this.createAdmin(opts.adminUsernames ?? parseAdminUsernames(undefined));
+		this.economy = this.createEconomy(opts.playClock ?? opts.now ?? (() => performance.now()));
+		this.mode = this.createMode();
 		this.rotation = new MapRotation({
 			isEnabled: (id) => this.admin.isEnabled(id),
 			kindOf: (id) => this.maps.get(id)?.kind ?? '',
@@ -213,6 +217,31 @@ export class Lobby {
 	/** Advance gamemode rules (timer-driven at MODE_TICK_HZ; public for tests). */
 	tickMode(): void {
 		this.mode.tick();
+		this.economy.tick();
+	}
+
+	private createEconomy(clock: () => number): Economy {
+		const lobby = this;
+		return new Economy(
+			{
+				db: this.db,
+				now: () => this.now(),
+				clock,
+				*players() {
+					for (const c of lobby.clients) if (c.helloed) yield c;
+				},
+				send: (p, msg) => this.send(p as Client, msg),
+				broadcast: (msg) => this.broadcast(msg),
+				systemTo: (p, text) => this.systemTo(p as Client, text),
+				totals: (accountId, pointsTotal) => this.stats.setPoints(accountId, pointsTotal),
+				isAdmin: (accountId) => this.admin.isAdminAccount(this.db.accountById(accountId)?.username),
+				ban: (accountId, reason, ms) => this.admin.autoBan(accountId, reason, ms),
+				abuseLogged: () => this.admin.pushState(),
+				log: (msg) => this.log(msg),
+				stillness: (p) => this.mode.stillness?.(p as Client) ?? null
+			},
+			this.map
+		);
 	}
 
 	private createMode(): ServerMode {
@@ -221,12 +250,16 @@ export class Lobby {
 		const host: ModeHost = {
 			map,
 			db: this.db,
+			economy: this.economy.forMode(),
 			now: () => this.now(),
 			rng: () => this.rng(),
 			*players() {
 				for (const c of lobby.clients) if (c.helloed) yield c;
 			},
-			send: (p, msg) => this.send(p as Client, msg),
+			send: (p, msg) => {
+				this.economy.sent(p as Client, msg);
+				this.send(p as Client, msg);
+			},
 			broadcast: (msg) => this.broadcast(msg),
 			sendBinary: (p, data) => this.sendRaw(p as Client, Buffer.from(data), true),
 			broadcastBinary: (data, droppable = false) => {
@@ -266,17 +299,22 @@ export class Lobby {
 					this.handleRotation([ev]);
 					return null;
 				},
-				kickBanned: (c, reason) => this.kickBanned(c, reason)
+				kickBanned: (c, ban) => this.kickBanned(c, ban)
 			},
 			usernames,
 			() => this.now()
 		);
 	}
 
-	/** `banned` message, then close 4009 (the client stops reconnecting until reload). */
-	private kickBanned(c: Client, reason: string | null): void {
+	private bannedMessage(ban: BanRow): ServerMessage {
+		const seconds = this.admin.secondsLeft(ban);
+		return { type: 'banned', reason: ban.reason, ...(seconds === undefined ? {} : { seconds }) };
+	}
+
+	/** `banned` message, then close 4009 (the client stops reconnecting until reload, or until the ban lifts). */
+	private kickBanned(c: Client, ban: BanRow): void {
 		this.log(`banned #${c.id} ${c.name}`);
-		this.send(c, { type: 'banned', reason });
+		this.send(c, this.bannedMessage(ban));
 		c.socket.close(4009, 'banned');
 		this.onClose(c);
 	}
@@ -313,6 +351,7 @@ export class Lobby {
 		for (const t of this.timers) clearInterval(t);
 		this.timers = [];
 		this.stats.close();
+		this.economy.close();
 		for (const c of this.clients) c.socket.close(1001, 'server shutting down');
 	}
 
@@ -382,7 +421,9 @@ export class Lobby {
 		this.clients.delete(c);
 		if (c.accountId !== null) this.stats.leave(c.accountId, c);
 		if (!c.helloed || this.closing) return;
+		if (c.accountId !== null) this.economy.leaveAccount(c.accountId, c);
 		this.mode.leave(c);
+		this.economy.leave(c);
 		this.rotation.removeVoter(String(c.id));
 		this.db.touch(c.playerId, Date.now());
 		this.broadcast({ type: 'leave', id: c.id });
@@ -410,6 +451,7 @@ export class Lobby {
 			const s = decodeState(ab);
 			if (!s) return;
 			c.state = s;
+			this.economy.state(c, s);
 			this.mode.state(c, s);
 			return;
 		}
@@ -509,7 +551,7 @@ export class Lobby {
 		const ban = this.admin.banFor(resumed?.account.id ?? null, admin, msg.playerId, c.ip);
 		if (ban) {
 			this.log(`banned hello #${c.id}${resumed ? ` account ${resumed.account.id}` : ''}`);
-			this.send(c, { type: 'banned', reason: ban.reason });
+			this.send(c, this.bannedMessage(ban));
 			c.socket.close(4009, 'banned');
 			return;
 		}
@@ -555,6 +597,7 @@ export class Lobby {
 		if (msg.token !== undefined && !resumed) {
 			this.send(c, { type: 'auth', ok: false, error: 'Your session expired. Log in again.' });
 		}
+		this.economy.join(c);
 		this.mode.join(c);
 		this.broadcast({ type: 'join', player: info(c) }, c);
 		this.system(`${name} joined.`, c);
@@ -620,7 +663,7 @@ export class Lobby {
 		if (ban) {
 			this.log(`${msg.type} banned #${c.id} account ${outcome.account.id}`);
 			fail('This account is banned.');
-			return this.kickBanned(c, ban.reason);
+			return this.kickBanned(c, ban);
 		}
 		const session = this.accounts.createSession(outcome.account.id);
 		this.signIn(c, outcome.account, session.hash, session.token);
@@ -638,6 +681,7 @@ export class Lobby {
 		this.setName(c, account.username);
 		if (old !== account.username) this.system(`${old} logged in as ${account.username}.`);
 		this.send(c, { type: 'auth', ok: true, username: account.username, token, records: this.mode.records(c), admin: c.admin });
+		this.economy.account(c);
 		this.admin.pushState();
 	}
 
@@ -658,6 +702,7 @@ export class Lobby {
 			if (c.sessionHash) this.accounts.logout(c.sessionHash);
 			const old = c.name;
 			this.stats.leave(c.accountId, c);
+			this.economy.leaveAccount(c.accountId, c);
 			c.accountId = null;
 			c.sessionHash = null;
 			c.admin = false;
@@ -773,7 +818,10 @@ export class Lobby {
 			if (spectating) this.rotation.removeVoter(String(c.id));
 		}
 		this.broadcast({ type: 'spectating', id: c.id, spectating, targetId });
-		if (changed) this.mode.spectate(c, spectating);
+		if (changed) {
+			this.economy.spectate(c);
+			this.mode.spectate(c, spectating);
+		}
 	}
 
 	/** `!rtv`, `rtv` or a Change map click with others here: start (or agree to) an RTV request. */
@@ -923,6 +971,7 @@ export class Lobby {
 		if (!map) return;
 		this.map = map;
 		this.mode.dispose();
+		this.economy.useMap(map);
 		this.mode = this.createMode();
 		const cvars = mapCvars(map);
 		const timeLeft = this.timeLeft();

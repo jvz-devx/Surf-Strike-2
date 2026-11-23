@@ -7,7 +7,7 @@ import type { MapListEntry } from '#lib/game/contract.js';
 import { CLIENT_CVARS, type CvarDef } from '#lib/game/cvars.js';
 
 /** Menu pages; 'main' is the top level. */
-export type MenuView = 'main' | 'maps' | 'settings' | 'account' | 'admin';
+export type MenuView = 'main' | 'maps' | 'settings' | 'coins' | 'account' | 'admin';
 
 export interface MapGroup {
 	/** Gamemode id (or the raw map kind for a kind not in the registry). */
@@ -130,12 +130,13 @@ export function mapRowPickable(m: Pick<MapListEntry, 'disabled'>, current: boole
 	return !st.blocked && !m.disabled && !current;
 }
 
-export type AdminTabId = 'maps' | 'players' | 'bans';
+export type AdminTabId = 'maps' | 'players' | 'bans' | 'abuse';
 
 export const ADMIN_TABS: readonly { id: AdminTabId; label: string }[] = [
 	{ id: 'maps', label: 'Maps' },
 	{ id: 'players', label: 'Players' },
-	{ id: 'bans', label: 'Bans' }
+	{ id: 'bans', label: 'Bans' },
+	{ id: 'abuse', label: 'Abuse log' }
 ];
 
 export function isAdminTab(v: unknown): v is AdminTabId {

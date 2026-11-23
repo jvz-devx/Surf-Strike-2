@@ -15,8 +15,13 @@
  * - `runs`: legacy guest runs keyed by the localStorage UUID (and timed at
  *   the old 128 tick). Kept untouched for reference, never read or written.
  *
- * Every table is created with CREATE TABLE IF NOT EXISTS, so an existing
- * database migrates in place on start-up without losing data.
+ * - `point_log`: every award and purchase of the last POINT_LOG_DAYS days;
+ *   older rows are summed up in `point_rollup` (docs/economy.md#storage).
+ * - `abuse_log`: automatic warnings and bans.
+ *
+ * Every table is created with CREATE TABLE IF NOT EXISTS and new columns are
+ * added with a default, so an existing database migrates in place on start-up
+ * without losing data.
  */
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -57,7 +62,47 @@ export interface BanRow {
 	reason: string | null;
 	createdAt: number;
 	createdBy: string;
+	/** Wall clock (ms) when the ban lifts by itself; null = permanent. */
+	expiresAt: number | null;
 }
+
+/** A point_log row to write; amounts and multiplier in tenths. */
+export interface PointEntry {
+	accountId: number;
+	at: number;
+	mode: string;
+	map: string;
+	reason: string;
+	label: string;
+	base: number;
+	/** Part of `base` that counts towards the hourly backstop. */
+	counted: number;
+	mult: number;
+	amount: number;
+}
+
+export interface PointLogRow {
+	at: number;
+	reason: string;
+	label: string;
+	amount: number;
+	mult: number;
+}
+
+export interface AbuseRow {
+	id: number;
+	createdAt: number;
+	accountId: number;
+	username: string;
+	action: 'warning' | 'ban' | 'exempt';
+	strikes: number;
+	evidence: string;
+}
+
+/** Days a point_log row is kept before it is summed up. */
+export const POINT_LOG_DAYS = 30;
+/** abuse_log rows kept. */
+export const ABUSE_LOG_MAX = 2000;
 
 /**
  * Account totals (docs/gameplay.md#points-and-playtime). Earned and spendable
@@ -168,8 +213,50 @@ export class Db {
 				points_total INTEGER NOT NULL DEFAULT 0,
 				points_balance INTEGER NOT NULL DEFAULT 0
 			);
+			CREATE TABLE IF NOT EXISTS point_log (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+				created_at INTEGER NOT NULL,
+				mode TEXT NOT NULL,
+				map TEXT NOT NULL,
+				reason TEXT NOT NULL,
+				label TEXT NOT NULL,
+				base INTEGER NOT NULL,
+				counted INTEGER NOT NULL DEFAULT 0,
+				multiplier INTEGER NOT NULL,
+				amount INTEGER NOT NULL
+			);
+			CREATE INDEX IF NOT EXISTS point_log_account ON point_log (account_id, created_at);
+			CREATE INDEX IF NOT EXISTS point_log_time ON point_log (created_at);
+			CREATE TABLE IF NOT EXISTS point_rollup (
+				account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+				mode TEXT NOT NULL,
+				reason TEXT NOT NULL,
+				entries INTEGER NOT NULL,
+				base INTEGER NOT NULL,
+				amount INTEGER NOT NULL,
+				PRIMARY KEY (account_id, mode, reason)
+			);
+			CREATE TABLE IF NOT EXISTS abuse_log (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				created_at INTEGER NOT NULL,
+				account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+				username TEXT NOT NULL,
+				action TEXT NOT NULL,
+				strikes INTEGER NOT NULL,
+				evidence TEXT NOT NULL
+			);
 		`);
+		// Missing = permanent ban / no active time yet.
+		this.addColumn('bans', 'expires_at', 'INTEGER');
+		this.addColumn('account_stats', 'active_ms', 'INTEGER NOT NULL DEFAULT 0');
 		this.st = this.prepare();
+	}
+
+	/** Add a column to a table of an older database; existing rows get the default. */
+	private addColumn(table: string, column: string, type: string): void {
+		const cols = this.db.pragma(`table_info(${table})`) as { name: string }[];
+		if (!cols.some((c) => c.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 	}
 
 	private prepare() {
@@ -236,21 +323,63 @@ export class Db {
 				`INSERT INTO account_stats (account_id, playtime_secs) SELECT id, ? FROM accounts WHERE id = ?
 				 ON CONFLICT(account_id) DO UPDATE SET playtime_secs = playtime_secs + excluded.playtime_secs`
 			),
+			activeMs: d.prepare(`SELECT active_ms FROM account_stats WHERE account_id = ?`),
+			setActiveMs: d.prepare(
+				`INSERT INTO account_stats (account_id, active_ms) SELECT id, ? FROM accounts WHERE id = ?
+				 ON CONFLICT(account_id) DO UPDATE SET active_ms = excluded.active_ms`
+			),
+			addPoints: d.prepare(
+				`INSERT INTO account_stats (account_id, points_total, points_balance) SELECT id, @amount, @amount FROM accounts WHERE id = @id
+				 ON CONFLICT(account_id) DO UPDATE SET
+					points_total = points_total + excluded.points_total,
+					points_balance = points_balance + excluded.points_balance`
+			),
+			spendPoints: d.prepare(
+				`UPDATE account_stats SET points_balance = points_balance - @amount WHERE account_id = @id AND points_balance >= @amount`
+			),
+			logPoints: d.prepare(
+				`INSERT INTO point_log (account_id, created_at, mode, map, reason, label, base, counted, multiplier, amount)
+				 VALUES (@accountId, @at, @mode, @map, @reason, @label, @base, @counted, @mult, @amount)`
+			),
+			countedSince: d.prepare(`SELECT COALESCE(SUM(counted), 0) AS n FROM point_log WHERE account_id = ? AND created_at > ?`),
+			lastPaid: d.prepare(`SELECT MAX(created_at) AS at FROM point_log WHERE account_id = ? AND reason = ? AND (? IS NULL OR map = ?)`),
+			recentPoints: d.prepare(
+				`SELECT created_at AS at, reason, label, amount, multiplier AS mult FROM point_log WHERE account_id = ? ORDER BY id DESC LIMIT ?`
+			),
+			rollUp: d.prepare(
+				`INSERT INTO point_rollup (account_id, mode, reason, entries, base, amount)
+				 SELECT account_id, mode, reason, COUNT(*), SUM(base), SUM(amount) FROM point_log WHERE created_at < ? GROUP BY account_id, mode, reason
+				 ON CONFLICT(account_id, mode, reason) DO UPDATE SET
+					entries = entries + excluded.entries, base = base + excluded.base, amount = amount + excluded.amount`
+			),
+			deleteOldPoints: d.prepare(`DELETE FROM point_log WHERE created_at < ?`),
+			insertAbuse: d.prepare(
+				`INSERT INTO abuse_log (created_at, account_id, username, action, strikes, evidence) VALUES (?, ?, ?, ?, ?, ?)`
+			),
+			pruneAbuse: d.prepare(`DELETE FROM abuse_log WHERE id <= (SELECT MAX(id) FROM abuse_log) - ?`),
+			listAbuse: d.prepare(`SELECT * FROM abuse_log ORDER BY id DESC LIMIT ?`),
 
 			disabledMaps: d.prepare(`SELECT map_id FROM map_settings WHERE enabled = 0`),
 			setMapEnabled: d.prepare(
 				`INSERT INTO map_settings (map_id, enabled) VALUES (?, ?) ON CONFLICT(map_id) DO UPDATE SET enabled = excluded.enabled`
 			),
 			insertBan: d.prepare(
-				`INSERT INTO bans (account_id, player_key, ip, username_snapshot, reason, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO bans (account_id, player_key, ip, username_snapshot, reason, created_at, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 			),
 			deleteBan: d.prepare(`DELETE FROM bans WHERE id = ?`),
 			banById: d.prepare(`SELECT * FROM bans WHERE id = ?`),
 			listBans: d.prepare(`SELECT * FROM bans ORDER BY created_at DESC, id DESC`),
-			banForAccount: d.prepare(`SELECT * FROM bans WHERE account_id = ? ORDER BY id LIMIT 1`),
-			banForGuest: d.prepare(
-				`SELECT * FROM bans WHERE (player_key IS NOT NULL AND player_key = ?) OR (ip IS NOT NULL AND ip = ?) ORDER BY id LIMIT 1`
+			// Permanent bans first, then the one that lasts longest.
+			banForAccount: d.prepare(
+				`SELECT * FROM bans WHERE account_id = ? AND (expires_at IS NULL OR expires_at > ?)
+				 ORDER BY expires_at IS NOT NULL, expires_at DESC, id LIMIT 1`
 			),
+			banForGuest: d.prepare(
+				`SELECT * FROM bans WHERE ((player_key IS NOT NULL AND player_key = ?) OR (ip IS NOT NULL AND ip = ?))
+				 AND (expires_at IS NULL OR expires_at > ?)
+				 ORDER BY expires_at IS NOT NULL, expires_at DESC, id LIMIT 1`
+			),
+			deleteExpiredBans: d.prepare(`DELETE FROM bans WHERE expires_at IS NOT NULL AND expires_at <= ?`),
 			insertAdminLog: d.prepare(
 				`INSERT INTO admin_log (created_at, admin_account_id, admin_username, action, target, detail) VALUES (?, ?, ?, ?, ?, ?)`
 			)
@@ -336,6 +465,90 @@ export class Db {
 		this.db.transaction(() => {
 			for (const e of entries) this.st.addPlaytime.run(e.secs, e.accountId);
 		})();
+	}
+
+	// -----------------------------------------------------------------------
+	// Points and coins (economy.ts); amounts in tenths of a point
+
+	/** Active time towards the next playtime points. */
+	activeMs(accountId: number): number {
+		return (this.st.activeMs.get(accountId) as { active_ms: number } | undefined)?.active_ms ?? 0;
+	}
+
+	setActiveMs(accountId: number, ms: number): void {
+		this.st.setActiveMs.run(Math.round(ms), accountId);
+	}
+
+	/**
+	 * Credit an award and log it, all or nothing; `activeMs` also stores the
+	 * rest of the active time. Null when the account no longer exists.
+	 */
+	payPoints(e: PointEntry, activeMs?: number): AccountStatsRow | null {
+		return this.db.transaction(() => {
+			if (this.st.addPoints.run({ id: e.accountId, amount: e.amount }).changes === 0) return null;
+			this.st.logPoints.run(e);
+			if (activeMs !== undefined) this.setActiveMs(e.accountId, activeMs);
+			return this.accountStats(e.accountId);
+		})();
+	}
+
+	/** Take `e.amount` (positive) from the balance and log it; null when the balance is too low. */
+	spendPoints(e: Pick<PointEntry, 'accountId' | 'at' | 'reason' | 'label' | 'amount'>): AccountStatsRow | null {
+		return this.db.transaction(() => {
+			if (this.st.spendPoints.run({ id: e.accountId, amount: e.amount }).changes === 0) return null;
+			this.st.logPoints.run({ ...e, mode: 'shop', map: '', base: 0, counted: 0, mult: 10, amount: -e.amount });
+			return this.accountStats(e.accountId);
+		})();
+	}
+
+	/** Base points counted towards the backstop after `since`. */
+	countedSince(accountId: number, since: number): number {
+		return (this.st.countedSince.get(accountId, since) as { n: number }).n;
+	}
+
+	/** When this reason was last paid to the account (on `map`, or anywhere); null = not in the log. */
+	lastPaid(accountId: number, reason: string, map: string | null): number | null {
+		return (this.st.lastPaid.get(accountId, reason, map, map) as { at: number | null }).at;
+	}
+
+	/** Newest first. */
+	recentPoints(accountId: number, limit: number): PointLogRow[] {
+		return this.st.recentPoints.all(accountId, limit) as PointLogRow[];
+	}
+
+	/** Sum up and delete log rows older than `before`; returns how many. */
+	rollUpPoints(before: number): number {
+		return this.db.transaction(() => {
+			this.st.rollUp.run(before);
+			return this.st.deleteOldPoints.run(before).changes;
+		})();
+	}
+
+	logAbuse(e: Omit<AbuseRow, 'id'>): void {
+		this.st.insertAbuse.run(e.createdAt, e.accountId, e.username, e.action, e.strikes, e.evidence);
+		this.st.pruneAbuse.run(ABUSE_LOG_MAX);
+	}
+
+	/** Newest first. */
+	abuseLog(limit: number): AbuseRow[] {
+		const rows = this.st.listAbuse.all(limit) as Array<{
+			id: number;
+			created_at: number;
+			account_id: number;
+			username: string;
+			action: AbuseRow['action'];
+			strikes: number;
+			evidence: string;
+		}>;
+		return rows.map((r) => ({
+			id: r.id,
+			createdAt: r.created_at,
+			accountId: r.account_id,
+			username: r.username,
+			action: r.action,
+			strikes: r.strikes,
+			evidence: r.evidence
+		}));
 	}
 
 	// -----------------------------------------------------------------------
@@ -428,7 +641,8 @@ export class Db {
 		this.st.setMapEnabled.run(mapId, enabled ? 1 : 0);
 	}
 
-	addBan(ban: Omit<BanRow, 'id'>): BanRow {
+	addBan(b: Omit<BanRow, 'id' | 'expiresAt'> & { expiresAt?: number | null }): BanRow {
+		const ban = { ...b, expiresAt: b.expiresAt ?? null };
 		const r = this.st.insertBan.run(
 			ban.accountId,
 			ban.playerKey,
@@ -436,7 +650,8 @@ export class Db {
 			ban.usernameSnapshot,
 			ban.reason,
 			ban.createdAt,
-			ban.createdBy
+			ban.createdBy,
+			ban.expiresAt
 		);
 		return { id: Number(r.lastInsertRowid), ...ban };
 	}
@@ -452,14 +667,20 @@ export class Db {
 		return (this.st.listBans.all() as unknown[]).map((r) => toBan(r)!);
 	}
 
-	accountBan(accountId: number): BanRow | null {
-		return toBan(this.st.banForAccount.get(accountId));
+	/** The account's ban in force at `now` (a permanent one first). */
+	accountBan(accountId: number, now: number): BanRow | null {
+		return toBan(this.st.banForAccount.get(accountId, now));
 	}
 
-	/** A ban on this player key or IP (either may be null). */
-	guestBan(playerKey: string | null, ip: string | null): BanRow | null {
+	/** A ban in force on this player key or IP (either may be null). */
+	guestBan(playerKey: string | null, ip: string | null, now: number): BanRow | null {
 		if (!playerKey && !ip) return null;
-		return toBan(this.st.banForGuest.get(playerKey, ip));
+		return toBan(this.st.banForGuest.get(playerKey, ip, now));
+	}
+
+	/** Delete bans that lifted by themselves; returns how many. */
+	deleteExpiredBans(now: number): number {
+		return this.st.deleteExpiredBans.run(now).changes;
 	}
 
 	logAdmin(
@@ -488,6 +709,7 @@ function toBan(r: unknown): BanRow | null {
 		reason: string | null;
 		created_at: number;
 		created_by: string;
+		expires_at: number | null;
 	};
 	return {
 		id: b.id,
@@ -497,7 +719,8 @@ function toBan(r: unknown): BanRow | null {
 		usernameSnapshot: b.username_snapshot,
 		reason: b.reason,
 		createdAt: b.created_at,
-		createdBy: b.created_by
+		createdBy: b.created_by,
+		expiresAt: b.expires_at ?? null
 	};
 }
 

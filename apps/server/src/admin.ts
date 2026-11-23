@@ -8,7 +8,7 @@
  * - Map enable/disable (`map_settings`): disabled maps never come up in votes,
  *   `!rtv`, random picks or the lone-player Change map; at least one map stays
  *   enabled. An admin can still force any map.
- * - Bans (`bans`): account bans (plus the player key of a connected target)
+ * - Bans (`bans`), permanent or with an expiry: account bans (plus the player key of a connected target)
  *   and guest bans (player key, plus the client IP when known). Banned
  *   connections get `banned` and close code 4009. Admins cannot be banned.
  * - Every action is logged to the console and to `admin_log`.
@@ -22,6 +22,8 @@ import type { BanRow, Db } from './db.ts';
 
 /** Admin actions per connection per minute (beyond that: "Slow down."). */
 export const ADMIN_ACTIONS_PER_MINUTE = 30;
+/** Automatic warnings and bans in `adminState`. */
+export const ADMIN_ABUSE_MAX = 50;
 
 /** `ADMIN_USERNAMES` (comma-separated, case-insensitive). Unset: `tim`. Empty: no admins. */
 export function parseAdminUsernames(raw: string | undefined): string[] {
@@ -93,7 +95,7 @@ export interface AdminHost<C extends AdminClient> {
 	/** Extend the current map; null on success, else the reason. */
 	extend(seconds: number): string | null;
 	/** Send `banned`, close with 4009 and drop the connection. */
-	kickBanned(c: C, reason: string | null): void;
+	kickBanned(c: C, ban: BanRow): void;
 }
 
 type Result = { ok: true; message?: string; changed?: boolean } | { ok: false; error: string };
@@ -133,7 +135,57 @@ export class AdminController<C extends AdminClient> {
 	banFor(accountId: number | null, admin: boolean, playerKey: string | null, ip: string | null): BanRow | null {
 		if (admin) return null;
 		const db = this.host.db;
-		return (accountId !== null ? db.accountBan(accountId) : null) ?? db.guestBan(playerKey, ip);
+		const t = this.now();
+		const account = accountId !== null ? db.accountBan(accountId, t) : null;
+		if (account && account.expiresAt === null) return account;
+		const guest = db.guestBan(playerKey, ip, t);
+		return guest && (!account || guest.expiresAt === null) ? guest : account;
+	}
+
+	/** Seconds until a ban lifts by itself; undefined = permanent. */
+	secondsLeft(b: BanRow): number | undefined {
+		return b.expiresAt === null ? undefined : Math.max(1, Math.ceil((b.expiresAt - this.now()) / 1000));
+	}
+
+	/**
+	 * Automatic ban of an account for `ms` (abuse detection): stored with an
+	 * expiry, connected clients are kicked. Admins are never banned.
+	 */
+	autoBan(accountId: number, reason: string, ms: number): void {
+		const db = this.host.db;
+		const account = db.accountById(accountId);
+		if (!account || this.isAdminAccount(account.username)) return;
+		const now = this.now();
+		if (db.accountBan(accountId, now)) return;
+		const target = [...this.host.clients()].find((c) => c.helloed && c.accountId === accountId);
+		const ban = db.addBan({
+			accountId,
+			playerKey: target?.playerId || null,
+			ip: null,
+			usernameSnapshot: account.username,
+			reason,
+			createdAt: now,
+			createdBy: 'auto',
+			expiresAt: now + ms
+		});
+		if (this.kickAll(ban) > 0) this.host.system(`${account.username} was banned for ${Math.round(ms / 60_000)} minutes.`);
+		this.pushState();
+	}
+
+	/** Disconnect everyone a ban covers (never admins); returns how many. */
+	private kickAll(ban: BanRow): number {
+		let kicked = 0;
+		for (const o of [...this.host.clients()]) {
+			if (!o.helloed || o.admin) continue;
+			const hit =
+				(ban.accountId !== null && o.accountId === ban.accountId) ||
+				(ban.playerKey !== null && o.playerId === ban.playerKey) ||
+				(ban.ip !== null && o.ip === ban.ip);
+			if (!hit) continue;
+			this.host.kickBanned(o, ban);
+			kicked++;
+		}
+		return kicked;
 	}
 
 	state(): AdminState {
@@ -150,15 +202,17 @@ export class AdminController<C extends AdminClient> {
 		}
 		return {
 			maps: this.host.maps.map((m) => ({ id: m.id, title: m.title, kind: m.kind, size: m.size, enabled: this.isEnabled(m.id) })),
-			bans: this.host.db.bans().map((b) => ({
+			bans: this.host.db.bans().filter((b) => b.expiresAt === null || b.expiresAt > this.now()).map((b) => ({
 				id: b.id,
 				username: b.usernameSnapshot,
 				kind: b.accountId !== null ? 'account' : 'guest',
 				reason: b.reason,
 				createdAt: b.createdAt,
-				createdBy: b.createdBy
+				createdBy: b.createdBy,
+				...(b.expiresAt === null ? {} : { secondsLeft: this.secondsLeft(b) })
 			})),
-			players
+			players,
+			abuse: this.host.db.abuseLog(ADMIN_ABUSE_MAX).map(({ accountId: _a, ...e }) => e)
 		};
 	}
 
@@ -248,6 +302,11 @@ export class AdminController<C extends AdminClient> {
 		return { ok: true, changed: true, message: `${mapTitle(map)} ${enabled ? 'enabled' : 'disabled'}.` };
 	}
 
+	/** A temporary ban can still be made permanent. */
+	private permanentlyBanned(accountId: number): boolean {
+		return this.host.db.accountBan(accountId, this.now())?.expiresAt === null;
+	}
+
 	private ban(c: C, targetId: unknown, username: unknown, rawReason: unknown): Result {
 		const reason = typeof rawReason === 'string' ? sanitizeText(rawReason, MAX_BAN_REASON) || null : null;
 		const db = this.host.db;
@@ -258,7 +317,7 @@ export class AdminController<C extends AdminClient> {
 			if (target === c) return { ok: false, error: "You can't ban yourself." };
 			if (target.admin) return { ok: false, error: 'Admins cannot be banned.' };
 			if (target.accountId !== null) {
-				if (db.accountBan(target.accountId)) return { ok: false, error: `${target.name} is already banned.` };
+				if (this.permanentlyBanned(target.accountId)) return { ok: false, error: `${target.name} is already banned.` };
 				ban = db.addBan({
 					accountId: target.accountId,
 					playerKey: target.playerId || null,
@@ -284,7 +343,7 @@ export class AdminController<C extends AdminClient> {
 			if (!account) return { ok: false, error: `No account named "${username.trim().slice(0, 24)}".` };
 			if (account.id === c.accountId) return { ok: false, error: "You can't ban yourself." };
 			if (this.isAdminAccount(account.username)) return { ok: false, error: 'Admins cannot be banned.' };
-			if (db.accountBan(account.id)) return { ok: false, error: `${account.username} is already banned.` };
+			if (this.permanentlyBanned(account.id)) return { ok: false, error: `${account.username} is already banned.` };
 			ban = db.addBan({
 				accountId: account.id,
 				playerKey: null,
@@ -299,18 +358,7 @@ export class AdminController<C extends AdminClient> {
 		}
 		const kind = ban.accountId !== null ? 'account' : 'guest';
 		this.audit(c, 'ban', `${kind} ${ban.usernameSnapshot}`, `ban ${ban.id}${reason ? `, reason: ${reason}` : ''}`);
-		let kicked = 0;
-		for (const o of [...this.host.clients()]) {
-			if (!o.helloed || o.admin) continue;
-			const hit =
-				(ban.accountId !== null && o.accountId === ban.accountId) ||
-				(ban.playerKey !== null && o.playerId === ban.playerKey) ||
-				(ban.ip !== null && o.ip === ban.ip);
-			if (hit) {
-				this.host.kickBanned(o, ban.reason);
-				kicked++;
-			}
-		}
+		const kicked = this.kickAll(ban);
 		if (kicked > 0) this.host.system(`${ban.usernameSnapshot} was banned.`);
 		return { ok: true, changed: true, message: `Banned ${ban.usernameSnapshot}.` };
 	}

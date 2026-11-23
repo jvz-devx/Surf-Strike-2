@@ -36,6 +36,7 @@ const inertApi: GameApi = {
 	closeSettings: noop,
 	vote: noop,
 	changeMap: noop,
+	minimizeBan: noop,
 	rtvVote: noop,
 	admin: noop
 };

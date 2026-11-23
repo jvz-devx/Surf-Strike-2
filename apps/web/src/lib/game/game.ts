@@ -84,6 +84,7 @@ import { GameRenderer } from '../render/renderer.js';
 import { Binds } from './binds.js';
 import { CHAT_HELP, parseChatCommand } from './chat.js';
 import { cvarFallback, HOLD_ACTIONS, registerCommands, type CommandContext, type HoldAction } from './commands.js';
+import { applyAward, awardPopup, countdown, noticePopup, pushPopup } from './coins.js';
 import { DevConsole, type PrintKind } from './console.js';
 import type { ChatLine, ConsoleLine, GameApi, TagView } from './contract.js';
 import { ClientCvars } from './cvars.js';
@@ -120,6 +121,8 @@ const SOLO_VOTER = 'local';
 /** Scoreboard row id of the local player offline. */
 const SOLO_ROW_ID = 0;
 const FULL_HOLDOFF_MS = 60_000;
+/** Reconnect this long after a temporary ban lifted (clock and timer slack). */
+const BAN_RECONNECT_MS = 1_000;
 const SV_NAMES = Object.keys(SURF_CVARS) as Array<keyof Cvars>;
 const SV_BOOL = SV_BOOL_CVARS;
 
@@ -261,6 +264,8 @@ export class Game implements CommandContext {
 	private fullNotified = false;
 	/** Set by a `banned` message (reason, '' = none) until the 4009 close arrives. */
 	private bannedReason: string | null = null;
+	/** Seconds until that ban lifts by itself; null = permanent. */
+	private bannedSecs: number | null = null;
 
 	// Solo
 	private rotation: MapRotation | null = null;
@@ -386,6 +391,7 @@ export class Game implements CommandContext {
 			vote: (o) => this.vote(o),
 			changeMap: (id) => this.changeMap(id),
 			rtvVote: (yes) => this.rtvVote(yes),
+			minimizeBan: (minimized) => this.minimizeBan(minimized),
 			admin: (a) => this.adminAction(a)
 		};
 
@@ -611,7 +617,7 @@ export class Game implements CommandContext {
 
 	private overlayOpen(): boolean {
 		const h = this.hud;
-		return h.chatOpen || h.consoleOpen || h.settingsOpen || h.authPanelOpen || h.desktopOnly;
+		return h.chatOpen || h.consoleOpen || h.settingsOpen || h.authPanelOpen || h.desktopOnly || (h.ban !== null && !h.ban.minimized);
 	}
 
 	private onKey(name: string, down: boolean, e: KeyboardEvent): boolean {
@@ -882,6 +888,12 @@ export class Game implements CommandContext {
 		this.hud.authPanelOpen = false;
 		this.hud.authError = null;
 		if (!this.overlayOpen()) this.lockPointer();
+	}
+
+	private minimizeBan(minimized: boolean): void {
+		if (!this.hud.ban) return;
+		this.hud.ban = { ...this.hud.ban, minimized };
+		if (minimized && !this.overlayOpen()) this.lockPointer();
 	}
 
 	private onAuth(m: Extract<ServerMessage, { type: 'auth' }>): void {
@@ -2146,6 +2158,7 @@ export class Game implements CommandContext {
 		if (m.type === 'banned') {
 			// Followed by close code 4009 (onClosed stops reconnecting).
 			this.bannedReason = m.reason ?? '';
+			this.bannedSecs = typeof m.seconds === 'number' && m.seconds > 0 ? m.seconds : null;
 			return;
 		}
 		if (this.mode !== 'online') return;
@@ -2261,6 +2274,20 @@ export class Game implements CommandContext {
 				break;
 			case 'auth':
 				this.onAuth(m);
+				if (m.ok && m.username === null) this.hud.coins = null;
+				break;
+			case 'coins':
+				this.hud.coins = { total: m.total, balance: m.balance, recent: m.recent };
+				break;
+			case 'award':
+				this.hud.coins = applyAward(this.hud.coins, m);
+				this.hud.awardPopups = pushPopup(this.hud.awardPopups, awardPopup(m, now));
+				break;
+			case 'coinsNotice':
+				this.hud.awardPopups = pushPopup(this.hud.awardPopups, noticePopup(m, now));
+				break;
+			case 'multiplier':
+				this.hud.multiplier = { mult: m.mult, active: m.active, need: m.need };
 				break;
 		}
 	}
@@ -2279,6 +2306,9 @@ export class Game implements CommandContext {
 		this.hud.rtvCooldown = null;
 		this.renderer?.players.clear();
 		this.remotes.clear();
+		this.hud.ban = null;
+		this.hud.coins = null;
+		this.hud.multiplier = null;
 		for (const p of m.players) if (p.id !== m.selfId) this.remote(p.id, p.name).spectating = p.spectating;
 		this.applyWelcomeAccount(m.account);
 		this.loadMap(m.map, m.cvars, m.records);
@@ -2302,12 +2332,29 @@ export class Game implements CommandContext {
 		this.hud.connecting = false;
 		this.hud.authBusy = false;
 		if (code === 4009 || this.bannedReason !== null) {
-			// Banned (docs/architecture.md#admin-and-bans): no reconnect until reload.
-			this.conn.disconnect();
-			const why = this.bannedReason ? ` Reason: ${this.bannedReason.replace(/[.!?]?$/, '.')}` : '';
-			this.notice(`You are banned from this server.${why} Playing solo.`);
-			this.print(`Banned by the server.${why}`, 'error');
-			if (this.hud.authPanelOpen) this.hud.authError = 'You are banned from this server.';
+			// Banned (docs/architecture.md#admin-and-bans): no reconnect until reload, or until a short ban lifts.
+			const secs = this.bannedSecs;
+			const reason = this.bannedReason || null;
+			if (secs === null) this.conn.disconnect();
+			else this.conn.holdOff(secs * 1000 + BAN_RECONNECT_MS);
+			const why = reason ? ` Reason: ${reason.replace(/[.!?]?$/, '.')}` : '';
+			const how = secs === null ? 'You are banned from this server.' : `You are banned from this server for ${countdown(secs)}.`;
+			this.notice(`${how}${why} Playing solo.`);
+			this.print(`${how}${why}`, 'error');
+			const again = this.hud.ban !== null;
+			this.hud.ban = {
+				reason,
+				until: secs === null ? null : performance.now() + secs * 1000,
+				minimized: this.hud.ban?.minimized ?? false
+			};
+			if (!again) {
+				this.releaseAll();
+				this.hud.chatOpen = false;
+				this.hud.settingsOpen = false;
+				this.hud.authPanelOpen = false;
+				this.input.exitLock();
+			}
+			this.bannedSecs = null;
 			this.bannedReason = null;
 			code = 4009;
 		}
@@ -2340,6 +2387,8 @@ export class Game implements CommandContext {
 		this.renderer?.players.clear();
 		this.records = null;
 		this.hud.adminState = null;
+		this.hud.coins = null;
+		this.hud.multiplier = null;
 		this.applyEnabledMaps(null);
 		this.tagState = null;
 		this.tagFlash = null;

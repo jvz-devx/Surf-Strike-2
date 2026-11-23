@@ -5,7 +5,10 @@
  */
 import { MAX_PLAYERS, type AdminState, type GameModeId, type ModeFamily, type ModeState, type RecordEntry, type ScoreRow } from '@surf/shared';
 import type {
+	AwardPopup,
+	BanView,
 	ChatLine,
+	CoinsView,
 	ConsoleLine,
 	HnsView,
 	HudStateShape,
@@ -53,6 +56,10 @@ export class HudState implements HudStateShape {
 	recordTop = $state.raw<RecordEntry[] | null>(null);
 
 	account = $state.raw<{ username: string; admin?: boolean } | null>(null);
+	coins = $state.raw<CoinsView | null>(null);
+	multiplier = $state.raw<{ mult: number; active: number; need: number } | null>(null);
+	awardPopups = $state.raw<readonly AwardPopup[]>([]);
+	ban = $state.raw<BanView | null>(null);
 	adminState = $state.raw<AdminState | null>(null);
 	adminNotice = $state.raw<{ ok: boolean; text: string; at: number } | null>(null);
 	authError = $state<string | null>(null);

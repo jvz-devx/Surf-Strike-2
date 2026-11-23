@@ -226,3 +226,16 @@ describe('standing score panel', () => {
 		expect(panel('hns', {}).empty).toBe('No players');
 	});
 });
+
+describe('coins line', () => {
+	const line = (mode: string, coins: ScorePanelInput['coins']) => panel(mode, { coins }).summary.find((l) => l.id === 'coins');
+	it('multiplier and active players in every mode', () => {
+		for (const id of GAME_MODE_IDS) expect(line(id, { mult: 10, active: 2, need: 0 }), id).toEqual({ id: 'coins', label: 'Coins', text: '×1.0', note: '2 active' });
+		expect(line('tag', { mult: 15, active: 6, need: 3 })).toMatchObject({ text: '×1.5', note: '6 active', tone: 'good' });
+	});
+	it('off below the minimum, absent on older servers and offline', () => {
+		expect(line('hns', { mult: 13, active: 4, need: 5 })).toMatchObject({ text: 'Off', note: '4/5 active', tone: 'bad' });
+		expect(line('hns', null)).toBeUndefined();
+		expect(line('hns', undefined)).toBeUndefined();
+	});
+});

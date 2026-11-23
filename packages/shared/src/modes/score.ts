@@ -11,6 +11,7 @@
  * fallback here.
  */
 import type { ModeState, RecordEntry, ScoreRow } from '../protocol.ts';
+import { formatMultiplier } from '../economy.ts';
 import { formatTicks, Status } from '../protocol.ts';
 import { TICK_RATE } from '../units.ts';
 
@@ -173,6 +174,16 @@ export const TOTAL_COLUMNS: readonly ScoreMetric[] = [
 	{ id: 'totalPlaytime', label: 'Total playtime', num: true, width: 7.6, text: (r) => formatPlaytime(r.playtimeSecs) }
 ];
 
+/** Coins multiplier and active players, under every mode's list (docs/economy.md#player-multiplier). */
+const COINS: PanelSummary = {
+	id: 'coins',
+	line: ({ coins }) => {
+		if (!coins) return null;
+		if (coins.active < coins.need) return { label: 'Coins', text: 'Off', note: `${coins.active}/${coins.need} active`, tone: 'bad' };
+		return { label: 'Coins', text: formatMultiplier(coins.mult), note: `${coins.active} active`, ...(coins.mult > 10 ? { tone: 'good' as const } : {}) };
+	}
+};
+
 const byName = (a: ScoreRow, b: ScoreRow) => a.name.localeCompare(b.name);
 const desc = (a: number | undefined, b: number | undefined) => (b ?? 0) - (a ?? 0);
 const round = (i: ScorePanelInput): string => (i.state && i.state.round > 0 ? `Round ${i.state.round}` : '');
@@ -211,7 +222,8 @@ export const RACE_SCORE: ModeScoreDef = {
 					if (gap <= 0) return { label: 'Gap to record', text: 'Record holder', tone: 'good' };
 					return { label: 'Gap to record', text: formatDelta(gap), tone: 'bad' };
 				}
-			}
+			},
+			COINS
 		]
 	}
 };
@@ -224,7 +236,7 @@ export const TAG_SCORE: ModeScoreDef = {
 	],
 	compare: (a, b) => desc(a.score, b.score) || byName(a, b),
 	mark: (r) => (r.it ? { text: 'IT', short: 'IT', tone: 'it' } : null),
-	panel: { list: 'standing', subtitle: round, maxRows: 8, summary: [] }
+	panel: { list: 'standing', subtitle: round, maxRows: 8, summary: [COINS] }
 };
 
 export const ZOMBIES_SCORE: ModeScoreDef = {
@@ -247,7 +259,8 @@ export const ZOMBIES_SCORE: ModeScoreDef = {
 					if (state?.mode !== 'zombies' || state.phase !== 'playing') return null;
 					return { label: 'Route', text: `${Math.round(state.progress * 100)}%`, note: `${state.checkpoint}/${state.checkpoints}` };
 				}
-			}
+			},
+			COINS
 		]
 	}
 };
@@ -281,7 +294,7 @@ export const INFECTED_SCORE: ModeScoreDef = {
 			: r.status === Status.Infected
 				? { text: 'INFECTED', short: 'INF', tone: 'infected' }
 				: null,
-	panel: { list: 'standing', subtitle: round, maxRows: 8, summary: [] }
+	panel: { list: 'standing', subtitle: round, maxRows: 8, summary: [COINS] }
 };
 
 export const HNS_SCORE: ModeScoreDef = {
@@ -293,7 +306,7 @@ export const HNS_SCORE: ModeScoreDef = {
 	],
 	compare: (a, b) => desc(a.score, b.score) || desc(a.kills, b.kills) || byName(a, b),
 	mark: (r) => (r.status === Status.Seeker ? { text: '', short: '', tone: 'seeker' } : null),
-	panel: { list: 'standing', subtitle: round, maxRows: 8, summary: [] }
+	panel: { list: 'standing', subtitle: round, maxRows: 8, summary: [COINS] }
 };
 
 // ---------------------------------------------------------------------------
@@ -333,6 +346,11 @@ export interface ScorePanelInput extends ScoreContext {
 	selfName: string;
 	online: boolean;
 	records: PanelRecords;
+	/**
+	 * Coins multiplier (tenths), active players and how many the mode needs
+	 * before it pays; null or absent offline and on servers without coins.
+	 */
+	coins?: { mult: number; active: number; need: number } | null;
 }
 
 export interface ScorePanelRow {

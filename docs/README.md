@@ -46,7 +46,7 @@ In solo mode (no server), `?map=<id>` opens that map directly, e.g. `http://loca
 | [maps.md](maps.md) | Map format and the four map designs |
 | [ui.md](ui.md) | HUD, console, cvars, Esc settings, account panel, audio |
 | [characters.md](characters.md) | Character models, animation, cosmetic slots and how to add an item |
-| [economy.md](economy.md) | Points, coins, payouts per mode, abuse detection (design) |
+| [economy.md](economy.md) | Points, coins, payouts per mode, abuse detection, and how a mode pays |
 | [roadmap.md](roadmap.md) | Milestones and out of scope |
 | [overview.html](overview.html) | Interactive visual overview of all the above (open in a browser) |
 

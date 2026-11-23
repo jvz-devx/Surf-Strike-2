@@ -15,6 +15,7 @@ The HUD is Svelte components layered over the Three.js canvas.
 | Bottom left | Chat (fades after 8 s; full history while typing) |
 | Left middle | Vote panel (up to 7 options "Surf · Kessler" … "Extend 10 min" with key numbers and live vote counts, countdown bar) |
 | Top centre, below map name | RTV request modal (see [RTV request](#rtv-request)) |
+| Top left | Award popups ([Award popups](#award-popups)), below the position readout |
 | Right middle | Score panel: map records, PB and gap, or the current standing ([Score panel](#score-panel)) |
 | Centre | Crosshair (configurable) |
 | Below crosshair | Pressed keys (W A S D, jump, crouch) if `cl_showkeys 1` |
@@ -29,11 +30,20 @@ Always on while playing (`ScorePanel.svelte`), driven by the gamemode's definiti
 
 - **Surf, bhop:** "Map records" (top 6 of the 10 the server sends), your own row highlighted, then Personal best with your rank and Gap to record (red, or "Record holder" in green). An older server sends only the record: the list is then the record and your own time. Offline: "Offline: no map records" and your local PB. "Unofficial" badge when `sv_*` was changed.
 - **Other modes:** the live standing of the current game, best first, with the round number. Tag: time not IT, `IT` marker. Zombie Run: kills, times turned, and the route progress and checkpoint below. Infected: score, kills, kill streak, `A` / `INF` markers. Hide and seek: role, finds, survived.
+- Every mode ends with a **Coins** line: the [multiplier](economy.md#player-multiplier) and the active players (`×1.5 6 active`), or `Off 4/5 active` in red when the mode needs more players to pay. Not shown offline or on an older server.
 - At most 8 players (6 records). Your own row is always there: further down it replaces the last row, with a dashed line above it and its real position.
 - **Placement.** Vertically centred in the free strip on the right, below the connection status (and a full kill feed) and above the mode's health and weapon bars. `score-panel.ts` holds these areas and `fitPanel`, which decides how much fits: fewer rows in low windows, narrower without minor columns below 1000 px width, only your own row (and the race lines) below 820 px, hidden below 480 px or when there is no height left.
 - Hidden while the Tab scoreboard is open, and with `cl_scorepanel 0` (Settings › HUD › "Show score panel").
 
-Dev preview: `/?mockhud&novote&mode=<gamemode>&players=<n>&self=<position>`, `&old=1` for an older server, `&open=scoreboard` for the Tab scoreboard.
+Dev preview: `/?mockhud&novote&mode=<gamemode>&players=<n>&self=<position>`, `&old=1` for an older server, `&open=scoreboard` for the Tab scoreboard, `&coins=<n>` award popups (`0`: a guest), `&warn` a warning, `&ban=<seconds>` the ban screen.
+
+## Award popups
+
+`AwardPopups.svelte`, pure helpers in `game/coins.ts`. Every award shows its amount, reason and multiplier (`+4.5 coins  Found a hider  ×1.5`) at the top left for 4.5 s, newest at the bottom, at most 5 (2 while a map vote is open, so they stay above its panel). Notices (guest hint, abuse warning) use the same stack for 10 s. They take no input, play no sound, and their width keeps clear of the banners at the top centre in every mode.
+
+## Ban screen
+
+`BanScreen.svelte`. A banned player gets "You are banned", the reason and, for a ban that lifts by itself, the time left. "Play solo meanwhile" (or `Esc`) shrinks it to a line at the top left with the countdown. The client reconnects by itself one second after the ban is over, also after a reload. The screen frees the pointer and counts as an overlay for game binds.
 
 ## RTV request
 
@@ -104,7 +114,7 @@ Settings are saved to localStorage on change.
 
 A CS2-style pause menu opened with `Esc` (pointer lock is released). The game stays visible behind a dark gradient; the HUD is hidden while it is open. Components live in `apps/web/src/lib/ui/menu/` (`EscMenu.svelte` and one component per submenu); pure helpers (map grouping, settings sections, cvar defaults) are in `menu.ts` with unit tests.
 
-Main menu (left column): brand, current map and mode, then the entries **Resume**, **Change map**, **Settings**, **Account** (and **Admin** for admin accounts, see below), and below them the account line ("Logged in as X" or "Guest · runs are not saved") and a key hint. A submenu opens in a panel beside the entries; clicking its entry again folds it.
+Main menu (left column): brand, current map and mode, then the entries **Resume**, **Change map**, **Settings**, **Coins**, **Account** (and **Admin** for admin accounts, see below), and below them the account line ("Logged in as X" or "Guest · runs are not saved") and a key hint. A submenu opens in a panel beside the entries; clicking its entry again folds it.
 
 Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the open submenu, `←`/`→` (and `Home`/`End`) switch tabs. `Esc` goes back one level (submenu to main menu), then resumes. In the map filter, `Esc` first clears the text. Focus is always visible.
 
@@ -116,17 +126,19 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
   - Audio: master volume
 
   Each tab has **Reset … to defaults**, which sets that tab's cvars to the engine defaults (`CLIENT_CVARS`); it is disabled when they already are.
+- <a id="coins"></a>**Coins** (`CoinsMenu.svelte`): coins, points earned in total (both rounded down), the current multiplier and active players, and the latest 20 awards and purchases. Guests get a login button.
 - **Account**: "Logged in as X" with **Log out**, or guest with **Log in / Register** (opens the account panel).
 - <a id="admin"></a>**Admin** (only when the server says the account is admin, [gameplay.md](gameplay.md#admin); `AdminMenu.svelte`): **Extend +10 min** in the header, then tabs
   - Maps: every map grouped by gamemode with an on/off switch (the last enabled map cannot be switched off) and **Force change** with an inline "Change now? Yes / Cancel"; the current map is marked.
   - Players: connected players with an Admin / Account / Guest badge and **Ban** (inline confirm with an optional reason; not for admins), plus "Ban an account by username" for offline accounts.
-  - Bans: username, kind, reason, date, who banned, and **Unban**.
+  - Bans: username, kind, reason, date, who banned, when it lifts, and **Unban**.
+  - Abuse log: the latest 50 automatic warnings and bans with their evidence.
 
   The result of the last action shows under the tabs. In Change map, maps disabled by an admin are greyed with "Disabled by admin" and cannot be picked (admins still can).
 
 All values are the same cvars as the console and are saved the same way.
 
-Dev preview: `/?mockhud&open=settings` (main menu), `&open=maps` (map submenu), `&open=settings&view=settings&tab=hud` (a settings tab), `&view=account`, `&view=admin` (logged in as an admin; `&tab=maps|players|bans`), and `&solo=0` for the read-only map list.
+Dev preview: `/?mockhud&open=settings` (main menu), `&open=maps` (map submenu), `&open=settings&view=settings&tab=hud` (a settings tab), `&view=account`, `&view=coins`, `&view=admin` (logged in as an admin; `&tab=maps|players|bans|abuse`), and `&solo=0` for the read-only map list.
 
 ## Ghost
 

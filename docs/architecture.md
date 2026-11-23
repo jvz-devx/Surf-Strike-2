@@ -72,7 +72,7 @@ Each client simulates its own movement with zero input lag. The server trusts po
   - horizontal speed never exceeded `sv_maxvelocity`;
   - no position jumps larger than speed allows (teleport detection), except server-known teleport triggers.
   A run failing any check is not saved, and the player gets a chat notice.
-- **Close codes:** 4000 no hello within 10 s, 4001 bad player id, 4002 same player id or same account connected again (old socket; that client stops auto-reconnecting until reload), 4003 server full, 4008 rate-limit kick, 4009 banned (sent after a `banned { reason }` message; the client shows "You are banned" and stops auto-reconnecting until reload; see [Admin and bans](#admin-and-bans)), 4010 too many clients from this IP address ([connection limit](#connection-limit); the client stops auto-reconnecting until reload).
+- **Close codes:** 4000 no hello within 10 s, 4001 bad player id, 4002 same player id or same account connected again (old socket; that client stops auto-reconnecting until reload), 4003 server full, 4008 rate-limit kick, 4009 banned (sent after a `banned { reason, seconds? }` message; the client shows the ban screen and stops auto-reconnecting until reload, or with `seconds` until the ban lifts; see [Admin and bans](#admin-and-bans)), 4010 too many clients from this IP address ([connection limit](#connection-limit); the client stops auto-reconnecting until reload).
 - **Security:** friends-only by design. Chat is HTML-escaped, names are limited to 24 chars, and each client is rate-limited (state 70 msg/s, chat 2 msg/s). No anti-cheat beyond run validation. Accounts: see below. Admin rights come only from the logged-in account (`ADMIN_USERNAMES`), never from a display name, and guests cannot use a registered username as their name ([Admin and bans](#admin-and-bans)).
 
 ## Protocol sketch
@@ -93,8 +93,9 @@ Each client simulates its own movement with zero input lag. The server trusts po
 | S→C | `records { map, records }`: pushed to every other player on the map when a run sets a new PB (their rank and the map record may have changed) | JSON |
 | C↔S | `chat { text }` / `chat { from, text, admin? }` (`admin`: server-set marker for admin senders; scoreboard rows carry the same flag) | JSON |
 | C→S | `admin { action }`: `setMapEnabled { mapId, enabled }`, `ban { targetId? \| username?, reason? }`, `unban { banId }`, `forceMap { mapId }`, `extend`, `listBans`. Re-checked on the server; non-admins get `adminResult { ok: false }` and nothing happens | JSON |
-| S→C | `adminResult { ok, error?, message? }` (every `admin` request) and, to admins only, `adminState { maps[{ id, title, kind, enabled }], bans[{ id, username, kind, reason, createdAt, createdBy }], players[{ id, name, account?, guest, admin }] }` (after each request and when players or bans change) | JSON |
-| S→C | `banned { reason }`, then close 4009 | JSON |
+| S→C | `adminResult { ok, error?, message? }` (every `admin` request) and, to admins only, `adminState { maps[{ id, title, kind, enabled }], bans[{ id, username, kind, reason, createdAt, createdBy, secondsLeft? }], abuse[]?, players[{ id, name, account?, guest, admin }] }` (after each request and when players or bans change) | JSON |
+| S→C | `banned { reason, seconds? }`, then close 4009 | JSON |
+| S→C | Coins: `coins`, `award`, `multiplier`, `coinsNotice` ([economy.md](economy.md#wire)) | JSON |
 | C→S | `vote { option }` (1-based, up to 7), `rtv` (= `rtvRequest` without a map), `spectate { targetId }` | JSON |
 | C→S | `rtvRequest { mapId? }`: start an RTV request, optionally nominating a map (on an open request: a yes vote); `rtvVote { yes }`: answer it. Errors come back as system chat | JSON |
 | S→C | `voteStart { options, duration, rtv }` (up to 6 maps by category, then `extend`), `voteUpdate`, `voteEnd`, `mapChange { map, mode, ... }` | JSON |
@@ -131,7 +132,7 @@ Username + password, no email or verification ([gameplay.md](gameplay.md#account
 
 - Connections join it at hello-token login, `login` and `register`, and leave it at `logout` and close. Connections are kept per account, so an account connected twice counts once.
 - Whole seconds are added to `account_stats` in one transaction every 60 s (`PLAYTIME_FLUSH_MS`), when an account's last connection leaves, and in `Lobby.close()`. A failed write is logged and retried. The clock is `performance.now()` (monotonic).
-- Points are read when the account comes online and are never written yet. `points_total` (lifetime) and `points_balance` (spendable coins) are independent columns, both in tenths of a point ([economy.md](economy.md)); the wire field is whole points, rounded down.
+- Points are paid by `economy.ts` ([economy.md](economy.md#implementation)). `points_total` (lifetime) and `points_balance` (spendable coins) are independent columns, both in tenths of a point ([economy.md](economy.md)); the wire field is whole points, rounded down.
 - The table is created with `CREATE TABLE IF NOT EXISTS`; no existing table is changed, and an older server ignores it. A missing row means zeros.
 
 | Table | Columns |
@@ -149,13 +150,13 @@ A small admin menu (Esc menu › Admin, [ui.md](ui.md#admin)) for the host. Code
 - **Who is admin.** Only logged-in accounts whose username (case-insensitive, `username_lower`) is listed in `ADMIN_USERNAMES` in `apps/server/.env` (comma-separated; unset = `tim`, empty = no admins). The server decides at hello-token login and at `login`/`register`, and resets it on `logout`. Display names never count: a guest can type any name, but guest names equal (ignoring case) to a registered username are refused (hello falls back to `Guest-xxxx`; `name` / `!name` get a system message). The client is told `account.admin` only to show the menu; every `admin` message is re-checked server-side and non-admins get an error.
 - **Rate limit and audit.** 30 admin actions per minute per connection. Every action is printed to the server console (`admin <name> (account <id>) <action> <target>`) and stored in `admin_log`; passwords, tokens and IPs are never logged.
 - **Maps.** Disabled maps (`map_settings`) are left out of vote options, RTV nominations, random picks (`MapRotation` takes a live `isEnabled` filter) and the lone-player Change map; at least one map always stays enabled. Disabling the current map does not end it. `forceMap` changes to any map (disabled ones too) at once for everyone, through `MapRotation.forceMap` and the normal `mapChange` broadcast; `extend` adds 10 minutes (not during a vote or pending change).
-- **Bans.** Targets: a connected player (by lobby id) or an account by username (offline ban). An account ban stores the account id (plus the player key of a connected target): all of its connections are kicked (`banned`, close 4009), and hello-token auto-login and `login` are refused. A guest ban stores the player key and, when known, the client IP: hellos with that key or IP are refused unless the hello token logs in an admin account. Admin accounts cannot be banned (nor ban themselves). Unban deletes the row.
+- **Bans.** Targets: a connected player (by lobby id) or an account by username (offline ban). An account ban stores the account id (plus the player key of a connected target): all of its connections are kicked (`banned`, close 4009), and hello-token auto-login and `login` are refused. A guest ban stores the player key and, when known, the client IP: hellos with that key or IP are refused unless the hello token logs in an admin account. Admin accounts cannot be banned (nor ban themselves). Unban deletes the row. Bans by the abuse detection ([economy.md](economy.md#abuse-and-collusion)) have `created_by = auto` and an `expires_at`: expired ones no longer count and are deleted later. An admin can still ban such an account permanently.
 - **Client IP.** Tunnel connections arrive from cloudflared on loopback, so the IP is the `CF-Connecting-IP` header; it is only trusted on loopback connections. Direct connections use the socket address. A loopback address is never stored (it would ban everyone on the tunnel).
 
 | Table | Columns |
 | --- | --- |
 | `map_settings` | `map_id` (primary key), `enabled` (0/1; missing row = enabled) |
-| `bans` | `id`, `account_id` (nullable), `player_key` (nullable), `ip` (nullable), `username_snapshot`, `reason`, `created_at`, `created_by` |
+| `bans` | `id`, `account_id` (nullable), `player_key` (nullable), `ip` (nullable), `username_snapshot`, `reason`, `created_at`, `created_by`, `expires_at` (null = permanent) |
 | `admin_log` | `id`, `created_at`, `admin_account_id`, `admin_username`, `action` (`enable-map`, `disable-map`, `force-map`, `extend`, `ban`, `unban`), `target`, `detail` |
 
 ## Repo layout

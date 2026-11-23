@@ -1,7 +1,6 @@
 /**
  * Account totals (docs/gameplay.md#points-and-playtime): time online per
- * account, and the lifetime points read from `account_stats` (nothing earns
- * points yet). Guests have no totals.
+ * account, and the lifetime points (paid by economy.ts). Guests have no totals.
  *
  * Playtime of online accounts is kept in memory and written every
  * PLAYTIME_FLUSH_MS, on disconnect or logout, and at shutdown, so a crash loses
@@ -9,15 +8,13 @@
  * clock is monotonic, so a changed system time never adds or removes playtime.
  */
 import { performance } from 'node:perf_hooks';
+import { POINTS_SCALE } from '@surf/shared';
 import type { Db } from './db.ts';
 
 export const PLAYTIME_FLUSH_MS = 60_000;
 
-/** Points are stored in tenths (docs/economy.md); the wire carries whole points, rounded down. */
-export const POINTS_SCALE = 10;
-
 export interface AccountTotals {
-	/** Whole points. */
+	/** Whole points, rounded down (stored in tenths, docs/economy.md). */
 	pointsTotal: number;
 	playtimeSecs: number;
 }
@@ -76,6 +73,12 @@ export class AccountStats {
 		if (!o || o.conns.size === 0) return null;
 		const ms = o.pendingMs + Math.max(0, this.now() - o.since);
 		return { pointsTotal: Math.floor(o.pointsTotal / POINTS_SCALE), playtimeSecs: o.storedSecs + Math.floor(ms / 1000) };
+	}
+
+	/** The account's lifetime points changed (tenths). */
+	setPoints(accountId: number, pointsTotal: number): void {
+		const o = this.online.get(accountId);
+		if (o) o.pointsTotal = pointsTotal;
 	}
 
 	private accrue(o: Online): void {

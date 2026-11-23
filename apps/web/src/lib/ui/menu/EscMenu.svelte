@@ -1,16 +1,17 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { mapTitle, type AdminState } from '@surf/shared';
-	import type { GameApi, MapListEntry } from '#lib/game/contract.js';
+	import type { CoinsView, GameApi, MapListEntry } from '#lib/game/contract.js';
 	import SettingsMenu from '#lib/ui/menu/SettingsMenu.svelte';
 	import MapMenu from '#lib/ui/menu/MapMenu.svelte';
+	import CoinsMenu from '#lib/ui/menu/CoinsMenu.svelte';
 	import AccountMenu from '#lib/ui/menu/AccountMenu.svelte';
 	import AdminMenu from '#lib/ui/menu/AdminMenu.svelte';
 	import { isSettingsSection, modeLabel, wrapIndex, type MenuView, type SettingsSectionId } from '#lib/ui/menu/menu.js';
 
 	/**
 	 * Esc menu (docs/ui.md#esc-menu): main entries on the left, the open
-	 * submenu (Change map, Settings, Account) beside them. Esc goes back one
+	 * submenu (Change map, Settings, Coins, Account) beside them. Esc goes back one
 	 * level, then resumes.
 	 */
 	let {
@@ -25,6 +26,8 @@
 		rtvCooldown = null,
 		account = null,
 		online = false,
+		coins = null,
+		multiplier = null,
 		adminState = null,
 		adminNotice = null,
 		blocked = false,
@@ -42,6 +45,9 @@
 		rtvCooldown?: { until: number; reason: 'declined' | 'mapStart' } | null;
 		account?: { username: string; admin?: boolean } | null;
 		online?: boolean;
+		/** Coins submenu (null: guest, offline or a server without coins). */
+		coins?: CoinsView | null;
+		multiplier?: { mult: number; active: number; need: number } | null;
 		/** Admin menu data (server-sent to admin accounts only). */
 		adminState?: AdminState | null;
 		adminNotice?: { ok: boolean; text: string; at: number } | null;
@@ -60,7 +66,7 @@
 		const v = p.get('open') === 'maps' ? 'maps' : p.get('view');
 		const tab = p.get('tab');
 		return {
-			view: v === 'maps' || v === 'settings' || v === 'account' || v === 'admin' ? v : 'main',
+			view: v === 'maps' || v === 'settings' || v === 'coins' || v === 'account' || v === 'admin' ? v : 'main',
 			section: isSettingsSection(tab) ? tab : 'mouse'
 		};
 	}
@@ -75,6 +81,7 @@
 		{ id: 'resume', label: 'Resume' },
 		{ id: 'maps', label: 'Change map' },
 		{ id: 'settings', label: 'Settings' },
+		{ id: 'coins', label: 'Coins' },
 		{ id: 'account', label: 'Account' },
 		...(account?.admin ? [{ id: 'admin', label: 'Admin' } as Entry] : [])
 	]);
@@ -215,6 +222,8 @@
 					admin={account?.admin === true}
 					onpick={pickMap}
 				/>
+			{:else if view === 'coins'}
+				<CoinsMenu {api} {coins} {multiplier} loggedIn={account !== null} {online} />
 			{:else if view === 'admin'}
 				<AdminMenu {api} data={adminState} {mapId} notice={adminNotice} />
 			{:else}

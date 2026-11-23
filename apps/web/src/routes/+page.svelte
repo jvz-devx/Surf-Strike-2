@@ -51,7 +51,7 @@
 	function onclick() {
 		const hud = handle?.hud;
 		if (!hud || hud.pointerLocked) return;
-		if (hud.chatOpen || hud.consoleOpen || hud.settingsOpen || hud.authPanelOpen || hud.desktopOnly) return;
+		if (hud.chatOpen || hud.consoleOpen || hud.settingsOpen || hud.authPanelOpen || hud.desktopOnly || (hud.ban && !hud.ban.minimized)) return;
 		handle?.api.lockPointer();
 	}
 </script>

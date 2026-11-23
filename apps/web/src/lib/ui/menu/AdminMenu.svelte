@@ -8,7 +8,7 @@
 
 	/**
 	 * Admin submenu (docs/ui.md#admin): Maps (enable/disable, force change),
-	 * Players (ban), Bans (unban). Only shown for admin accounts; the server
+	 * Players (ban), Bans (unban), Abuse log. Only shown for admin accounts; the server
 	 * re-checks every request, so this is just a remote control.
 	 */
 	let {
@@ -41,10 +41,11 @@
 	const maps = $derived(data?.maps ?? []);
 	const players = $derived(data?.players ?? []);
 	const bans = $derived(data?.bans ?? []);
+	const abuse = $derived(data?.abuse ?? []);
 	const tabs = $derived(
 		ADMIN_TABS.map((t) => ({
 			...t,
-			count: t.id === 'maps' ? maps.length : t.id === 'players' ? players.length : bans.length
+			count: t.id === 'maps' ? maps.length : t.id === 'players' ? players.length : t.id === 'bans' ? bans.length : abuse.length
 		}))
 	);
 
@@ -195,13 +196,13 @@
 				{/if}
 			</div>
 		</form>
-	{:else}
+	{:else if tab === 'bans'}
 		<ul class="rows">
 			{#each bans as b (b.id)}
 				<li class="row ban">
 					<div class="grow col">
 						<span class="name">{b.username} <span class="badge">{b.kind === 'account' ? 'Account' : 'Guest'}</span></span>
-						<span class="muted">{b.reason ?? 'No reason'} · {when(b.createdAt)} · by {b.createdBy}</span>
+						<span class="muted">{b.reason ?? 'No reason'} · {when(b.createdAt)} · by {b.createdBy}{#if b.secondsLeft !== undefined}{' · '}lifts in {Math.ceil(b.secondsLeft / 60)} min{/if}</span>
 					</div>
 					<button type="button" class="ss-button ghost small" onclick={() => api.admin({ action: 'unban', banId: b.id })}>
 						Unban
@@ -209,6 +210,24 @@
 				</li>
 			{:else}
 				<li class="empty">No bans.</li>
+			{/each}
+		</ul>
+	{:else}
+		<ul class="rows">
+			{#each abuse as e (e.id)}
+				<li class="row ban">
+					<div class="grow col">
+						<span class="name">
+							{e.username}
+							<span class="badge" class:bad={e.action !== 'warning'}>
+								{e.action === 'warning' ? 'Warning' : e.action === 'ban' ? '5 min ban' : 'Admin, not banned'}
+							</span>
+						</span>
+						<span class="muted evidence">{when(e.createdAt)} · {e.strikes} strikes · {e.evidence}</span>
+					</div>
+				</li>
+			{:else}
+				<li class="empty">No automatic warnings or bans.</li>
 			{/each}
 		</ul>
 	{/if}
@@ -300,6 +319,14 @@
 	.badge.admin {
 		color: var(--accent);
 		border-color: var(--accent);
+	}
+	.badge.bad {
+		color: var(--bad);
+		border-color: var(--bad);
+	}
+	.muted.evidence {
+		white-space: normal;
+		line-height: 1.4;
 	}
 	.muted {
 		font-size: 13px;

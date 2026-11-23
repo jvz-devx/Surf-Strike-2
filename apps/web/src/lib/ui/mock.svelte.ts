@@ -8,14 +8,30 @@
  * an RTV request instead of the map vote, `&rtv=cooldown` a declined-request cooldown).
  * Scores: `&mode=<gamemode>` (its score panel and scoreboard), `&players=<n>` (default 5),
  * `&self=<n>` your position, `&old=1` an older server (no leaderboard top, no totals),
- * `&novote=1` without the map vote.
+ * `&novote=1` without the map vote. Coins: `&coins=<n>` n award popups, `&coins=0` a guest,
+ * `&view=coins` the Coins submenu, `&ban=<seconds>` the ban screen (`&ban=0` permanent).
  */
 import { gameMode, isGameModeId, Status, TICK_RATE, type GameModeId, type ModeState, type ScoreRow } from '@surf/shared';
+import { awardPopup, noticePopup } from '#lib/game/coins.js';
 import type { GameApi, GameHandle, HudStateShape } from '#lib/game/contract.js';
 
 const T = TICK_RATE;
 
 const MOCK_NAMES = ['glidepath', 'you', 'cirrus', 'boreal', 'WWWWWWWWWWWWWWWWWWWWWWWW', 'A name of 24 characters!', 'Guest-4f1a', 'tim'];
+
+const MOCK_WARNING =
+	'Your coins are paused for 5 minutes: this looks like point farming. Play normally and nothing else happens; if it continues you are banned for 5 minutes.';
+
+function mockAwards(n: number) {
+	const labels = ['Found a hider', 'Playtime', 'Hiding in plain view', 'Evacuated', 'Being chased', 'Shop: hat'];
+	return Array.from({ length: n }, (_, i) => ({
+		at: Date.now() - i * 95_000,
+		reason: 'x',
+		label: labels[i % labels.length]!,
+		amount: [45, 100, 24, 160, 15, -750][i % labels.length]!,
+		mult: i % labels.length === 1 ? 10 : 15
+	}));
+}
 
 /** Scoreboard rows as the mode's server module builds them. */
 function mockRows(mode: GameModeId, n: number, self: number, old: boolean): ScoreRow[] {
@@ -73,6 +89,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 	const selfPos = Number(params.get('self') ?? 2);
 	const rows = mockRows(mode, Number(params.get('players') ?? 5), selfPos, old);
 	const race = gameMode(mode).family === 'race';
+	const coinsN = params.has('coins') ? Number(params.get('coins')) : null;
 	const asAdmin = params.get('view') === 'admin' || params.has('admin');
 	const hud: HudStateShape = $state({
 		online: true,
@@ -120,7 +137,20 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 						...(i === selfPos - 1 ? { self: true } : {})
 					}))
 				: null,
-		account: open === 'auth' ? null : asAdmin ? { username: 'Tim', admin: true } : { username: 'you' },
+		account: open === 'auth' || coinsN === 0 ? null : asAdmin ? { username: 'Tim', admin: true } : { username: 'you' },
+		coins: coinsN === 0 || old ? null : { total: 123_456, balance: 7_459, recent: mockAwards(14) },
+		multiplier: old ? null : race ? { mult: 10, active: 5, need: 0 } : { mult: 15, active: 6, need: 5 },
+		awardPopups: [
+			...mockAwards(coinsN ?? 0).map((e) => awardPopup({ type: 'award', base: 30, total: 0, balance: 0, ...e }, t0 + 60_000)),
+			...(params.has('warn') ? [noticePopup({ type: 'coinsNotice', tone: 'warn', text: MOCK_WARNING }, t0 + 60_000)] : [])
+		],
+		ban: params.has('ban')
+			? {
+					reason: 'Point farming (detected automatically)',
+					until: Number(params.get('ban')) > 0 ? t0 + Number(params.get('ban')) * 1000 : null,
+					minimized: false
+				}
+			: null,
 		adminState: asAdmin
 			? {
 					maps: [
@@ -133,7 +163,11 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 					],
 					bans: [
 						{ id: 1, username: 'griefer42', kind: 'guest', reason: 'spam', createdAt: Date.now() - 86_400_000, createdBy: 'Tim' },
-						{ id: 2, username: 'Smurf', kind: 'account', reason: null, createdAt: Date.now() - 3_600_000, createdBy: 'Tim' }
+						{ id: 2, username: 'Smurf', kind: 'account', reason: null, createdAt: Date.now() - 3_600_000, createdBy: 'auto', secondsLeft: 200 }
+					],
+					abuse: [
+						{ id: 2, createdAt: Date.now() - 120_000, username: 'Smurf', action: 'ban', strikes: 6, evidence: 'shadow (round 4): Smurf stayed next to boreal: 20 s without a swing; shadow (round 5): Smurf stayed next to boreal: 20 s without a swing' },
+						{ id: 1, createdAt: Date.now() - 400_000, username: 'Smurf', action: 'warning', strikes: 4, evidence: 'shadow (round 4): Smurf stayed next to boreal: 20 s without a swing' }
 					],
 					players: [
 						{ id: 2, name: 'Tim', account: 'Tim', guest: false, admin: true },
@@ -292,6 +326,9 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 				yes: r.yes + (yes ? 1 : 0) - (r.myChoice === 'yes' ? 1 : 0),
 				no: r.no + (yes ? 0 : 1) - (r.myChoice === 'no' ? 1 : 0)
 			};
+		},
+		minimizeBan(minimized) {
+			if (hud.ban) hud.ban = { ...hud.ban, minimized };
 		},
 		admin(a) {
 			const st = hud.adminState;

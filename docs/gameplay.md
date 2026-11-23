@@ -35,7 +35,7 @@ SQLite tables (accounts and sessions: [architecture.md](architecture.md#accounts
 | `account_runs` | `id`, `account_id`, `map`, `time_ticks`, `splits_json`, `created_at` (unique per account and map) |
 | `players` | `id` (localStorage UUID), `name`, `first_seen`, `last_seen` (guest bookkeeping only) |
 | `runs` | Legacy, read-only: guest runs from before accounts, keyed by the localStorage UUID |
-| `account_stats` | `account_id` (primary key), `playtime_secs`, `points_total`, `points_balance` ([Points and playtime](#points-and-playtime)) |
+| `account_stats` | `account_id` (primary key), `playtime_secs`, `points_total`, `points_balance`, `active_ms` ([Points and playtime](#points-and-playtime)) |
 | `replays` | `map` (primary key), `account_id`, `time_ticks`, `samples`, `data` (BLOB), `created_at`: the map's record ghost ([Ghosts](#ghosts)) |
 
 Only each account's best run per map is kept; a slower run is discarded.
@@ -47,7 +47,7 @@ Migration: tables are created with `CREATE TABLE IF NOT EXISTS`, so an existing 
 Two totals per account, shown to everyone in the Tab scoreboard of every mode. Guests have no account and offline play has no server, so both show `–` there.
 
 - **Total playtime** is the time connected to the server while logged in, in any mode, spectating and idling included, added up across sessions (`12h 34m`). An account connected twice counts once. The server writes it every 60 s, on disconnect or logout and at shutdown, so a crash loses at most a minute.
-- **Total points** is the lifetime number of earned points. Nothing earns points yet ([economy.md](economy.md) is the design), so it is 0 for every account. The spendable balance (`points_balance`, coins) is a separate number, stored but not shown.
+- **Total points** is the lifetime number of earned points. What pays is in [economy.md](economy.md). The spendable balance (`points_balance`, coins) is a separate number, shown only to its owner (Esc › Coins).
 
 ## Ghosts
 
@@ -138,7 +138,7 @@ Admin accounts (server config `ADMIN_USERNAMES`, default `tim`; [architecture.md
 
 - **Maps:** enable or disable maps. Disabled maps leave the vote options, `!rtv` and the Change map list; the current map keeps running until it ends. At least one map stays enabled.
 - **Force change:** switch everyone to any map at once (disabled ones too); **Extend +10 min** adds time to the current map.
-- **Ban / unban:** ban a connected player (account, or guest by browser and IP) or an account by username. Banned players are disconnected with "You are banned" and cannot rejoin until unbanned. Admins cannot be banned.
+- **Ban / unban:** ban a connected player (account, or guest by browser and IP) or an account by username. Banned players are disconnected with "You are banned" and cannot rejoin until unbanned. Point farming is banned automatically for 5 minutes ([economy.md](economy.md#abuse-and-collusion)). Admins cannot be banned.
 - Admin names have an `ADMIN` marker in chat and on the scoreboard.
 
 Lobby:

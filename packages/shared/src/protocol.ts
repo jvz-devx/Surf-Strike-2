@@ -232,6 +232,20 @@ export interface AdminBanInfo {
 	reason: string | null;
 	createdAt: number;
 	createdBy: string;
+	/** Seconds until the ban lifts by itself; absent: permanent. */
+	secondsLeft?: number;
+}
+
+/** A warning or ban of the abuse detection (docs/economy.md#abuse-and-collusion). */
+export interface AdminAbuseInfo {
+	id: number;
+	createdAt: number;
+	username: string;
+	/** 'exempt': an admin account that would have been banned. */
+	action: 'warning' | 'ban' | 'exempt';
+	strikes: number;
+	/** What was seen, one line. */
+	evidence: string;
 }
 
 export interface AdminPlayerInfo {
@@ -248,7 +262,26 @@ export interface AdminState {
 	maps: AdminMapInfo[];
 	bans: AdminBanInfo[];
 	players: AdminPlayerInfo[];
+	/** Latest automatic warnings and bans, newest first (absent on older servers). */
+	abuse?: AdminAbuseInfo[];
 }
+
+/** One line of the account's point log. */
+export interface PointLogEntry {
+	/** Wall clock (ms). */
+	at: number;
+	/** Reason id (economy.ts AWARDS); `shop:<item>` for purchases. */
+	reason: string;
+	/** Display text. */
+	label: string;
+	/** Tenths of a point; negative for purchases. */
+	amount: number;
+	/** Multiplier in tenths. */
+	mult: number;
+}
+
+/** Entries in `coins.recent`. */
+export const RECENT_AWARDS = 20;
 
 export type ServerMessage =
 	| {
@@ -347,8 +380,24 @@ export type ServerMessage =
 	/** Admins only: reply to an `admin` request, and pushed when players or bans change. */
 	| ({ type: 'adminState' } & AdminState)
 	| { type: 'adminResult'; ok: boolean; error?: string; message?: string }
-	/** Sent right before close code 4009: the client stops reconnecting until reload. */
-	| { type: 'banned'; reason: string | null };
+	/**
+	 * Sent right before close code 4009: the client stops reconnecting until
+	 * reload, or for `seconds` when the ban lifts by itself.
+	 */
+	| { type: 'banned'; reason: string | null; seconds?: number }
+	/**
+	 * Points and coins (docs/economy.md#wire). All optional: older clients
+	 * ignore them, newer clients do without. Amounts are tenths of a point.
+	 * `coins`: the account's totals and latest log entries, after `welcome`,
+	 * `auth` and purchases.
+	 */
+	| { type: 'coins'; total: number; balance: number; recent: PointLogEntry[] }
+	/** The account earned something. */
+	| ({ type: 'award'; total: number; balance: number; base: number } & PointLogEntry)
+	/** Current multiplier (tenths), active players and the number this mode needs to pay (0: none). On join and every change. */
+	| { type: 'multiplier'; mult: number; active: number; need: number }
+	/** Private notice about coins (guest hint, abuse warning), shown with the award popups. */
+	| { type: 'coinsNotice'; text: string; tone: 'info' | 'warn' };
 
 export interface AccountInfo {
 	username: string;
