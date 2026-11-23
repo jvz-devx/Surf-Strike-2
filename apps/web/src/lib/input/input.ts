@@ -4,6 +4,9 @@
  */
 import { keyNameFromCode, mouseButtonName } from './keys.js';
 
+/** Keep the leave-page prompt armed this long after the pointer lock ends (Ctrl+W also drops the lock). */
+const LEAVE_GUARD_MS = 2000;
+
 export interface InputHandlers {
 	/** Return true if the event was consumed (preventDefault). */
 	key(name: string, down: boolean, e: KeyboardEvent): boolean;
@@ -23,6 +26,8 @@ export class Input {
 	dx = 0;
 	dy = 0;
 	locked = false;
+	/** performance.now() when the pointer lock was last released. */
+	private unlockedAt = -Infinity;
 	private off: Array<() => void> = [];
 
 	constructor(
@@ -71,9 +76,18 @@ export class Input {
 			if (this.locked || e.target === this.canvas) e.preventDefault();
 		});
 		on(canvas, 'click', () => this.h.canvasClick());
+		// Ctrl+W (forward + crouch on a slip) closes the tab, and pages cannot cancel that
+		// shortcut. While playing, ask "Leave site?" instead. "Playing" = pointer locked now or
+		// within LEAVE_GUARD_MS, so a deliberate close after Esc leaves without a prompt.
+		on(window, 'beforeunload', (e: BeforeUnloadEvent) => {
+			if (!this.locked && performance.now() - this.unlockedAt > LEAVE_GUARD_MS) return;
+			e.preventDefault();
+			e.returnValue = ''; // older Chromium/Safari need returnValue set
+		});
 		on(document, 'pointerlockchange', () => {
 			const locked = document.pointerLockElement === this.canvas;
 			if (locked === this.locked) return;
+			if (!locked) this.unlockedAt = performance.now();
 			this.locked = locked;
 			this.dx = this.dy = 0;
 			this.h.pointerLock(locked);

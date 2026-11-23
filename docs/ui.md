@@ -161,4 +161,4 @@ Rules:
 
 ## Platform
 
-Desktop browsers (Chrome, Firefox, Edge, Safari) with mouse and keyboard. Pointer lock is required. On touch-only devices, show a "Desktop only" message.
+Desktop browsers (Chrome, Firefox, Edge, Safari) with mouse and keyboard. Pointer lock is required. On touch-only devices, show a "Desktop only" message. Browsers do not let a page cancel `Ctrl+W` (an easy slip with `W` + crouch on `Ctrl`), so while the pointer is locked, and for 2 s after it is released, the page arms a `beforeunload` "Leave site?" prompt (`apps/web/src/lib/input/input.ts`). Closing the tab from the Esc menu or after 2 s unlocked asks nothing.
