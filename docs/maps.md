@@ -36,7 +36,7 @@ type Zone =
 
 Helper functions (`ramp()`, `platform()`, `wall()`, `blockRow()`) keep map files readable. At load, each brush becomes collision planes plus a Three.js mesh. Materials are procedural (shader noise, triplanar mapping), so there are no texture files.
 
-Zones render as CS-style glowing outlines: start green, end red, stages and checkpoints blue. Only race modes draw start/stage/checkpoint outlines; other modes (Zombies) use checkpoints internally and draw only the end zone.
+Zones render as CS-style glowing outlines: start green, end red, stages and checkpoints blue. Only race modes draw start/stage/checkpoint outlines; other modes (Zombie Run) use checkpoints internally and draw only the end zone.
 
 ### Glass
 
@@ -109,9 +109,9 @@ Theme: derelict orbital station at night, one neon colour per module. Each stage
 
 Theme: desert canyon at golden hour. Checkpoints are splits; any fall resets to the start. Nine hard moments: a narrow slot in a canyon fin, low arches over a bend, a 450° sinkhole spiral, a glass floor hole onto a ramp below it, hoodoo pillars to strafe around, two glass tubes over switch transfers (one switch ramp is glass), a far speed window off a wave, an up-ramp into a high window followed by a 130° air turn, and arches over the final descent.
 
-## zombies_lowtide — zombies, linear
+## zombies_lowtide — Zombie Run, linear
 
-Theme: an abandoned seaside town at dusk in sea fog. Beach car park (start) → main street with side pockets and a barricade → narrow alley → promenade and a bridge over a creek → cannery yard → harbour road → pier with the evac boat. Five gates split it into six zones, each with a checkpoint and an unlock area before its gate. Zombies maps add `zombies: { path, spawnZones, gates }` (`ZombieRoute` in `maps/types.ts`): the waypoint route the AI follows, zombie spawn areas tagged with the route node they feed, and the gates (solid boxes outside `brushes`, an `unlock` area and a route `node`). Map tests check spawns, checkpoint respawns, waypoints and spawn areas stand free, and walk the whole route with the real movement at the slowest weapon speed; shared tests send a zombie from every spawn area to the evac point.
+Theme: an abandoned seaside town at dusk in sea fog. Beach car park (start) → main street with side pockets and a barricade → narrow alley → promenade and a bridge over a creek → cannery yard → harbour road → pier with the evac boat. Five gates split it into six zones, each with a checkpoint and an unlock area before its gate. Zombie Run maps add `zombies: { path, spawnZones, gates }` (`ZombieRoute` in `maps/types.ts`): the waypoint route the AI follows, zombie spawn areas tagged with the route node they feed, and the gates (solid boxes outside `brushes`, an `unlock` area and a route `node`). Map tests check spawns, checkpoint respawns, waypoints and spawn areas stand free, and walk the whole route with the real movement at the slowest weapon speed; shared tests send a zombie from every spawn area to the evac point.
 
 ## hns_lido / hns_lido_m — hide and seek, open ("Lido Bay", Large / Medium)
 

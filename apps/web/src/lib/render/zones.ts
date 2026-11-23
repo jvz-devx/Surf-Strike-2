@@ -59,7 +59,7 @@ export function buildZoneMeshes(map: MapDef, shared: SharedUniforms): ZoneMeshes
 	const byColor = new Map<number, { lines: number[]; walls: number[]; h: number[] }>();
 
 	// Race zones (start, stages, checkpoints) only mean something in race modes;
-	// other modes (e.g. Zombies) use checkpoints internally, so only their end zone is drawn.
+	// other modes (e.g. Zombie Run) use checkpoints internally, so only their end zone is drawn.
 	const race = isRaceMode(map.kind);
 	for (const z of map.zones) {
 		if (!race && z.type !== 'end') continue;

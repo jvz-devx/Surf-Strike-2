@@ -106,7 +106,7 @@ export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.free
 	},
 	zombies: {
 		id: 'zombies',
-		label: 'Zombies',
+		label: 'Zombie Run',
 		description: 'Co-op: follow the route to the evac point and hold back the zombie horde.',
 		family: 'coop',
 		cvars: ZOMBIES_CVARS,

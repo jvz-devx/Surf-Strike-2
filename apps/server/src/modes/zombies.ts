@@ -1,5 +1,5 @@
 /**
- * Zombies gamemode (docs/modes.md#zombies). Server-authoritative: the shared
+ * Zombie Run gamemode, id `zombies` (docs/modes.md#zombies). Server-authoritative: the shared
  * `ZombiesGame` (round flow, zombie AI on the real movement code, weapons,
  * lag-compensated hits, player health) runs here on the latest state packets;
  * clients send `fire`/`reload`/`loadout` and display the results.
@@ -65,7 +65,7 @@ export class ZombiesMode implements ServerMode {
 		this.host.send(p, this.stateMessage());
 		this.host.systemTo(
 			p,
-			`Zombies: open the gates zone by zone (half the survivors in the glowing area starts a 30 s countdown) and reach the evac boat. If you go down you turn into a zombie. Weapon (while the loadout is open): ${LOADOUT_HINT}. R reloads.`
+			`Zombie Run: open the gates zone by zone (half the survivors in the glowing area starts a 30 s countdown) and reach the evac boat. If you go down you turn into a zombie. Weapon (while the loadout is open): ${LOADOUT_HINT}. R reloads.`
 		);
 	}
 
@@ -110,7 +110,7 @@ export class ZombiesMode implements ServerMode {
 	command(p: ModePlayer, cmd: Command): boolean {
 		if (cmd.cmd !== 'top' && cmd.cmd !== 'pb') return false;
 		const v = this.game.playerView(p.id);
-		this.host.systemTo(p, `No leaderboard in zombies. This round: ${v?.kills ?? 0} kills, ${v?.deaths ?? 0} downs.`);
+		this.host.systemTo(p, `No leaderboard in Zombie Run. This round: ${v?.kills ?? 0} kills, ${v?.deaths ?? 0} downs.`);
 		return true;
 	}
 

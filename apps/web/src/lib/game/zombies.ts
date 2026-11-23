@@ -228,7 +228,7 @@ export class ZombiesClient {
 			this.feed = [];
 			this.startSolo(now);
 			this.host.notice('Round restarted.');
-		} else this.host.notice('Zombies rounds restart by themselves after a win or a wipe (use !rtv to change map).');
+		} else this.host.notice('Zombie Run rounds restart by themselves after a win or a wipe (use !rtv to change map).');
 	}
 
 	// ---------------------------------------------------------------------

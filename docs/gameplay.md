@@ -1,6 +1,6 @@
 # Gameplay
 
-This page covers the race modes (surf, bhop). Tag, zombies and hide and seek have their own rules: see [modes.md](modes.md#tag), [modes.md](modes.md#zombies) and [modes.md](modes.md#hide-and-seek). Chat, spectating, map rotation, solo mode and the lobby apply to every mode.
+This page covers the race modes (surf, bhop). Tag, Zombie Run and hide and seek have their own rules: see [modes.md](modes.md#tag), [modes.md](modes.md#zombies) and [modes.md](modes.md#hide-and-seek). Chat, spectating, map rotation, solo mode and the lobby apply to every mode.
 
 ## Runs and timer
 
@@ -87,7 +87,7 @@ Hold `Tab`. Columns: name, map rank, PB, status (`Start zone`, `Stage 3`, `Runni
 
 - Each map runs for 15:00.
 - At 0:30 left, a 20-second vote opens for everyone.
-- Options: up to 6 maps, picked at random from the enabled maps other than the current one: 2 surf, 2 bhop, 1 tag, 1 zombies. A category with too few maps leaves free slots, filled with random maps of the other categories, so there are still 6 distinct maps (fewer only when fewer maps are enabled). They are listed by category (surf, bhop, tag, zombies), each labelled with it ("Surf · Kessler", "Zombies · …"), in the panel and in the chat lines. The timed vote adds "Extend 10 min" as the last option (option 7 with 6 maps). Keys `1`–`7` vote while the vote is open, instead of their binds (no weapon switch); changing a vote is allowed until it closes.
+- Options: up to 6 maps, picked at random from the enabled maps other than the current one: 2 surf, 2 bhop, 1 tag, 1 Zombie Run. A category with too few maps leaves free slots, filled with random maps of the other categories, so there are still 6 distinct maps (fewer only when fewer maps are enabled). They are listed by category (surf, bhop, tag, Zombie Run), each labelled with it ("Surf · Kessler", "Zombie Run · …"), in the panel and in the chat lines. The timed vote adds "Extend 10 min" as the last option (option 7 with 6 maps). Keys `1`–`7` vote while the vote is open, instead of their binds (no weapon switch); changing a vote is allowed until it closes.
 - Most votes wins. Ties are broken at random. No votes at all: a random map from the options.
 - "Extend" adds 10:00 to the current map. At most 2 extends per map; after that, the option is not offered.
 - **RTV request** (rock the vote): `!rtv` (or console `rtv`), or picking a map in Esc › Change map while others are online, asks everyone "<name> wants to vote for a new map (<map>)" in a modal at the top of the screen ([ui.md](ui.md#rtv-request)). It is open for 20 s. The initiator votes yes; every other non-spectating player presses `1` = yes or `2` = no (changing the answer is allowed). Spectators see it but cannot vote or start one.

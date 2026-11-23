@@ -101,9 +101,9 @@ Each client simulates its own movement with zero input lag. The server trusts po
 | C→S | `getGhost { map }` (race maps, after `welcome`/`mapChange`) | JSON |
 | C→S | Hide and seek: `knife { origin, dir }` (seeker swing; validated and lag-compensated against the hiders' position history, [modes.md](modes.md#hide-and-seek)) | JSON |
 | S→C | Hide and seek: `modeState { mode: 'hns', phase, round, timeLeft, seekers[], hiders[], winner, players[{ id, role, finds, survived, frozen }] }` (on change + every 1 s), `hns { ev }` (`spawn` teleport+freeze to that player, `swing` to the others; `waiting`, `starting`, `roundStart`, `release`, `found`, `newSeeker`, `lastHider`, `warn`, `end` to everyone) | JSON |
-| C→S | Zombies: `fire { weapon, origin, dir, tick }`, `reload {}`, `loadout { weapon }` (validated and lag-compensated by the server, [modes.md](modes.md#zombies)) | JSON |
-| S→C | Zombies: `modeState { mode: 'zombies', phase, gates[], players[{ team, hp, ... }], ... }`, `zm { ev }` (spawn, hit, kill, shot, hurt, zhurt, down, checkpoint, gate, ammo, end) | JSON |
-| S→C | `BIN_ZOMBIES` (type 4): `u8 4, u8 version, u32 sim tick, u8 count`, 11 bytes per zombie (id, position ·2 as i16, yaw, flags, hp); 32 Hz on zombies maps, droppable under backlog | binary |
+| C→S | Zombie Run: `fire { weapon, origin, dir, tick }`, `reload {}`, `loadout { weapon }` (validated and lag-compensated by the server, [modes.md](modes.md#zombies)) | JSON |
+| S→C | Zombie Run: `modeState { mode: 'zombies', phase, gates[], players[{ team, hp, ... }], ... }`, `zm { ev }` (spawn, hit, kill, shot, hurt, zhurt, down, checkpoint, gate, ammo, end) | JSON |
+| S→C | `BIN_ZOMBIES` (type 4): `u8 4, u8 version, u32 sim tick, u8 count`, 11 bytes per zombie (id, position ·2 as i16, yaw, flags, hp); 32 Hz on Zombie Run maps, droppable under backlog | binary |
 | S→C | `BIN_GHOST` (type 3): `u8 3, u8 version, u8 flags (bit 0 = has ghost), u8 mapLen, map, u8 nameLen, name, u32 ticks, u32 samples`, then the deflate-raw track. Reply to `getGhost` ("none" when there is no ghost or `map` is not the current map), and pushed to everyone on a new record ghost ([gameplay.md](gameplay.md#ghosts)) | binary |
 
 ## Accounts

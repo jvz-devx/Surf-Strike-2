@@ -42,7 +42,7 @@ In solo mode (no server), `?map=<id>` opens that map directly, e.g. `http://loca
 | [architecture.md](architecture.md) | Hosting, Cloudflare tunnel, server discovery, netcode, repo layout |
 | [physics.md](physics.md) | Source movement port, cvars, collision and traces |
 | [gameplay.md](gameplay.md) | Timer, zones, stages, leaderboards, chat, spectate, map vote, lobby, accounts |
-| [modes.md](modes.md) | Gamemode framework (surf, bhop, tag, zombies, hide and seek), how to add a mode, per-mode rules |
+| [modes.md](modes.md) | Gamemode framework (surf, bhop, tag, Zombie Run, hide and seek), how to add a mode, per-mode rules |
 | [maps.md](maps.md) | Map format and the four map designs |
 | [ui.md](ui.md) | HUD, console, cvars, Esc settings, account panel, audio |
 | [economy.md](economy.md) | Points, coins, payouts per mode, abuse detection (design) |
@@ -60,15 +60,15 @@ In solo mode (no server), `?map=<id>` opens that map directly, e.g. `http://loca
 | Netcode | Client simulates its own movement; server validates runs and relays state |
 | Physics | CS2 movement: 64 tick with subtick input on a Source `CGameMovement` port, SharpTimer CS2 surf/bhop cvars |
 | Rendering/collision | Three.js; custom convex-brush AABB traces, no physics engine |
-| Gamemodes | `MapDef.kind` is the gamemode: surf and bhop (race: timer, zones, PBs), tag (server-run rounds, score = time not IT) zombies (co-op escape with weapons against AI zombies, gates, turned players fight for the zombies) and hide and seek (45 s blindfolded seekers, 4:00 knife hunt, found hiders become seekers, bhop capped at 300 u/s); rotation mixes all modes ([modes.md](modes.md)) |
+| Gamemodes | `MapDef.kind` is the gamemode: surf and bhop (race: timer, zones, PBs), tag (server-run rounds, score = time not IT) Zombie Run (co-op escape with weapons against AI zombies, gates, turned players fight for the zombies) and hide and seek (45 s blindfolded seekers, 4:00 knife hunt, found hiders become seekers, bhop capped at 300 u/s); rotation mixes all modes ([modes.md](modes.md)) |
 | Features | Timer, zones, stages, PBs, top-10 leaderboard, chat, Tab scoreboard, spectate |
-| Not included | Practice `!saveloc`/`!tele`, weapons outside zombies (and the hide and seek knife), anti-cheat, mobile |
+| Not included | Practice `!saveloc`/`!tele`, weapons outside Zombie Run (and the hide and seek knife), anti-cheat, mobile |
 | Identity | Simple accounts (username + password, no email/verification) in the server's SQLite; only accounts' runs reach the leaderboard. Guests pick a name and play everything without saving runs |
 | Settings | Developer console (`~`) plus an Esc menu (Change map, Settings, Account) |
 | Admin | Esc › Admin for accounts in `ADMIN_USERNAMES` (default `tim`; by account, never display name): enable/disable maps, force map change, ban/unban (account, guest key + IP, close 4009) |
 | HUD | CS2-era layout and feel, original art, open fonts |
 | Map vote | 15:00 per map; vote at 0:30 left; 3 other maps + "Extend 10 min"; `!rtv` at 60% |
-| Maps | original: surf (aurora, ember, skyrend, hadal: all rated easy), bhop (meadow easy, circuit / reliquary / rimefall hard), tag (quayside), zombies (lowtide); themed, stylised |
+| Maps | original: surf (aurora, ember, skyrend, hadal: all rated easy), bhop (meadow easy, circuit / reliquary / rimefall hard), tag (quayside), Zombie Run (lowtide); themed, stylised |
 | Lobby | 32 players max, no player collision, low-poly humanoids with name tags |
 | Platform | Desktop browsers, mouse + keyboard, pointer lock |
 | Audio | Real CC0 field/foley recordings (Freesound), one measured hall IR; no synthesised sound ([ui.md](ui.md#audio), [CREDITS.md](../CREDITS.md)) |

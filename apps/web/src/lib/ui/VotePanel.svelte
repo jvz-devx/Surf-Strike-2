@@ -40,7 +40,7 @@
 
 <style>
 	.vote {
-		/* Fits 7 rows: 6 maps ("Zombies · Title") plus extend. */
+		/* Fits 7 rows: 6 maps ("Zombie Run · Title") plus extend. */
 		width: calc(270px * var(--hud-scale));
 		max-height: calc(100vh - 120px);
 		padding: 8px 10px 9px;

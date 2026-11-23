@@ -41,7 +41,15 @@ export const ZM_COUNTDOWN_SECS = 8;
 export const ZM_END_SECS = 7;
 /** A round that takes longer than this is lost. */
 export const ZM_ROUND_MAX_SECS = 900;
-export const ZM_MAX_ZOMBIES = 40;
+/** Hard cap on AI zombies alive at once, whatever the player count (server tick, bandwidth, client draw calls). */
+export const ZM_MAX_ZOMBIES = 96;
+/** Alive cap for n living survivors: ZM_CAP_BASE * n^ZM_CAP_EXP. */
+export const ZM_CAP_BASE = 18;
+export const ZM_CAP_EXP = 0.5;
+/** Spawn rate for n living survivors: n^ZM_RATE_EXP per ZM_SPAWN_BASE_MS (faster along the route). */
+export const ZM_SPAWN_BASE_MS = 1500;
+export const ZM_RATE_EXP = 0.85;
+export const ZM_SPAWN_MIN_MS = 50;
 export const ZM_PLAYER_HP = 5;
 /** Zombie run speed, AI and player-zombies (survivors: 195-250 by weapon). */
 export const ZM_ZOMBIE_SPEED = 265;
@@ -81,16 +89,20 @@ const STUCK_LIMIT = 3;
 const GATE_WAIT_DIST = 200;
 const HISTORY_TICKS = Math.ceil(ZM_HISTORY_MS / ZM_STEP_MS);
 
-/** Spawn interval (ms) for `players` living survivors at route progress 0..1. */
-export function zmSpawnInterval(players: number, progress: number): number {
-	const n = Math.max(1, players);
+/**
+ * Spawn interval (ms) for `survivors` living survivors at route progress 0..1.
+ * Sub-linear: twice the survivors meet about 1.8x the zombies, so each one
+ * faces slightly fewer.
+ */
+export function zmSpawnInterval(survivors: number, progress: number): number {
+	const n = Math.max(1, survivors);
 	const p = Math.max(0, Math.min(1, progress));
-	return Math.max(200, (1500 / (1 + 0.6 * (n - 1))) * (1 - 0.35 * p));
+	return Math.max(ZM_SPAWN_MIN_MS, (ZM_SPAWN_BASE_MS / n ** ZM_RATE_EXP) * (1 - 0.35 * p));
 }
 
-/** Concurrent AI zombie cap for `players` players. */
-export function zmZombieCap(players: number, max = ZM_MAX_ZOMBIES): number {
-	return Math.min(max, 12 + 6 * Math.max(1, players));
+/** Concurrent AI zombie cap for `survivors` living survivors (sub-linear, at most `max`). */
+export function zmZombieCap(survivors: number, max = ZM_MAX_ZOMBIES): number {
+	return Math.min(max, Math.round(ZM_CAP_BASE * Math.max(1, survivors) ** ZM_CAP_EXP));
 }
 
 /** Speed factor for a zombie with `stacks` hit slows. */
@@ -766,7 +778,7 @@ export class ZombiesGame {
 		this.phase = 'playing';
 		this.round++;
 		this.startedAt = now;
-		this.nextSpawnAt = this.simTime + 1500 * this.spawnScale;
+		this.nextSpawnAt = this.simTime + ZM_SPAWN_BASE_MS * this.spawnScale;
 		this.pending.push({ e: 'phase', phase: 'playing', round: this.round });
 	}
 
@@ -900,7 +912,9 @@ export class ZombiesGame {
 		const alive = this.survivors();
 		const n = Math.max(1, alive.length);
 		const progress = this.path.length > 0 ? this.frontS / this.path.length : 0;
-		this.nextSpawnAt = this.simTime + zmSpawnInterval(n, progress) * this.spawnScale;
+		// Carry the remainder: intervals get down to a few sim steps with many survivors.
+		const due = Math.max(this.nextSpawnAt, this.simTime - ZM_STEP_MS);
+		this.nextSpawnAt = due + zmSpawnInterval(n, progress) * this.spawnScale;
 		if (this.zombies.size >= zmZombieCap(n, this.maxZombies)) return;
 		const positions = alive.filter((p) => p.pos).map((p) => p.pos!);
 		const zones = eligibleSpawnZones(this.map.zombies!.spawnZones, this.path.segmentAt(this.frontS), positions, this.reachableNode());

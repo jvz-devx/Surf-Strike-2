@@ -22,7 +22,7 @@ Progress (2026-11-21): milestones 0–10 implemented with unit tests; 11 (produc
 ## Out of scope
 
 - Practice mode (`!saveloc`, `!tele`)
-- Weapons and viewmodels outside the zombies mode (zombies has a prototype set, [modes.md](modes.md#zombies))
+- Weapons and viewmodels outside Zombie Run (which has a prototype set, [modes.md](modes.md#zombies))
 - Anti-cheat beyond run validation
 - Mobile and touch controls
 - A map editor or loading Source `.bsp`/`.vmf` files

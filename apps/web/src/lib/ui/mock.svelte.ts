@@ -95,7 +95,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 						'Bhop · Meadow',
 						'Bhop · Quarry',
 						'Tag · Courtyard',
-						'Zombies · Foundry',
+						'Zombie Run · Foundry',
 						'Extend 10 min'
 					],
 					counts: [3, 5, 1, 0, 2, 1, 2],

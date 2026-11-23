@@ -101,7 +101,7 @@ describe('vote labels', () => {
 		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Quay', kind: 'tag' }))).toBe('Tag · Quay');
 		expect(voteLabel({ kind: 'map', mapId: 'hns_lido' })).toBe('Hide and Seek · Lido Bay (Large)');
 		expect(voteLabel({ kind: 'map', mapId: 'hns_lido_m' })).toBe('Hide and Seek · Lido Bay (Medium)');
-		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Lab', kind: 'zombies' }))).toBe('Zombies · Lab');
+		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Lab', kind: 'zombies' }))).toBe('Zombie Run · Lab');
 		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Outpost', kind: 'infected' }))).toBe('Infected · Outpost');
 		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => undefined)).toBe('x');
 	});

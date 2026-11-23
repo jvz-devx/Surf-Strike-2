@@ -33,11 +33,13 @@ A small CS2-style vote notice (like the kick or pause vote) at the top centre, u
 - Spectators see it with "Spectating: you cannot vote".
 - When it closes it shows "Passed: map vote starting" (green) or "Declined" (red) for 2.5 s; a passed request is replaced by the vote panel at once.
 
-Key routing (`apps/web/src/lib/game/vote.ts` `routeVoteKey`, ahead of binds): map vote open: `1`–`7` vote; else RTV request open: `1` yes, `2` no; else the key's bind runs (for example zombies weapon slots).
+Key routing (`apps/web/src/lib/game/vote.ts` `routeVoteKey`, ahead of binds): map vote open: `1`–`7` vote; else RTV request open: `1` yes, `2` no; else the key's bind runs (for example Zombie Run weapon slots).
 
-## Zombies HUD
+<a id="zombies-hud"></a>
 
-Shown on zombies maps (`ZombiesHud.svelte`, [modes.md](modes.md#zombies)): a round banner under the map name (countdown; Survivor/Zombie, round clock, zone, zombies alive, your kills / team kills; result summary), route progress bar and the gate line ("Gate 2/5: get half the survivors into the green area" or "Gate 2/5 opens in 23 s"), short flash banners (checkpoint, gate, turned), kill feed top right, health (5 pips; a bar as a zombie) and weapon / ammo / reload bar bottom right, a loadout list (keys 1-4) while it is open, hit markers (white, yellow for headshots, red for kills), a red vignette when hit, and the sniper scope overlay. Binds in zombies: mouse1 fire, mouse2 scope, R reload, 1-4 weapon (map vote while one is open).
+## Zombie Run HUD
+
+Shown on Zombie Run maps (`ZombiesHud.svelte`, [modes.md](modes.md#zombies)): a round banner under the map name (countdown; Survivor/Zombie, round clock, zone, zombies alive, your kills / team kills; result summary), route progress bar and the gate line ("Gate 2/5: get half the survivors into the green area" or "Gate 2/5 opens in 23 s"), short flash banners (checkpoint, gate, turned), kill feed top right, health (5 pips; a bar as a zombie) and weapon / ammo / reload bar bottom right, a loadout list (keys 1-4) while it is open, hit markers (white, yellow for headshots, red for kills), a red vignette when hit, and the sniper scope overlay. Binds in Zombie Run: mouse1 fire, mouse2 scope, R reload, 1-4 weapon (map vote while one is open).
 
 ## Hide and seek HUD
 
@@ -46,7 +48,7 @@ Shown on hide and seek maps (`HnsHud.svelte`, [modes.md](modes.md#hide-and-seek)
 - **Top** (under the map name): a role banner (blue HIDER / red SEEKER) with the phase text ("Hide! Seekers released in", "Find them", "Stay hidden", "Next round in"), the phase countdown (mm:ss while seeking, red at 30 s or less), hiders left and your finds as a seeker; the seeker names; the round summary while ended ("Hiders win! Survived: …" / "Seekers win!", top seeker); short flash banners ("You were found by Alice — you are now a seeker", "You found Bob!", "Bob is the last hider", "30 seconds left"); a "Frozen 3" line during the post-find freeze. Waiting / offline: "Waiting for players — needs 2+".
 - **Screen**: the blindfold for seekers during the hiding phase (opaque black over the game with "You are a seeker", "Blindfolded while the hiders hide" and a large countdown; chat, the banner and the scoreboard stay on top; the crosshair is hidden), and the kill feed top right ("Alice found Bob", your own finds outlined).
 
-Seekers hold a knife viewmodel (the zombies knife, swing on Mouse1); hiders have none. Remote seekers are drawn red with a `SEEKER · name` tag. Name tags show only within 600 units and in line of sight, and never hiders' tags to a seeker. `!r` is refused during a round.
+Seekers hold a knife viewmodel (the Zombie Run knife, swing on Mouse1); hiders have none. Remote seekers are drawn red with a `SEEKER · name` tag. Name tags show only within 600 units and in line of sight, and never hiders' tags to a seeker. `!r` is refused during a round.
 
 ## Account panel
 
@@ -126,9 +128,9 @@ The race ghost ([gameplay.md](gameplay.md#ghosts)) is the remote-player humanoid
 | `Ctrl` | Crouch |
 | `Y` | Chat |
 | `Tab` | Scoreboard |
-| `1`–`8` | Map vote (while open); `1` / `2` = yes / no on an RTV request; else their binds (Zombies weapons `1`–`4`; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B.) |
+| `1`–`8` | Map vote (while open); `1` / `2` = yes / no on an RTV request; else their binds (Zombie Run weapons `1`–`4`; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B.) |
 | `M` | Toggle spectate |
-| `R` | Restart run (`!r`); Zombies / Infected reload |
+| `R` | Restart run (`!r`); Zombie Run / Infected reload |
 | `E` | Infected: plant a respawn beacon (`beacon`) |
 | `N` | Infected: call an earned M.O.A.B. (`moab`) |
 | `` ` `` / `~` | Console |

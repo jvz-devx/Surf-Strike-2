@@ -14,6 +14,8 @@ import {
 	ZM_ZOMBIE_SPEED,
 	zmEventRoute,
 	zmSlowFactor,
+	ZM_MAX_ZOMBIES,
+	ZM_SPAWN_MIN_MS,
 	zmSpawnInterval,
 	zmZombieCap,
 	ZombiesGame,
@@ -156,13 +158,40 @@ describe('route and spawner', () => {
 		expect(p.pointAt(-5)).toEqual({ x: 0, y: 0, z: 0 });
 	});
 
-	it('spawn rate scales with players and progress; the cap with players', () => {
-		expect(zmSpawnInterval(2, 0)).toBeLessThan(zmSpawnInterval(1, 0));
+	it('spawn rate and alive cap by survivors (the table in docs/modes.md)', () => {
+		const rows = [1, 2, 4, 8, 16, 32].map((n) => [n, zmZombieCap(n), +(60_000 / zmSpawnInterval(n, 0)).toFixed(0), +(60_000 / zmSpawnInterval(n, 1)).toFixed(0)]);
+		expect(rows).toEqual([
+			[1, 18, 40, 62],
+			[2, 25, 72, 111],
+			[4, 36, 130, 200],
+			[8, 51, 234, 360],
+			[16, 72, 422, 650],
+			[32, 96, 761, 1171]
+		]);
+	});
+
+	it('spawn rate and cap: more survivors always meet more zombies, sub-linearly, with hard limits', () => {
+		for (let n = 1; n < 32; n++) {
+			for (const p of [0, 0.5, 1]) {
+				const a = zmSpawnInterval(n, p);
+				const b = zmSpawnInterval(n + 1, p);
+				expect(b).toBeLessThan(a); // more zombies in total ...
+				expect(b * (n + 1)).toBeGreaterThan(a * n); // ... fewer per survivor
+			}
+			expect(zmZombieCap(n + 1)).toBeGreaterThanOrEqual(zmZombieCap(n));
+			expect(zmZombieCap(n + 1) / (n + 1)).toBeLessThan(zmZombieCap(n) / n);
+		}
+		// Doubling the survivors is clearly busier all the way up to a full lobby.
+		for (const n of [1, 2, 4, 8, 16]) {
+			expect(zmSpawnInterval(n, 0) / zmSpawnInterval(2 * n, 0)).toBeGreaterThan(1.7);
+			expect(zmZombieCap(2 * n) / zmZombieCap(n)).toBeGreaterThan(1.3);
+		}
 		expect(zmSpawnInterval(1, 1)).toBeLessThan(zmSpawnInterval(1, 0));
-		expect(zmSpawnInterval(32, 1)).toBeGreaterThanOrEqual(200);
-		expect(zmZombieCap(1)).toBe(18);
-		expect(zmZombieCap(2)).toBeGreaterThan(zmZombieCap(1));
-		expect(zmZombieCap(32)).toBe(40);
+		expect(zmSpawnInterval(1000, 1)).toBe(ZM_SPAWN_MIN_MS);
+		expect(zmZombieCap(1000)).toBe(ZM_MAX_ZOMBIES);
+		expect(ZM_MAX_ZOMBIES).toBeLessThanOrEqual(255); // BIN_ZOMBIES count is a u8
+		expect(zmZombieCap(32, 10)).toBe(10);
+		expect([zmSpawnInterval(0, 0), zmZombieCap(0)]).toEqual([zmSpawnInterval(1, 0), zmZombieCap(1)]);
 	});
 
 	it('eligible spawn areas: near the front, away from players', () => {
@@ -438,6 +467,63 @@ describe('gates (fake clock)', () => {
 		game.setPlayerPos(1, { x: 200, y: 0, z: 0, ducked: false });
 		advance(3000);
 		expect(game.zombies.size).toBe(0); // the only spawn area is past the gate
+	});
+});
+
+describe('zombie count by living survivors (fake clock)', () => {
+	function start(ids: number[], opts: Partial<ZombiesGameOptions> = {}) {
+		const g = newGame(testMap(), { gatesOpen: true, ...opts });
+		g.game.syncPlayers(ids, g.clock.now);
+		for (const id of ids) g.game.setPlayerPos(id, { x: 200, y: 0, z: 0, ducked: false });
+		g.advance(1050);
+		expect(g.game.phase).toBe('playing');
+		return g;
+	}
+	/** Take a survivor out of the round (turned player-zombie). */
+	const turn = (game: ZombiesGame, id: number) => {
+		(game as unknown as { players: Map<number, { team: string }> }).players.get(id)!.team = 'zombie';
+	};
+
+	it('spawns at the rate of the living survivors', () => {
+		const spawnedIn2s = (n: number) => {
+			const { game, advance } = start(Array.from({ length: n }, (_, i) => i + 1), { spawnIntervalScale: 1 });
+			advance(1500); // first spawn
+			const from = game.zombies.size;
+			expect(from).toBeGreaterThan(0);
+			advance(2000);
+			return game.zombies.size - from;
+		};
+		const got = [1, 4, 16, 32].map(spawnedIn2s);
+		expect(got[0]).toBe(1);
+		for (const [i, n] of [1, 4, 16, 32].entries()) expect(Math.abs(got[i]! - 2000 / zmSpawnInterval(n, 0.07))).toBeLessThan(1.5);
+	});
+
+	it('the alive cap follows survivors who turn, join or leave mid-round, not everyone connected', () => {
+		const { game, advance, clock } = start([1, 2, 3, 4], { spawnIntervalScale: 0.001 });
+		advance(1500);
+		expect(game.zombies.size).toBe(zmZombieCap(4));
+		for (const id of [2, 3, 4]) turn(game, id);
+		for (const id of [...game.zombies.keys()].slice(0, 30)) game.zombies.delete(id);
+		advance(1000);
+		expect(game.zombies.size).toBe(zmZombieCap(1));
+		// A late joiner is a survivor.
+		game.syncPlayers([1, 2, 3, 4, 5], clock.now);
+		game.setPlayerPos(5, { x: 200, y: 0, z: 0, ducked: false });
+		advance(400);
+		expect(game.zombies.size).toBe(zmZombieCap(2));
+		// Fewer survivors: nothing is removed, but the spawner waits until it is below the new cap.
+		game.syncPlayers([1, 2, 3, 4], clock.now);
+		advance(400);
+		expect(game.zombies.size).toBe(zmZombieCap(2));
+		game.zombies.delete([...game.zombies.keys()][0]!);
+		advance(400);
+		expect(game.zombies.size).toBe(zmZombieCap(2) - 1);
+	});
+
+	it('zombie HP and the gate rule do not depend on the survivor count', () => {
+		const hp = [1, 32].map((n) => start(Array.from({ length: n }, (_, i) => i + 1)).game.spawnZombie({ x: 1000, y: 0, z: 0.25 })!.hp);
+		expect(hp).toEqual([ZOMBIE_HP, ZOMBIE_HP]);
+		expect([unlockReached(1, 2), unlockReached(16, 32), unlockReached(15, 32)]).toEqual([true, true, false]);
 	});
 });
 

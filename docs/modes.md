@@ -7,7 +7,7 @@ Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old na
 | `surf` | race | Timer, start/end zones, stages, PBs, leaderboard ([gameplay.md](gameplay.md)) | `SURF_CVARS` | 1 | Rank, PB, Status, Ping |
 | `bhop` | race | Same as surf | `BHOP_CVARS` | 1 | Rank, PB, Status, Ping |
 | `tag` | tag | Rounds of tag, see [Tag](#tag) | `TAG_CVARS` | 2 | Score, Status, Ping |
-| `zombies` | coop | Co-op escape with weapons against AI zombies, see [Zombies](#zombies) | `ZOMBIES_CVARS` | 1 | Kills, Turned, Status, Ping |
+| `zombies` ("Zombie Run") | coop | Co-op escape with weapons against AI zombies, see [Zombie Run](#zombies) | `ZOMBIES_CVARS` | 1 | Kills, Turned, Status, Ping |
 | `infected` | infected | Infected with throwing knives, see [Infected](#infected) | `INFECTED_CVARS` | 2 | Score, Kills, Deaths, Status, Ping |
 | `hns` | hns | Hide and seek with knives; found hiders become seekers, see [Hide and seek](#hide-and-seek) | `HNS_CVARS` | 2 | Role, Finds, Survived, Ping |
 
@@ -84,9 +84,11 @@ Server-authoritative Infected. The shared `InfectedGame` class (`packages/shared
 - **HUD.** Survivors see three slot pills (`[1] primary · [2] Pistol · [3] Knife`), a perk track (Hardline, then 1 Sleight, 3 Scavenger, 5 Steady Aim, 7 Specialist lit by the streak, with the streak count and progress to the M.O.A.B.), a perk-unlock toast, and a pulsing gold `M.O.A.B. ready · N Call` badge. A called M.O.A.B. shows a red-amber `☢ M.O.A.B. inbound · 9.3s · caller` banner under the round header for everyone; the detonation flashes the screen white to amber over 2.4 s. Sounds reuse the real zone bell (call, detonation) and record chime (perk, ready); nothing is synthesised.
 - **Physics & Maps.** Uses `INFECTED_CVARS` (`ZOMBIES_CVARS` run-and-gun profile). Maps (`kind: 'infected'`, `layout: 'open'`): `infected_outpost` ("Outpost"), `infected_terminal` ("Terminal"), and `infected_foundry` ("Foundry").
 
-## Zombies
+<a id="zombies"></a>
 
-Prototype co-op mode (map: `zombies_lowtide`). Server-authoritative online; offline the client runs the same shared `ZombiesGame` locally, so it is playable solo. Code: `packages/shared/src/modes/zombies/` (`weapons.ts`, `hitbox.ts`, `path.ts`, `gates.ts`, `game.ts`, `net.ts`, tests), `apps/server/src/modes/zombies.ts`, client `apps/web/src/lib/game/zombies.ts`, `render/zombies.ts`, `ui/ZombiesHud.svelte`.
+## Zombie Run
+
+Mode id `zombies` (family `coop`), label "Zombie Run" (the id, map ids, protocol fields and `ZOMBIES_CVARS` keep the old name). Prototype co-op mode (map: `zombies_lowtide`). Server-authoritative online; offline the client runs the same shared `ZombiesGame` locally, so it is playable solo. Code: `packages/shared/src/modes/zombies/` (`weapons.ts`, `hitbox.ts`, `path.ts`, `gates.ts`, `game.ts`, `net.ts`, tests), `apps/server/src/modes/zombies.ts`, client `apps/web/src/lib/game/zombies.ts`, `render/zombies.ts`, `ui/ZombiesHud.svelte`.
 
 ### Rules
 
@@ -99,7 +101,7 @@ Prototype co-op mode (map: `zombies_lowtide`). Server-authoritative online; offl
 
 ### Weapons
 
-One weapon per life, picked with **1-4** while the loadout window is open (countdown, and 15 s after a (re)spawn); a map vote keeps 1-4 while it is open. Mouse1 fires (`+attack`), **R reloads** (in zombies only; `!r` restarts the round in solo, online rounds restart by themselves), mouse2 toggles the sniper scope. Damage is in zombie HP (8); **any headshot kills**. Movement speed is the weapon's (CS-style `sv_maxspeed`).
+One weapon per life, picked with **1-4** while the loadout window is open (countdown, and 15 s after a (re)spawn); a map vote keeps 1-4 while it is open. Mouse1 fires (`+attack`), **R reloads** (in Zombie Run only; `!r` restarts the round in solo, online rounds restart by themselves), mouse2 toggles the sniper scope. Damage is in zombie HP (8); **any headshot kills**. Movement speed is the weapon's (CS-style `sv_maxspeed`).
 
 | Key | Weapon | Body hits to kill | Move speed | Fire | Magazine / reserve | Reload | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -115,8 +117,20 @@ Hits slow a zombie for 0.6 s (×0.6, stacking to ×0.5 and ×0.42) and push it b
 - **Bodies.** Each zombie is a player hull moved by the real `playerMove` (gravity, steps, collision with the map and closed gates) at 64 Hz, with its own cvars (no autobhop). Base speed 265 u/s (survivors 195-250). 8 HP. Hitboxes (`hitbox.ts`): a vertical cylinder (radius 13, 0-54) and a head sphere (radius 7.5, 7.5 forward along the yaw, 65 up) matching the hunched model.
 - **Steering.** Target = nearest living survivor (re-picked every 8 ticks). If it is close, or in line of sight within 1100 units, the zombie runs straight at it; otherwise it follows the map's waypoint route (`MapDef.zombies.path`) towards the target's route progress with a 160-unit look-ahead. Separation from nearby zombies (no zombie-zombie collision). Blocked while moving: jump. Zombies at a closed gate wait there; others that make no progress for 6 s are removed (the spawner refills).
 - **Attacks.** Within 50 units: 350 ms wind-up (shown as a lean and glow), then 1 hit if still within 65; 0.9 s cooldown.
-- **Spawner.** Interval `1.5 s / (1 + 0.6·(survivors − 1)) · (1 − 0.35·progress)` (min 0.2 s); cap `min(40, 12 + 6·players)`. It uses spawn areas (`MapDef.zombies.spawnZones`) feeding route nodes from 2 behind to 3 ahead of the front survivor, at least 700 and at most 3200 units from survivors, and never areas behind a closed gate. Zombies 1600 route units behind the last survivor and 1200 from everyone despawn.
-- **Cost.** Measured: 40 chasing zombies cost about 0.19 ms per 64 Hz step on the server (about 12 ms of CPU per second, ~1 % of a core), so the server runs the full 64 Hz simulation (2 steps per 32 Hz mode tick).
+- **Spawner.** Endless while the round runs: one zombie per interval as long as fewer than the cap are alive (no initial group and no total per zone; the first one comes 1.5 s after the round starts). It uses spawn areas (`MapDef.zombies.spawnZones`) feeding route nodes from 2 behind to 3 ahead of the front survivor, at least 700 and at most 3200 units from survivors, and never areas behind a closed gate. Zombies 1600 route units behind the last survivor and 1200 from everyone despawn.
+- **Scaling.** Interval and cap depend on `n`, the **living survivors**. Dead and turned players, spectators and others connected do not count. The number is read again for every spawn, so a survivor who turns, joins or leaves changes both within one interval (at most 1.5 s). When the cap drops below the number alive, nothing is removed; the spawner waits until kills bring it below the new cap. Zombie HP, damage and speed do not depend on `n`, and the gate rule is always 50 % of the living survivors. The formulas are `zmSpawnInterval` and `zmZombieCap` in `game.ts`:
+  - interval = `max(50 ms, 1500 ms / n^0.85 · (1 − 0.35·progress))`
+  - cap = `min(96, round(18 · √n))`
+
+  | Living survivors | Alive cap | Spawns per minute (start of the route to its end) | Per survivor and minute (start) |
+  | --- | --- | --- | --- |
+  | 1 | 18 | 40 to 62 | 40 |
+  | 2 | 25 | 72 to 111 | 36 |
+  | 4 | 36 | 130 to 200 | 33 |
+  | 8 | 51 | 234 to 360 | 29 |
+  | 16 | 72 | 422 to 650 | 26 |
+  | 32 | 96 | 761 to 1171 | 24 |
+- **Cost.** Measured on the real server (Node 24, desktop CPU, simulated WebSocket clients, zombies held at the alive cap and all chasing): the 32 Hz mode tick (2 steps of the 64 Hz simulation, encoding and sending included) takes on average 0.4 ms with 1 survivor and 18 zombies, 1.2 ms with 8 and 51, 1.9 ms with 16 and 72, and 3.5 ms (p99 10 ms) with 32 and 96, of a 31 ms budget (about 18 % of one core for the whole server). `BIN_ZOMBIES` is 34 kB/s per client at 96 zombies (6.6 kB/s at 18).
 
 ### Netcode
 
