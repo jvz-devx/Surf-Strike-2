@@ -4,7 +4,7 @@ Browser-based surf and bhop game with Source-engine movement. One shared lobby, 
 
 Status: design agreed 2026-11-21. Milestones 0–10 implemented 2026-11-21; milestone 11 (deploy, playtest) pending.
 
-Run with Node 24 (`.node-version`, picked up by `fnm`): `pnpm install`, then `pnpm dev` (client), `pnpm server` (dev game server on `:27016`; dev builds connect there, production `./start.sh` uses `:27015`), `pnpm host` (server + tunnel + discovery; for the public Vercel site run `./start.sh` from the repo root, which preflights `.env`, `cloudflared`, deps and the port, then runs `pnpm host`; `--port`, `--db`, `--help`), `pnpm check`, `pnpm test`, `pnpm build`.
+Local dev instance: `./start_test.sh` (web client with hot reload on `:5173` + dev game server on `:27016` with its own `apps/server/data/dev.db`; `--web-port`, `--db`, `--fresh`, `--help`; Ctrl+C stops both). Run with Node 24 (`.node-version`, picked up by `fnm`): `pnpm install`, then `pnpm dev` (client), `pnpm server` (dev game server on `:27016`; dev builds connect there, production `./start.sh` uses `:27015`), `pnpm host` (server + tunnel + discovery; for the public Vercel site run `./start.sh` from the repo root, which preflights `.env`, `cloudflared`, deps and the port, then runs `pnpm host`; `--port`, `--db`, `--help`), `pnpm check`, `pnpm test`, `pnpm build`.
 
 ## Documents
 

@@ -34,7 +34,7 @@ type Zone =
 
 Helper functions (`ramp()`, `platform()`, `wall()`, `blockRow()`) keep map files readable. At load, each brush becomes collision planes plus a Three.js mesh. Materials are procedural (shader noise, triplanar mapping), so there are no texture files.
 
-Zones render as CS-style glowing outlines: start green, end red, stages and checkpoints blue.
+Zones render as CS-style glowing outlines: start green, end red, stages and checkpoints blue. Only race modes draw start/stage/checkpoint outlines; other modes (Zombies) use checkpoints internally and draw only the end zone.
 
 ### Glass
 

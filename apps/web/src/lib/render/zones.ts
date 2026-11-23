@@ -2,7 +2,7 @@
  * CS-style zone outlines: glowing box edges plus faint gradient walls.
  * Start green, end red, stages/checkpoints blue; teleports are invisible.
  */
-import type { MapDef, Zone } from '@surf/shared';
+import { isRaceMode, type MapDef, type Zone } from '@surf/shared';
 import * as THREE from 'three';
 import type { SharedUniforms } from './materials.js';
 
@@ -58,7 +58,11 @@ export function buildZoneMeshes(map: MapDef, shared: SharedUniforms): ZoneMeshes
 	const disposables: Array<{ dispose(): void }> = [];
 	const byColor = new Map<number, { lines: number[]; walls: number[]; h: number[] }>();
 
+	// Race zones (start, stages, checkpoints) only mean something in race modes;
+	// other modes (e.g. Zombies) use checkpoints internally, so only their end zone is drawn.
+	const race = isRaceMode(map.kind);
 	for (const z of map.zones) {
+		if (!race && z.type !== 'end') continue;
 		const color = ZONE_COLORS[z.type];
 		if (color === undefined) continue;
 		let b = byColor.get(color);
