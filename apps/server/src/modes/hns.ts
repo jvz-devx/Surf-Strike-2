@@ -12,7 +12,7 @@ import {
 	FLAG_DUCKED,
 	HNS_MAX_REWIND_MS,
 	HnsGame,
-	mapCvars,
+	HNS_SPEED_LIMIT,
 	overSpeedCap,
 	Status,
 	type HnsGameOptions,
@@ -55,7 +55,6 @@ function clock(secs: number): string {
 export class HnsMode implements ServerMode {
 	readonly id = 'hns' as const;
 	readonly game: HnsGame;
-	private readonly cap: number;
 	/** Last over-cap state per player (ms). */
 	private readonly overCap = new Map<number, number>();
 	private lastSent = -Infinity;
@@ -66,7 +65,6 @@ export class HnsMode implements ServerMode {
 	) {
 		const map = host.map;
 		const world = buildCollisionWorld(map);
-		this.cap = mapCvars(map).sv_air_speed_cap;
 		this.game = new HnsGame({
 			...opts,
 			map,
@@ -98,9 +96,9 @@ export class HnsMode implements ServerMode {
 	state(p: ModePlayer, s: NetState): void {
 		const now = this.host.now();
 		this.game.setPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0 }, now);
-		if (overSpeedCap(s.vx, s.vy, this.cap)) {
+		if (overSpeedCap(s.vx, s.vy)) {
 			const prev = this.overCap.get(p.id) ?? -Infinity;
-			if (now - prev > 5000) this.host.log(`hns: #${p.id} ${p.name} over the ${this.cap} u/s cap (${Math.round(Math.hypot(s.vx, s.vy))})`);
+			if (now - prev > 5000) this.host.log(`hns: #${p.id} ${p.name} over the ${HNS_SPEED_LIMIT} u/s limit (${Math.round(Math.hypot(s.vx, s.vy))})`);
 			this.overCap.set(p.id, now);
 		}
 	}

@@ -62,15 +62,15 @@ export const INFECTED_CVARS: Readonly<Cvars> = ZOMBIES_CVARS;
 
 /**
  * Hide and seek physics (docs/modes.md#hide-and-seek): CS2 ground movement
- * (surf profile: accelerate 6.5, friction 5.2, 250 run speed), autobhop on,
- * CS:GO-community-HNS air acceleration 100, and a hard 300 u/s horizontal
- * cap while airborne so bhopping helps but never outruns the map.
+ * (surf profile: accelerate 6.5, friction 5.2, 250 run speed) with the same
+ * soft bhop cap as Zombie Run and Infected: each jump trims the speed to 286
+ * u/s, strafing gains some back in the air (about 300 u/s on average).
  */
 export const HNS_CVARS: Readonly<Cvars> = Object.freeze({
 	...SURF_CVARS,
-	sv_airaccelerate: 100,
-	sv_maxspeed: 250,
-	sv_air_speed_cap: 300
+	sv_airaccelerate: ZOMBIES_CVARS.sv_airaccelerate,
+	sv_enablebunnyhopping: 0,
+	sv_maxspeed: 250
 });
 
 export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.freeze({

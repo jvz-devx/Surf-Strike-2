@@ -559,7 +559,7 @@ function checkVelocity(): void {
 	else if (v.y < -max) v.y = -max;
 	if (v.z > max) v.z = max;
 	else if (v.z < -max) v.z = -max;
-	// Mode speed cap (hide and seek: 300 u/s while airborne); ground speed is already sv_maxspeed.
+	// Optional hard cap while airborne (no mode uses it); ground speed is already sv_maxspeed.
 	const cap = C.sv_air_speed_cap;
 	if (cap > 0 && !P.onGround) {
 		const h2 = v.x * v.x + v.y * v.y;

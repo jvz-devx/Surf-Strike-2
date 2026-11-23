@@ -35,6 +35,8 @@ export const HNS_WARN_SECS: readonly number[] = [60, 30, 10];
 export const HNS_KNIFE = Object.freeze({ reach: 64, coneDeg: 30, swingMs: 500 });
 /** Server-side swing interval tolerance against jitter. */
 export const HNS_SWING_TOLERANCE = 0.75;
+/** State packets above this horizontal speed (u/s) are not from normal play. */
+export const HNS_SPEED_LIMIT = 600;
 /** Position history kept per player for knife lag compensation. */
 export const HNS_HISTORY_MS = 500;
 /** Largest rewind applied to a knife swing. */
@@ -143,12 +145,12 @@ export function knifeHit(eye: Vec3, dir: Vec3, t: HnsPos, reach = HNS_KNIFE.reac
 }
 
 /**
- * Hide and seek horizontal speed check for state packets: the movement caps
- * airborne speed at `cap` and ground speed at sv_maxspeed (< cap), so a packet
- * well above the cap is not from the real movement code.
+ * Hide and seek horizontal speed check for state packets. Each jump trims the
+ * speed to 286 u/s and strafing adds at most about 60 in the air; long falls and
+ * slopes can add more, so the limit is well above anything normal play reaches.
  */
-export function overSpeedCap(vx: number, vy: number, cap: number, slack = 20): boolean {
-	return cap > 0 && vx * vx + vy * vy > (cap + slack) * (cap + slack);
+export function overSpeedCap(vx: number, vy: number, limit = HNS_SPEED_LIMIT): boolean {
+	return vx * vx + vy * vy > limit * limit;
 }
 
 export interface HnsGameOptions {

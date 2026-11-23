@@ -38,7 +38,7 @@ export interface Cvars {
 	sv_stepsize: number;
 	/**
 	 * Hard cap on horizontal speed while airborne (bhop/strafe/surf), in u/s; 0 = off.
-	 * Not a CS2 cvar: hide and seek servers capped bhop speed with plugins (docs/modes.md#hide-and-seek).
+	 * Not a CS2 cvar: like the bhop speed plugins of community servers. No mode uses it at the moment.
 	 */
 	sv_air_speed_cap: number;
 }

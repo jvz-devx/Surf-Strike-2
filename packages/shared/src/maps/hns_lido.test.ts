@@ -67,7 +67,7 @@ describe.each(SPECS)('$id', (spec) => {
 			expect(m.kind).toBe('hns');
 			expect(m.layout).toBe('open');
 			expect(mapsForMode('hns').map((x) => x.id)).toContain(id);
-			expect(m.cvars.sv_air_speed_cap).toBe(300);
+			expect(m.cvars.sv_enablebunnyhopping ?? 0).toBe(0);
 			expect(m.title).toBe('Lido Bay');
 			expect(m.size).toBe(spec.size);
 		});

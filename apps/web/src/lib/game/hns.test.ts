@@ -37,8 +37,8 @@ describe('hns view helpers', () => {
 		expect(hnsPhaseLabel('seeking', 'hider')).toBe('Stay hidden');
 	});
 
-	it('the mode profile caps air speed at 300 and keeps the 250 run speed', () => {
-		expect(HNS_CVARS.sv_air_speed_cap).toBe(300);
+	it('the mode profile soft-caps bhop speed and keeps the 250 run speed', () => {
+		expect(HNS_CVARS.sv_enablebunnyhopping).toBe(0);
 		expect(HNS_CVARS.sv_maxspeed).toBe(250);
 	});
 });

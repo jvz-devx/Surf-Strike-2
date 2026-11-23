@@ -54,7 +54,7 @@ CS2 changes [S8, S2]:
   - An early press is kept only until the next piece, where it is checked against the last recorded landing (CS2's own buffering quirk [S2]).
   - `sv_jump_spam_penalty_time` (1 tick): a press this soon after the previous one is ignored, and still counts as the previous press.
   - **Landing penalty** (fitted constants, medium confidence): `pen = clamp(1 + vz_land × 0.0005, 0.2, 1)`; on the ground the max speed is scaled by `min(floor(ticks since landing) × dt × 1.1111894 + pen², 1)`; the next jump impulse by `min(pen + (seconds since landing + 1 tick) × 0.6, 1)`. A flat bhop landing at ~290 u/s gives max speed ×0.73 and jump ×0.87, so sustained autobhop hops reach ~44 units instead of 55.8.
-- `sv_enablebunnyhopping 0`: speed capped at 286 (1.1 × 260, regardless of weapon) before the impulse. Both profiles use 1 (no cap).
+- `sv_enablebunnyhopping 0`: speed capped at 286 (1.1 × 260, regardless of weapon) before the impulse. Both profiles use 1 (no cap); Zombie Run, Infected and Hide and seek use 0.
 
 ## Duck (CS2 duck amount model) [S8]
 
@@ -89,7 +89,7 @@ SharpTimer CS2 configs [S5], except `sv_maxspeed` 250 (knife run speed, no weapo
 | `sv_standable_normal` / `sv_walkable_normal` | 0.7 | 0.7 | |
 | `sv_staminamax` / `jumpcost` / `landcost` / `recoveryrate` | 80 / 0 / 0 / 60 | same | Stamina costs 0: no CS:GO stamina slowdown |
 | `sv_stepsize` | 18 | 18 | |
-| `sv_air_speed_cap` | 0 | 0 | Not a CS2 cvar. Hard horizontal speed cap while airborne, 0 = off; hide and seek sets 300 ([modes.md](modes.md#hide-and-seek)) |
+| `sv_air_speed_cap` | 0 | 0 | Not a CS2 cvar. Hard horizontal speed cap while airborne, 0 = off; no mode uses it now |
 
 Each map's definition sets its cvar profile. The server pushes cvars to clients on join and map change; in solo mode the client applies the map's profile itself. Changing `sv_*` cvars in the console is allowed only in solo mode, and marks runs as unofficial.
 

@@ -102,12 +102,13 @@ describe('hide and seek mode', () => {
 	let seekerId: number;
 	let hiderId: number;
 
-	it('welcome carries the mode and the 300 u/s cap; a lone player waits', async () => {
+	it('welcome carries the mode and the soft bhop cap; a lone player waits', async () => {
 		const j = await join('Alice');
 		a = j.c;
 		aId = j.id;
 		assert.equal(j.welcome.mode, 'hns');
-		assert.equal(j.welcome.cvars.sv_air_speed_cap, 300);
+		assert.equal(j.welcome.cvars.sv_enablebunnyhopping, 0);
+		assert.equal(j.welcome.cvars.sv_air_speed_cap, 0);
 		assert.equal(j.welcome.cvars.sv_maxspeed, 250);
 		const st = await tick(a);
 		assert.equal(st.mode, 'hns');
@@ -175,8 +176,8 @@ describe('hide and seek mode', () => {
 
 	it('over-cap speed voids a swing; a knife kill converts the last hider and seekers win', async () => {
 		await moveTo(hider, 1600);
-		// Seeker state over the 300 u/s cap: the next swing is ignored.
-		await moveTo(seeker, 1560, 0, 0, 450);
+		// Seeker state over the speed limit: the next swing is ignored.
+		await moveTo(seeker, 1560, 0, 0, 700);
 		let n = hider.messages.length;
 		seeker.send({ type: 'knife', origin: { x: 1560, y: 0, z: 64 }, dir: { x: 1, y: 0, z: 0 } });
 		await settle();

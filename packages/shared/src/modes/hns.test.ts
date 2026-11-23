@@ -72,19 +72,20 @@ describe('hns registry and physics', () => {
 		expect(m.label).toBe('Hide and Seek');
 		expect(m.minPlayers).toBe(2);
 		expect(m.score.columns.map((c) => c.id)).toEqual(['role', 'finds', 'survived', 'ping']);
-		expect(HNS_CVARS.sv_air_speed_cap).toBe(300);
+		expect(HNS_CVARS.sv_enablebunnyhopping).toBe(0);
+		expect(HNS_CVARS.sv_air_speed_cap).toBe(0);
 		expect(HNS_CVARS.sv_maxspeed).toBe(250);
 		expect(HNS_CVARS.sv_autobunnyhopping).toBe(1);
-		expect(mapCvars({ kind: 'hns', cvars: {} }).sv_air_speed_cap).toBe(300);
+		expect(mapCvars({ kind: 'hns', cvars: {} }).sv_air_speed_cap).toBe(0);
 	});
 
-	it('leaves the other modes uncapped', () => {
+	it('no mode has a hard air speed cap', () => {
 		expect(SURF_CVARS.sv_air_speed_cap).toBe(0);
 		expect(BHOP_CVARS.sv_air_speed_cap).toBe(0);
-		for (const id of ['surf', 'bhop', 'tag', 'zombies'] as const) expect(GAME_MODES[id].cvars.sv_air_speed_cap).toBe(0);
+		for (const id of ['surf', 'bhop', 'tag', 'zombies', 'infected', 'hns'] as const) expect(GAME_MODES[id].cvars.sv_air_speed_cap).toBe(0);
 	});
 
-	it('caps airborne horizontal speed at 300 u/s with autobhop strafing', () => {
+	it('soft-caps bhop speed exactly like Infected', () => {
 		const w = buildCollisionWorld({ brushes: [{ type: 'box', min: { x: -20000, y: -20000, z: -64 }, max: { x: 20000, y: 20000, z: 0 }, material: 'x' }] });
 		const run = (cvars: typeof HNS_CVARS) => {
 			const p = createPlayer({ x: 0, y: 0, z: 1 });
@@ -99,14 +100,14 @@ describe('hns registry and physics', () => {
 			return max;
 		};
 		expect(run(BHOP_CVARS)).toBeGreaterThan(400);
-		expect(run(HNS_CVARS)).toBeLessThanOrEqual(300 + 1e-6);
-		expect(run(HNS_CVARS)).toBeGreaterThan(290);
+		expect(run(HNS_CVARS)).toBe(run(GAME_MODES.infected.cvars as typeof HNS_CVARS));
+		expect(run(HNS_CVARS)).toBeGreaterThan(286);
+		expect(run(HNS_CVARS)).toBeLessThan(350);
 	});
 
 	it('flags state speeds over the cap', () => {
-		expect(overSpeedCap(300, 0, 300)).toBe(false);
-		expect(overSpeedCap(250, 200, 300)).toBe(true);
-		expect(overSpeedCap(5000, 0, 0)).toBe(false);
+		expect(overSpeedCap(350, 0)).toBe(false);
+		expect(overSpeedCap(500, 400)).toBe(true);
 	});
 });
 
