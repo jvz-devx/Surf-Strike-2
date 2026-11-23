@@ -40,6 +40,10 @@ Zones render as CS-style glowing outlines: start green, end red, stages and chec
 
 A material with `glass: true` (and/or `opacity` below 1; glass defaults to 0.3) is see-through: the renderer draws it blended after opaque geometry, from both sides, without depth writes, with a bright fresnel rim; give it an `edgeColor` so its outline reads. Collision is unchanged: glass is as solid as any brush (walls, ceilings, floors, even a surfable glass ramp).
 
+### Fake brushes
+
+Any brush may set `solid: false`: it is rendered exactly like a solid brush (same material, no hint) but `buildCollisionWorld` skips it, so players walk through it. Hide and seek maps use it for clip-through walls, hedges and hollow props (Hammer's `func_illusionary`). A teleport zone with `dest` moves the player to that fixed spawn (secret passages).
+
 ### Hard-surf obstacles
 
 `maps/surf-obstacles.ts` has generic builders for obstacles placed ON the intended line (unlike scenery, which keeps ≥ 256 from it): `wallWithHole()` (window or narrow slot in a thick wall), `floorWithHole()` (drop through a slab), `glassPanel()`, `pillar()`, `orientedBox()` (box at any heading; a `convex` brush off-axis), `spiralSteps()` (downward spiral peak steps for `rampChain`). Each obstacle lists the openings (`Gate`s) its intended line flies through. The same module has a route bot (`runRouteBot`: rides chains at a target face fraction, flies transfers with no input, steering to an aim point, through gates, or with a full-rate air-strafe turn) and `gateCrossing()`, so map tests prove with the real physics that a skilled line passes every hole and that sloppier lines (offset, ±15% speed, no air strafe) hit the obstacles.

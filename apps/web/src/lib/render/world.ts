@@ -1,6 +1,8 @@
 /**
  * Map geometry: brush face polygons from `buildSolid`, fan-triangulated and
  * merged into one BufferGeometry per material, plus optional edge lines.
+ * Non-solid brushes (`solid: false`, hide and seek fake walls) are drawn exactly
+ * like solid ones: same material buckets, no visual hint.
  */
 import { buildSolid, type AABB, type MapDef, type MaterialDef } from '@surf/shared';
 import * as THREE from 'three';

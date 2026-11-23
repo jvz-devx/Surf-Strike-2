@@ -7,9 +7,13 @@ import { clipBoxToSolid, type TraceWork } from './trace.ts';
 /** Broadphase cell size in units. */
 const GRID_CELL = 256;
 
-/** Build all solids and a uniform-grid broadphase; trace returns the nearest hit across brushes. */
+/**
+ * Build all solids and a uniform-grid broadphase; trace returns the nearest hit across brushes.
+ * Brushes with `solid: false` (fake walls/props, docs/maps.md) are skipped: they are only rendered.
+ */
 export function buildCollisionWorld(map: Pick<MapDef, 'brushes'>): CollisionWorld {
-	const solids: Solid[] = map.brushes.map((b) => buildSolid(b));
+	const solids: Solid[] = [];
+	for (const b of map.brushes) if (b.solid !== false) solids.push(buildSolid(b));
 	const n = solids.length;
 
 	// Grid origin / dimensions over all brush bounds.
