@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BHOP_CVARS, JUMP_IMPULSE, SURF_CVARS } from '../cvars.ts';
 import type { Vec3 } from '../types.ts';
 import { DEFAULT_MAP_ID, MAPS, MAP_IDS, SANDBOX, getMap, mapsForMode } from './index.ts';
-import { GAME_MODE_IDS, isRaceMode, modeOf, tagSpawns, TAG_CVARS } from '../modes/index.ts';
+import { GAME_MODE_IDS, INFECTED_CVARS, isRaceMode, modeOf, tagSpawns, TAG_CVARS } from '../modes/index.ts';
 import type { MapDef, Spawn, Zone } from './types.ts';
 import {
 	boundsOf,
@@ -84,6 +84,7 @@ describe('map registry', () => {
 		for (const m of RACE) expect(m.cvars).toEqual(m.kind === 'surf' ? SURF_CVARS : BHOP_CVARS);
 		for (const m of RACE) expect(modeOf(m).cvars).toBe(m.kind === 'surf' ? SURF_CVARS : BHOP_CVARS);
 		expect(modeOf({ kind: 'tag' }).cvars).toBe(TAG_CVARS);
+		expect(modeOf({ kind: 'infected' }).cvars).toBe(INFECTED_CVARS);
 	});
 
 	it('every map has a known gamemode; mapsForMode partitions the rotation', () => {
@@ -93,8 +94,9 @@ describe('map registry', () => {
 		expect(mapsForMode('bhop').length).toBeGreaterThanOrEqual(2);
 	});
 
-	it('has at least one tag map in the rotation', () => {
+	it('has at least one tag and one infected map in the rotation', () => {
 		expect(mapsForMode('tag').length).toBeGreaterThanOrEqual(1);
+		expect(mapsForMode('infected').length).toBeGreaterThanOrEqual(1);
 	});
 });
 

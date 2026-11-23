@@ -33,6 +33,10 @@ export interface CommandContext {
 	vote(option: number): void;
 	spectate(query: string): void;
 	restart(): void;
+	/** Infected: plant a respawn beacon (Tactical Insertion). Optional: other hosts ignore it. */
+	beacon?(): void;
+	/** Infected: call an earned M.O.A.B. (Tactical Nuke). Optional: other hosts ignore it. */
+	moab?(): void;
 	back(): void;
 	rtv(): void;
 	changeMap(id: string): void;
@@ -108,6 +112,8 @@ export function registerCommands(con: DevConsole, ctx: CommandContext): void {
 	});
 	reg('spectate', 'Toggle spectating; spectate <name>', (_a, raw) => ctx.spectate(raw));
 	reg('restart', 'Back to start, timer reset (!r)', () => ctx.restart());
+	reg('beacon', 'Infected: plant a respawn beacon at your feet (E)', () => ctx.beacon?.());
+	reg('moab', 'Infected: call your earned M.O.A.B. tactical nuke (N)', () => ctx.moab?.());
 	reg('back', 'Back to current stage or checkpoint (!back)', () => ctx.back());
 	reg('rtv', 'Request a map vote (!rtv)', () => ctx.rtv());
 	reg(

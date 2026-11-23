@@ -242,6 +242,19 @@ export class GameAudio {
 	}
 
 	/**
+	 * Infected sounds (docs/modes.md#infected). Same rule as zombies: no
+	 * synthesized audio, and no real recordings are sourced yet for guns,
+	 * knife, claws, throws, hits or hurt, so those stay silent. Round start,
+	 * Patient Zero, UAV pulses and the M.O.A.B. call and detonation reuse the
+	 * zone bell; perk unlocks and an earned M.O.A.B. reuse the record chime.
+	 * `at`/`listener`/`yaw` are for positional playback once recordings exist.
+	 */
+	infected(name: string, _at?: { x: number; y: number; z: number }, _listener?: { x: number; y: number; z: number }, _yaw?: number): void {
+		if (name === 'round' || name === 'alpha' || name === 'uav' || name === 'moab' || name === 'moabDetonate') this.zoneBeep();
+		else if (name === 'perk' || name === 'moabReady') this.recordChime();
+	}
+
+	/**
 	 * Hide and seek sounds (docs/modes.md#hide-and-seek). The seeker release
 	 * reuses the vote gavel (a real CC0 recording, CREDITS.md); the knife swing
 	 * and hit stay silent until real CC0 recordings are sourced.

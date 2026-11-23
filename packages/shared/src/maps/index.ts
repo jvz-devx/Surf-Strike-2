@@ -16,6 +16,9 @@ import { surf_kessler } from './surf_kessler.ts';
 import { surf_ochre } from './surf_ochre.ts';
 import { tag_quayside } from './tag_quayside.ts';
 import { zombies_lowtide } from './zombies_lowtide.ts';
+import { infected_outpost } from './infected_outpost.ts';
+import { infected_terminal } from './infected_terminal.ts';
+import { infected_foundry } from './infected_foundry.ts';
 import { SANDBOX } from './sandbox.ts';
 
 /**
@@ -54,7 +57,10 @@ export const MAPS: MapDef[] = [
 	surf_kessler,
 	surf_ochre,
 	tag_quayside,
-	zombies_lowtide
+	zombies_lowtide,
+	infected_outpost,
+	infected_terminal,
+	infected_foundry
 ].map(liftSpawns);
 liftSpawns(SANDBOX);
 

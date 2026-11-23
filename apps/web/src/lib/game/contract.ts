@@ -7,7 +7,23 @@
  * `HudState` reactively and calls `GameApi` methods; it never touches Three.js
  * or the network directly.
  */
-import type { AdminAction, AdminState, GameModeId, HnsPhase, HnsRole, HnsWinner, ModeFamily, ScoreRow, TagPhase, WeaponId, ZmPhase, ZmTeam } from '@surf/shared';
+import type {
+	AdminAction,
+	AdminState,
+	GameModeId,
+	HnsPhase,
+	HnsRole,
+	HnsWinner,
+	InfPerkId,
+	InfPhase,
+	InfTeam,
+	ModeFamily,
+	ScoreRow,
+	TagPhase,
+	WeaponId,
+	ZmPhase,
+	ZmTeam
+} from '@surf/shared';
 
 export interface ChatLine {
 	id: number;
@@ -73,6 +89,8 @@ export interface KillFeedLine {
 	/** The local player made the kill. */
 	mine: boolean;
 	at: number;
+	/** Infected: a throwing-knife or bank-shot infection, drawn as `by [BADGE] victim`. */
+	badge?: { kind: 'knife' | 'bank'; by: string; victim: string };
 }
 
 /** Zombies HUD (docs/modes.md#zombies, docs/ui.md#zombies-hud); null in other modes. */
@@ -165,6 +183,100 @@ export interface TagView {
 	flash: { text: string; at: number } | null;
 }
 
+export interface InfectedView {
+	/** 'solo' = offline free roam (infected needs a server and 2+ players). */
+	phase: InfPhase | 'solo';
+	round: number;
+	/** performance.now() when grace / round / summary ends (0 in waiting/solo). */
+	endsAt: number;
+	team: InfTeam;
+	/** Patient Zero while still holding the round gun before first infection. */
+	alpha: boolean;
+	/** Local player is the last remaining survivor (with >=2 infected). */
+	lastSurvivor: boolean;
+	loadout: WeaponId;
+	loadoutLabel: string;
+	survivors: number;
+	infected: number;
+	hp: number;
+	maxHp: number;
+	alive: boolean;
+	respawnAt: number;
+	weapon: WeaponId;
+	weaponLabel: string;
+	mag: number;
+	magSize: number;
+	reserve: number;
+	reloadEndsAt: number;
+	reloadMs: number;
+	/** Infected: throwing knife is ready to throw. */
+	hasKnife: boolean;
+	/** Infected: thrown knife is stuck in the world awaiting pickup. */
+	knifeOut: boolean;
+	/** Infected: my respawn beacon is planted (the next respawn uses it). */
+	hasBeacon: boolean;
+	/** Infected: distance (metres) from me to my planted beacon, null when none or unknown. */
+	beaconDist?: number | null;
+	myScore: number;
+	myKills: number;
+	myDeaths: number;
+	hitMarker: { at: number; head: boolean; kill: boolean } | null;
+	killFeed: KillFeedLine[];
+	flash: { text: string; at: number; tone?: 'neutral' | 'infected' | 'survivor' | 'bonus' } | null;
+	/** Timestamp of the latest +20s infection clock bump. */
+	timeBonusAt: number;
+	/** Timestamp of the latest scavenger ammo refill. */
+	scavengerAt: number;
+	hurtAt: number;
+	/** Timestamp of the latest UAV pulse. */
+	uavAt: number;
+	scoped: boolean;
+	summary: { winner: 'survivors' | 'infected'; secs: number; survivorsLeft: number; top: string | null } | null;
+	/** Spectating someone (or free-fly): local viewmodel, scope, hurt and down panels are hidden. */
+	spectating?: boolean;
+	/** The spectated player (from the mode state), or null in free-fly / not spectating. */
+	spec?: InfSpecView | null;
+	/** Infected: distance (units) from me to the latest UAV ping, null when unknown. */
+	uavDist?: number | null;
+	/** Survivor secondary (slot 2, the pistol) and its label. */
+	secondary: WeaponId;
+	secondaryLabel: string;
+	/** Survivor kill streak this life (0 for infected). */
+	streak: number;
+	/** Active kill streak perks (survivors; [] for infected). */
+	perks: InfPerkId[];
+	/** A M.O.A.B. is earned and can be called (N or 4). */
+	moabReady: boolean;
+	/** A called M.O.A.B. counting down: performance.now() when it detonates. */
+	moab: { callerName: string; endsAt: number } | null;
+	/** performance.now() of the latest M.O.A.B. detonation (0 = none this round). */
+	moabDetonatedAt: number;
+	/** My latest perk unlock (toast). */
+	perkFlash: { perk: InfPerkId; at: number } | null;
+}
+
+/** What the infected HUD shows of a spectated player (only what `modeState` carries). */
+export interface InfSpecView {
+	id: number;
+	name: string;
+	team: InfTeam;
+	alpha: boolean;
+	hp: number;
+	maxHp: number;
+	alive: boolean;
+	score: number;
+	weapon: WeaponId;
+	weaponLabel: string;
+	hasKnife: boolean;
+	/** Infected: this player's respawn beacon is planted. */
+	hasBeacon: boolean;
+	/** Survivor kill streak and active perks (0 / [] for infected). */
+	streak: number;
+	perks: InfPerkId[];
+	/** This player can call a M.O.A.B. */
+	moabReady: boolean;
+}
+
 export interface HudStateShape {
 	// Connection / lobby
 	online: boolean;
@@ -180,6 +292,7 @@ export interface HudStateShape {
 	modeFamily: ModeFamily;
 	tag: TagView | null;
 	zombies: ZombiesView | null;
+	infected: InfectedView | null;
 	hns: HnsView | null;
 	/** Rotation maps, in rotation order (Esc menu, Change map). */
 	maps: MapListEntry[];

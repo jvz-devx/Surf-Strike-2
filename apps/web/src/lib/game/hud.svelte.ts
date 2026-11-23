@@ -4,7 +4,18 @@
  * `$state.raw` and are replaced, never mutated.
  */
 import { MAX_PLAYERS, type AdminState, type GameModeId, type ModeFamily, type ScoreRow } from '@surf/shared';
-import type { ChatLine, ConsoleLine, HnsView, HudStateShape, MapListEntry, RtvRequestView, TagView, VoteView, ZombiesView } from './contract.js';
+import type {
+	ChatLine,
+	ConsoleLine,
+	HnsView,
+	HudStateShape,
+	InfectedView,
+	MapListEntry,
+	RtvRequestView,
+	TagView,
+	VoteView,
+	ZombiesView
+} from './contract.js';
 
 export class HudState implements HudStateShape {
 	online = $state(false);
@@ -19,6 +30,7 @@ export class HudState implements HudStateShape {
 	modeFamily = $state<ModeFamily>('race');
 	tag = $state.raw<TagView | null>(null);
 	zombies = $state.raw<ZombiesView | null>(null);
+	infected = $state.raw<InfectedView | null>(null);
 	hns = $state.raw<HnsView | null>(null);
 	maps = $state.raw<MapListEntry[]>([]);
 	canChangeMap = $state(true);

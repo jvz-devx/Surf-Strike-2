@@ -6,6 +6,35 @@ Status: design agreed 2026-11-21. Milestones 0–10 implemented 2026-11-21; mile
 
 Local dev instance: `./start_test.sh` (web client with hot reload on `:5173` + dev game server on `:27016` with its own `apps/server/data/dev.db`; `--web-port`, `--db`, `--fresh`, `--help`; Ctrl+C stops both). Run with Node 24 (`.node-version`, picked up by `fnm`): `pnpm install`, then `pnpm dev` (client), `pnpm server` (dev game server on `:27016`; dev builds connect there, production `./start.sh` uses `:27015`), `pnpm host` (server + tunnel + discovery; for the public Vercel site run `./start.sh` from the repo root, which preflights `.env`, `cloudflared`, deps and the port, then runs `pnpm host`; `--port`, `--db`, `--help`), `pnpm check`, `pnpm test`, `pnpm build`.
 
+## Quick launch and testing scripts
+
+`pnpm play` starts a dev game server (in-memory DB, never the real leaderboard), optional live bots, a local control API and the Vite client, then prints the URL to open (`http://localhost:5173/?server=ws://localhost:27016/ws`). Ctrl+C stops all of it. `pnpm play -- --help` lists every flag.
+
+| Command | What it does |
+| --- | --- |
+| `pnpm play [mode\|map]` | Launch on a gamemode (its first map) or any map id, `sandbox` included; default `surf` |
+| `pnpm play:surf` / `play:bhop` | Race modes, no bots |
+| `pnpm play:tag` | `tag_quayside`, 1 bot, fast timers: a round starts as soon as you join |
+| `pnpm play:zombies` | `zombies_lowtide`, fast countdown |
+| `pnpm play:infected` | `infected_outpost`, 2 bots, fast timers |
+| `pnpm play -- --list` | All gamemodes and maps |
+| `pnpm test:mode <mode>` | Only the shared/server/web tests for one mode (`surf`, `bhop`, `tag`, `zombies`, `infected`); `all` = `pnpm check && pnpm test`; `--list` shows the files |
+
+Useful flags: `--bots <N>`, `--bot-patrol` (bots walk a circle), `--fast`, `--grace/--round/--countdown <s>`, `--port`, `--web-port`, `--server-only`, `--open`, `--no-ctrl`, `--db <path>`.
+
+Control API on `http://127.0.0.1:<port+1>` (default 27017) for scripts and agents:
+
+| Request | Effect |
+| --- | --- |
+| `GET /status` (or `/health`) | `{ map, mode, port, webUrl, players, bots, modeState }` |
+| `POST /map?id=<mapId>` | Force a map change |
+| `POST /bots?count=<N>` | Scale live bots up or down |
+| `POST /shutdown` | Stop the launcher (bots, game server, control API, Vite) |
+| `POST /bot/move?index=0&x=&y=&z=&yaw=&pitch=` | Teleport a bot (omitted values stay) |
+| `POST /bot/action?index=0&type=fire\|throwKnife\|reload\|loadout\|spectate` | Bot shoots or throws (aim with `tx,ty,tz` or `yaw,pitch`; `weapon=`), reloads, picks a loadout, or spectates (`target=<id>`, `none`, or toggle) |
+
+In solo mode (no server), `?map=<id>` opens that map directly, e.g. `http://localhost:5173/?map=infected_outpost`.
+
 ## Documents
 
 | File | Covers |

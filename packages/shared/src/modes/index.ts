@@ -10,13 +10,13 @@
 import { BHOP_CVARS, SURF_CVARS, type Cvars } from '../cvars.ts';
 import type { MapDef } from '../maps/types.ts';
 
-export type GameModeId = 'surf' | 'bhop' | 'tag' | 'zombies' | 'hns';
+export type GameModeId = 'surf' | 'bhop' | 'tag' | 'zombies' | 'infected' | 'hns';
 
 /**
  * Rule family. 'race': RunTracker timer, start/end/stage/checkpoint zones,
  * run validation and leaderboards. Any other family has its own rules module.
  */
-export type ModeFamily = 'race' | 'tag' | 'coop' | 'hns';
+export type ModeFamily = 'race' | 'tag' | 'coop' | 'infected' | 'hns';
 
 /** Scoreboard columns besides the name (shown in this order). */
 export type ScoreColumn = 'rank' | 'pb' | 'score' | 'kills' | 'deaths' | 'status' | 'ping' | 'role' | 'finds' | 'survived';
@@ -54,6 +54,12 @@ export const ZOMBIES_CVARS: Readonly<Cvars> = Object.freeze({
 	sv_airaccelerate: 30,
 	sv_enablebunnyhopping: 0
 });
+
+/**
+ * Infected physics: same run-and-gun profile as zombies (capped bhop, lower
+ * air acceleration, movement speeds driven by the held weapon / claws).
+ */
+export const INFECTED_CVARS: Readonly<Cvars> = ZOMBIES_CVARS;
 
 /**
  * Hide and seek physics (docs/modes.md#hide-and-seek): CS2 ground movement
@@ -107,6 +113,15 @@ export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.free
 		minPlayers: 1,
 		scoreColumns: ['kills', 'deaths', 'status', 'ping']
 	},
+	infected: {
+		id: 'infected',
+		label: 'Infected',
+		description: 'Infected: survivors outlast the timer, the infected hunt with claws and throwing knives.',
+		family: 'infected',
+		cvars: INFECTED_CVARS,
+		minPlayers: 2,
+		scoreColumns: ['score', 'kills', 'deaths', 'status', 'ping']
+	},
 	hns: {
 		id: 'hns',
 		label: 'Hide and Seek',
@@ -146,3 +161,4 @@ export function mapCvars(map: Pick<MapDef, 'kind' | 'cvars'>): Cvars {
 export * from './hns.ts';
 export * from './tag.ts';
 export * from './zombies/index.ts';
+export * from './infected/index.ts';

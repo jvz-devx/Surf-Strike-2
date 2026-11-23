@@ -16,8 +16,8 @@ export function voteLabel(o: VoteOption, lookup: (id: string) => { title: string
 	return mapLabel(o.mapId, lookup);
 }
 
-/** Highest number key that votes while a map vote is open (6 maps + extend). */
-export const MAP_VOTE_KEYS = 7;
+/** Highest number key that votes while a map vote is open (7 maps + extend). */
+export const MAP_VOTE_KEYS = 8;
 
 export type VoteKeyRoute = { kind: 'mapVote'; option: number } | { kind: 'rtv'; yes: boolean } | null;
 

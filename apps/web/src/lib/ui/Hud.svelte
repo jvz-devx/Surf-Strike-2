@@ -22,6 +22,7 @@
 	import DesktopOnly from '#lib/ui/DesktopOnly.svelte';
 	import TagHud from '#lib/ui/TagHud.svelte';
 	import ZombiesHud from '#lib/ui/ZombiesHud.svelte';
+	import InfectedHud from '#lib/ui/InfectedHud.svelte';
 	import HnsHud from '#lib/ui/HnsHud.svelte';
 
 	let { hud, api }: { hud: HudStateShape; api: GameApi } = $props();
@@ -91,7 +92,8 @@
 		{/if}
 
 		{#if hud.zombies}<ZombiesHud z={hud.zombies} {now} />{/if}
-		{#if !hud.zombies?.scoped && !hud.hns?.blindfold}<Crosshair cvars={hud.cvars} />{/if}
+		{#if hud.infected}<InfectedHud inf={hud.infected} {now} />{/if}
+		{#if !hud.zombies?.scoped && !hud.infected?.scoped && !hud.hns?.blindfold}<Crosshair cvars={hud.cvars} />{/if}
 
 		<div class="below-crosshair">
 			{#if clickHint}

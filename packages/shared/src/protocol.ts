@@ -5,6 +5,7 @@
 import type { Cvars } from './cvars.ts';
 import type { GameModeId } from './modes/index.ts';
 import type { HnsEvent, HnsStateView } from './modes/hns.ts';
+import type { InfEvent, InfStateView } from './modes/infected/game.ts';
 import type { TagPhase, TagScore } from './modes/tag.ts';
 import type { ZmEvent, ZmStateView } from './modes/zombies/game.ts';
 import type { WeaponId } from './modes/zombies/weapons.ts';
@@ -34,7 +35,11 @@ export const Status = {
 	/** Hide and seek: hiding this round. */
 	Hider: 9,
 	/** Hide and seek: seeking (picked at round start or found). */
-	Seeker: 10
+	Seeker: 10,
+	/** Infected: Patient Zero (first infected, keeps gun until first infection). */
+	Alpha: 11,
+	/** Infected: turned player hunting with claws and throwing knife. */
+	Infected: 12
 } as const;
 export type Status = (typeof Status)[keyof typeof Status];
 
@@ -93,12 +98,17 @@ export interface ZombiesModeState extends ZmStateView {
 	mode: 'zombies';
 }
 
+/** Infected round state (docs/modes.md#infected). */
+export interface InfectedModeState extends InfStateView {
+	mode: 'infected';
+}
+
 /** Hide and seek round state (docs/modes.md#hide-and-seek). */
 export interface HnsModeState extends HnsStateView {
 	mode: 'hns';
 }
 
-export type ModeState = TagModeState | ZombiesModeState | HnsModeState;
+export type ModeState = TagModeState | ZombiesModeState | InfectedModeState | HnsModeState;
 
 export interface MapRecordInfo {
 	pbTicks: number | null;
@@ -146,6 +156,12 @@ export type ClientMessage =
 	| { type: 'reload' }
 	/** Zombies: pick the weapon for this life (only while the loadout window is open). */
 	| { type: 'loadout'; weapon: WeaponId }
+	/** Infected: throw an MW3-style throwing knife from eye `origin` along unit `dir`. */
+	| { type: 'throwKnife'; origin: Vec3; dir: Vec3 }
+	/** Infected: place an MW3-style respawn beacon (Tactical Insertion) at the feet. */
+	| { type: 'placeBeacon' }
+	/** Infected: a survivor calls their earned M.O.A.B. (kill streak; detonates after a countdown). */
+	| { type: 'callMoab' }
 	/**
 	 * Hide and seek (docs/modes.md#hide-and-seek): a seeker's knife swing.
 	 * `origin` is the eye, `dir` a unit vector; the server resolves the hit
@@ -284,6 +300,8 @@ export type ServerMessage =
 	| { type: 'tagged'; by: number; target: number }
 	/** Zombies event (spawn/teleport, hit marker, kill feed, tracer, hurt, down, checkpoint, ammo, round end). */
 	| { type: 'zm'; ev: ZmEvent }
+	/** Infected event (spawn, alpha, infect, hit, kill, shot, hurt, ammo, throwing knife, UAV pulse, round end). */
+	| { type: 'inf'; ev: InfEvent }
 	/** Hide and seek event (spawn/teleport to that player; swing, found, round flow to everyone). */
 	| { type: 'hns'; ev: HnsEvent }
 	| { type: 'timeLeft'; mapTimeLeft: number }

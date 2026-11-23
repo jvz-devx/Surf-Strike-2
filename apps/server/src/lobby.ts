@@ -448,8 +448,11 @@ export class Lobby {
 			case 'fire':
 			case 'reload':
 			case 'loadout':
+			case 'throwKnife':
+			case 'placeBeacon':
+			case 'callMoab':
 			case 'knife':
-				// Zombies weapons (docs/modes.md#zombies), hide and seek knife; the mode validates every field.
+				// Zombies/infected weapons and hide-and-seek knife (docs/modes.md); the mode validates every field.
 				if (!c.spectating) this.mode.message?.(c, msg);
 				return;
 			case 'admin':
