@@ -8,8 +8,12 @@
  * on the body is ZOMBIE_HP / damage. Any headshot kills outright.
  */
 
-/** Survivor weapons, plus 'claws': the melee attack of players who turned into zombies. */
-export type WeaponId = 'knife' | 'pistol' | 'sniper' | 'lmg' | 'claws';
+/**
+ * Survivor weapons, plus 'claws': the melee attack of players who turned into
+ * zombies. 'barrett', 'striker' and 'smg' are Infected-only primaries (not in
+ * the Zombies loadout, WEAPON_IDS).
+ */
+export type WeaponId = 'knife' | 'pistol' | 'sniper' | 'lmg' | 'barrett' | 'striker' | 'smg' | 'claws';
 
 export interface WeaponDef {
 	id: WeaponId;
@@ -42,6 +46,10 @@ export interface WeaponDef {
 	zoomFov: number | null;
 	/** Horizontal push on the zombie per hit (u/s). */
 	knockback: number;
+	/** Shotguns: rays per trigger pull (default 1); `damage` and `knockback` are per pellet. */
+	pellets?: number;
+	/** Shotguns: pellet scatter half-angle (degrees) around the aim. */
+	pelletSpread?: number;
 }
 
 /** Zombie hit points. */
@@ -124,6 +132,65 @@ export const WEAPONS: Readonly<Record<WeaponId, WeaponDef>> = Object.freeze({
 		zoomFov: 40,
 		knockback: 0
 	},
+	barrett: {
+		id: 'barrett',
+		label: 'Barrett .50cal',
+		slot: 1,
+		damage: ZOMBIE_HP, // one hit
+		moveSpeed: 205,
+		fireMs: 360, // semi-auto
+		automatic: false,
+		magazine: 10,
+		reserve: 30,
+		reloadMs: 3200,
+		range: 8192,
+		coneDeg: 0,
+		pierce: 3,
+		spread: 2.8,
+		scopedSpread: 0,
+		zoomFov: 38,
+		knockback: 140
+	},
+	striker: {
+		id: 'striker',
+		label: 'Striker',
+		slot: 1,
+		damage: 1, // per pellet
+		pellets: 8,
+		pelletSpread: 4.0,
+		moveSpeed: 230,
+		fireMs: 280,
+		automatic: false,
+		magazine: 12,
+		reserve: 36,
+		reloadMs: 2600,
+		range: 1400,
+		coneDeg: 0,
+		pierce: 1,
+		spread: 1.2,
+		scopedSpread: 1.2,
+		zoomFov: null,
+		knockback: 28 // per pellet
+	},
+	smg: {
+		id: 'smg',
+		label: 'SMG',
+		slot: 1,
+		damage: 1,
+		moveSpeed: 245,
+		fireMs: 65, // ~920 rpm
+		automatic: true,
+		magazine: 36,
+		reserve: 144,
+		reloadMs: 1750,
+		range: 3600,
+		coneDeg: 0,
+		pierce: 1,
+		spread: 1.3,
+		scopedSpread: 1.3,
+		zoomFov: null,
+		knockback: 30
+	},
 	claws: {
 		id: 'claws',
 		label: 'Claws',
@@ -183,6 +250,8 @@ export class WeaponState {
 	reserve: number;
 	/** Reload completes at this time; 0 = not reloading. */
 	reloadEndsAt = 0;
+	/** Duration of the running (or last) reload, for `reloadProgress`. */
+	reloadDurationMs = 0;
 	nextFireAt = 0;
 
 	constructor(
@@ -234,7 +303,7 @@ export class WeaponState {
 	/** Reload progress 0..1 (1 when not reloading). */
 	reloadProgress(now: number): number {
 		if (!this.reloading(now)) return 1;
-		const total = this.def.reloadMs * this.reloadTolerance;
+		const total = this.reloadDurationMs > 0 ? this.reloadDurationMs : this.def.reloadMs * this.reloadTolerance;
 		return total <= 0 ? 1 : Math.max(0, Math.min(1, 1 - (this.reloadEndsAt - now) / total));
 	}
 
@@ -243,11 +312,11 @@ export class WeaponState {
 		return this.melee || this.mag > 0;
 	}
 
-	/** Spend a round (or swing). Returns false if the weapon cannot fire now. */
-	fire(now: number): boolean {
+	/** Spend a round (or swing). `cadenceFactor` scales the wait to the next shot. Returns false if the weapon cannot fire now. */
+	fire(now: number, cadenceFactor = 1): boolean {
 		if (!this.canFire(now)) return false;
 		if (!this.melee) this.mag--;
-		this.nextFireAt = now + this.def.fireMs * this.fireTolerance;
+		this.nextFireAt = now + this.def.fireMs * this.fireTolerance * cadenceFactor;
 		return true;
 	}
 
@@ -255,9 +324,11 @@ export class WeaponState {
 		return !this.melee && !this.reloading(now) && this.mag < this.def.magazine && this.reserve > 0;
 	}
 
-	startReload(now: number): boolean {
+	/** Start a reload; `reloadFactor` scales its duration (e.g. 0.5 for a faster reload perk). */
+	startReload(now: number, reloadFactor = 1): boolean {
 		if (!this.canReload(now)) return false;
-		this.reloadEndsAt = now + this.def.reloadMs * this.reloadTolerance;
+		this.reloadDurationMs = this.def.reloadMs * this.reloadTolerance * reloadFactor;
+		this.reloadEndsAt = now + this.reloadDurationMs;
 		return true;
 	}
 }

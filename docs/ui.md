@@ -99,11 +99,15 @@ The race ghost ([gameplay.md](gameplay.md#ghosts)) is the remote-player humanoid
 | `Ctrl` | Crouch |
 | `Y` | Chat |
 | `Tab` | Scoreboard |
-| `1`–`4` | Vote |
+| `1`–`4` | Vote (when no vote is open: Zombies weapons; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B.) |
 | `M` | Toggle spectate |
-| `R` | Restart run (`!r`) |
+| `R` | Restart run (`!r`); Zombies / Infected reload |
+| `E` | Infected: plant a respawn beacon (`beacon`) |
+| `N` | Infected: call an earned M.O.A.B. (`moab`) |
 | `` ` `` / `~` | Console |
 | `Esc` | Esc menu |
+
+Binds added after a player first saved their table (`E` → `beacon`, `N` → `moab`) are offered once: they are filled in when the key is free and the command is not bound elsewhere, and the offered list is stored in `surf.binds.offered` so a later `unbind` sticks. `Ctrl`+`N` stays with the browser, so `N` does nothing while crouching.
 
 ## Audio
 

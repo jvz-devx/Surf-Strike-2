@@ -1,0 +1,4 @@
+interface:
+  display_name: "Real Audio (earshot)"
+  short_description: "Source, master and verify real recorded audio"
+  default_prompt: "Use $real-audio-earshot to source real CC0 recordings for these sounds, master them and report the measurements."

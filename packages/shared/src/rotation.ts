@@ -37,8 +37,8 @@ export const CHANGE_COUNTDOWN = 5;
  * (too few maps in a category) are filled from the other categories, up to
  * MAX_VOTE_MAPS distinct maps. The timed vote adds "Extend" after them.
  */
-export const VOTE_MAP_SLOTS: Readonly<Record<string, number>> = Object.freeze({ surf: 2, bhop: 2, tag: 1, zombies: 1 });
-export const MAX_VOTE_MAPS = 6;
+export const VOTE_MAP_SLOTS: Readonly<Record<string, number>> = Object.freeze({ surf: 2, bhop: 2, tag: 1, zombies: 1, infected: 1 });
+export const MAX_VOTE_MAPS = 7;
 /** An RTV request passes once a third of the non-spectating players voted yes: ceil(voters / 3), min 1. */
 export const RTV_RATIO = 1 / 3;
 export const RTV_BLOCK = 20; // seconds after map start

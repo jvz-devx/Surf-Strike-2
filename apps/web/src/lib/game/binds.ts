@@ -23,8 +23,18 @@ export const DEFAULT_BINDS: Readonly<Record<string, string>> = Object.freeze({
 	r: 'restart',
 	'`': 'toggleconsole',
 	mouse1: '+attack',
-	mouse2: '+attack2'
+	mouse2: '+attack2',
+	e: 'beacon',
+	n: 'moab'
 });
+
+/**
+ * Defaults added after binds were first saved. A saved table that predates
+ * one gets it once (when the key is free and the command unbound); the
+ * offered list is stored next to the binds so a later unbind sticks.
+ */
+export const ADDED_DEFAULTS: readonly string[] = Object.freeze(['e', 'n']);
+const OFFERED_KEY = `${STORAGE_KEYS.binds}.offered`;
 
 /** Keys that can never be bound (browser/UI reserved). */
 const RESERVED = new Set(['escape']);
@@ -62,8 +72,21 @@ export class Binds {
 
 	constructor(private store: KeyValueStore) {
 		const saved = readJson<Record<string, string>>(store, STORAGE_KEYS.binds);
-		this.table =
-			saved && typeof saved === 'object' && !Array.isArray(saved) ? { ...saved } : { ...DEFAULT_BINDS };
+		if (!saved || typeof saved !== 'object' || Array.isArray(saved)) {
+			this.table = { ...DEFAULT_BINDS };
+			return;
+		}
+		this.table = { ...saved };
+		const offered = readJson<string[]>(store, OFFERED_KEY);
+		const seen = new Set(Array.isArray(offered) ? offered : []);
+		const missing = ADDED_DEFAULTS.filter((k) => !seen.has(k));
+		if (missing.length === 0) return;
+		const bound = new Set(Object.values(this.table));
+		for (const k of missing) {
+			const cmd = DEFAULT_BINDS[k];
+			if (cmd !== undefined && !(k in this.table) && !bound.has(cmd)) this.table[k] = cmd;
+		}
+		this.save();
 	}
 
 	get(key: string): string | undefined {
@@ -98,5 +121,6 @@ export class Binds {
 
 	private save(): void {
 		writeJson(this.store, STORAGE_KEYS.binds, this.table);
+		writeJson(this.store, OFFERED_KEY, ADDED_DEFAULTS);
 	}
 }

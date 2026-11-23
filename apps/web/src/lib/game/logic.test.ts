@@ -100,16 +100,17 @@ describe('vote labels', () => {
 		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Title', kind: 'bhop' }))).toBe('Bhop · Title');
 		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Quay', kind: 'tag' }))).toBe('Tag · Quay');
 		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Lab', kind: 'zombies' }))).toBe('Zombies · Lab');
+		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Outpost', kind: 'infected' }))).toBe('Infected · Outpost');
 		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => undefined)).toBe('x');
 	});
 });
 
 describe('vote key routing', () => {
 	const none = { mapVoteOptions: 0, rtvRequestOpen: false };
-	it('map vote open: 1-7 vote, ahead of binds', () => {
-		const s = { mapVoteOptions: 7, rtvRequestOpen: false };
-		for (let k = 1; k <= 7; k++) expect(routeVoteKey(String(k), s)).toEqual({ kind: 'mapVote', option: k });
-		expect(routeVoteKey('8', s)).toBeNull();
+	it('map vote open: 1-8 vote, ahead of binds', () => {
+		const s = { mapVoteOptions: 8, rtvRequestOpen: false };
+		for (let k = 1; k <= 8; k++) expect(routeVoteKey(String(k), s)).toEqual({ kind: 'mapVote', option: k });
+		expect(routeVoteKey('9', s)).toBeNull();
 		expect(routeVoteKey('w', s)).toBeNull();
 		// Fewer options: higher keys are still swallowed (no weapon switch mid-vote).
 		expect(routeVoteKey('6', { mapVoteOptions: 4, rtvRequestOpen: false })).toEqual({ kind: 'mapVote', option: 6 });

@@ -28,6 +28,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		modeFamily: 'race',
 		tag: null,
 		zombies: null,
+		infected: null,
 		maps: [
 			{ id: 'surf_aurora', title: 'Aurora', kind: 'surf', difficulty: 'easy' },
 			{ id: 'surf_ember', title: 'Ember', kind: 'surf', difficulty: 'hard' },

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import type { MapDef } from '@surf/shared';
-import { CHANGE_COUNTDOWN, RTV_BLOCK, RTV_DECLINE_COOLDOWN, RTV_REQUEST_DURATION, VOTE_DURATION } from '@surf/shared';
+import { CHANGE_COUNTDOWN, MAX_VOTE_MAPS, RTV_BLOCK, RTV_DECLINE_COOLDOWN, RTV_REQUEST_DURATION, VOTE_DURATION } from '@surf/shared';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
 import { sleep, TestClient, testMap } from './test-helpers.ts';
@@ -95,7 +95,7 @@ describe('rtv request', () => {
 		assert.deepEqual(end, { type: 'rtvRequestEnd', passed: true, reason: 'passed', cooldown: 0 });
 		const vs = await d.waitFor('voteStart', () => true, n);
 		assert.equal(vs.rtv, true);
-		assert.equal(vs.options.length, 6);
+		assert.equal(vs.options.length, Math.min(MAX_VOTE_MAPS, MAPS.length - 1));
 		assert.equal(vs.options.some((o) => o.kind === 'extend'), false);
 		assert.ok(vs.options.some((o) => o.kind === 'map' && o.mapId === 'surf_e'), 'nominated map offered');
 		const ids = vs.options.map((o) => (o.kind === 'map' ? o.mapId : ''));

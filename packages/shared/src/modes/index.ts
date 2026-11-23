@@ -10,13 +10,13 @@
 import { BHOP_CVARS, SURF_CVARS, type Cvars } from '../cvars.ts';
 import type { MapDef } from '../maps/types.ts';
 
-export type GameModeId = 'surf' | 'bhop' | 'tag' | 'zombies';
+export type GameModeId = 'surf' | 'bhop' | 'tag' | 'zombies' | 'infected';
 
 /**
  * Rule family. 'race': RunTracker timer, start/end/stage/checkpoint zones,
  * run validation and leaderboards. Any other family has its own rules module.
  */
-export type ModeFamily = 'race' | 'tag' | 'coop';
+export type ModeFamily = 'race' | 'tag' | 'coop' | 'infected';
 
 /** Scoreboard columns besides the name (shown in this order). */
 export type ScoreColumn = 'rank' | 'pb' | 'score' | 'kills' | 'deaths' | 'status' | 'ping';
@@ -54,6 +54,12 @@ export const ZOMBIES_CVARS: Readonly<Cvars> = Object.freeze({
 	sv_airaccelerate: 30,
 	sv_enablebunnyhopping: 0
 });
+
+/**
+ * Infected physics: same run-and-gun profile as zombies (capped bhop, lower
+ * air acceleration, movement speeds driven by the held weapon / claws).
+ */
+export const INFECTED_CVARS: Readonly<Cvars> = ZOMBIES_CVARS;
 
 const RACE_COLUMNS: readonly ScoreColumn[] = ['rank', 'pb', 'status', 'ping'];
 
@@ -93,6 +99,15 @@ export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.free
 		cvars: ZOMBIES_CVARS,
 		minPlayers: 1,
 		scoreColumns: ['kills', 'deaths', 'status', 'ping']
+	},
+	infected: {
+		id: 'infected',
+		label: 'Infected',
+		description: 'MW3-style infected: survive the timer or hunt with claws and throwing knives.',
+		family: 'infected',
+		cvars: INFECTED_CVARS,
+		minPlayers: 2,
+		scoreColumns: ['score', 'kills', 'deaths', 'status', 'ping']
 	}
 });
 
@@ -123,3 +138,4 @@ export function mapCvars(map: Pick<MapDef, 'kind' | 'cvars'>): Cvars {
 
 export * from './tag.ts';
 export * from './zombies/index.ts';
+export * from './infected/index.ts';

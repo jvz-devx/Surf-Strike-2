@@ -3,7 +3,7 @@
  * text). No DOM, no Svelte: unit-tested in node.
  */
 import { Status, TICK_RATE, formatTicks } from '@surf/shared';
-import type { ScoreRow } from '@surf/shared';
+import type { GameModeId, ScoreRow } from '@surf/shared';
 
 export { TICK_RATE };
 const MINUS = '−';
@@ -67,9 +67,29 @@ export function statusText(row: Pick<ScoreRow, 'status' | 'stage' | 'spectating'
 			return 'Survivor';
 		case Status.Down:
 			return 'Zombie';
+		case Status.Alpha:
+			return 'Alpha';
+		case Status.Infected:
+			return 'Infected';
 		default:
 			return 'Idle';
 	}
+}
+
+/** Scoreboard score cell: integer points in infected, seconds with one decimal in tag. */
+export function scoreText(score: number | undefined, mode: GameModeId): string {
+	const v = score ?? 0;
+	return mode === 'infected' ? String(Math.round(v)) : v.toFixed(1);
+}
+
+/** Scoreboard header of the deaths column (zombies counts turns, infected deaths). */
+export function deathsLabel(mode: GameModeId): string {
+	return mode === 'infected' ? 'Deaths' : 'Turned';
+}
+
+/** Infected scoreboard row highlight, from the row status. */
+export function infectedRowRole(row: Pick<ScoreRow, 'status'>): 'alpha' | 'infected' | null {
+	return row.status === Status.Alpha ? 'alpha' : row.status === Status.Infected ? 'infected' : null;
 }
 
 /**

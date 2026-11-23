@@ -15,7 +15,10 @@ import {
 	rgbToHex,
 	splitScoreboard,
 	stageText,
-	statusText
+	statusText,
+	scoreText,
+	deathsLabel,
+	infectedRowRole
 } from './format.js';
 
 describe('formatDelta', () => {
@@ -94,6 +97,21 @@ describe('scoreboard', () => {
 			true
 		);
 		expect(players.map((r) => r.name)).toEqual(['a', 'b', 'c']);
+	});
+
+	it('infected: Alpha/Infected status, integer score, Deaths header, row roles', () => {
+		expect(statusText(row({ status: Status.Alpha }))).toBe('Alpha');
+		expect(statusText(row({ status: Status.Infected }))).toBe('Infected');
+		expect(statusText(row({ status: Status.Alive }))).toBe('Survivor');
+		expect(scoreText(250, 'infected')).toBe('250');
+		expect(scoreText(149.6, 'infected')).toBe('150');
+		expect(scoreText(undefined, 'infected')).toBe('0');
+		expect(scoreText(42.25, 'tag')).toBe('42.3');
+		expect(deathsLabel('infected')).toBe('Deaths');
+		expect(deathsLabel('zombies')).toBe('Turned');
+		expect(infectedRowRole(row({ status: Status.Alpha }))).toBe('alpha');
+		expect(infectedRowRole(row({ status: Status.Infected }))).toBe('infected');
+		expect(infectedRowRole(row({ status: Status.Alive }))).toBeNull();
 	});
 });
 

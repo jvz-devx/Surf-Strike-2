@@ -98,6 +98,7 @@ import { loadSoloPb, mergeRecordsPush, recordFields, saveSoloPb, splitDelta, typ
 import { cycleTarget, findTargetByName, specTargets } from './spectate.js';
 import { browserStore, type KeyValueStore } from './storage.js';
 import { mapLabel, routeVoteKey, voteLabel } from './vote.js';
+import { InfectedClient, type InfHost } from './infected.js';
 import { ZombiesClient, type ZmHost } from './zombies.js';
 
 const FREEFLY_SPEED = 1000;
@@ -151,6 +152,20 @@ function statusPhase(s: number): RunTrackerPhase {
 	return 'idle';
 }
 
+/**
+ * First solo map: `?map=<id>` when it names a known map (rotation or sandbox),
+ * else DEFAULT_MAP_ID. A server's welcome still switches to the server's map.
+ */
+export function initialMapId(search: string): string {
+	try {
+		const id = new URLSearchParams(search).get('map')?.trim();
+		if (id && getMap(id)) return id;
+	} catch {
+		// malformed query: default map
+	}
+	return DEFAULT_MAP_ID;
+}
+
 export class Game implements CommandContext {
 	readonly hud = new HudState();
 	readonly api: GameApi;
@@ -190,6 +205,8 @@ export class Game implements CommandContext {
 	private tagViewKey = '';
 	/** Zombies mode client (docs/modes.md#zombies); null on other maps. */
 	private zm: ZombiesClient | null = null;
+	/** Infected mode client (docs/modes.md#infected); null on other maps. */
+	private inf: InfectedClient | null = null;
 	/** Physics cvars with the held weapon's max speed (zombies). */
 	private zmSv: Cvars = { ...SURF_CVARS };
 	private sv: Cvars = { ...SURF_CVARS };
@@ -300,7 +317,7 @@ export class Game implements CommandContext {
 			blur: () => this.releaseAll()
 		});
 
-		this.loadMap(DEFAULT_MAP_ID);
+		this.loadMap(initialMapId(typeof location !== 'undefined' ? location.search : ''));
 		this.startSoloRotation();
 
 		this.conn = new Connection(
@@ -479,6 +496,7 @@ export class Game implements CommandContext {
 		this.tagFlash = null;
 		this.refreshTagView(performance.now());
 		this.resetZombies();
+		this.resetInfected();
 		h.unofficial = false;
 		h.splitPopup = null;
 		const staged = def.layout === 'staged';
@@ -671,7 +689,10 @@ export class Game implements CommandContext {
 			case 'attack2':
 				if (this.spec) {
 					if (is) this.cycleSpectate(action === 'attack' ? 1 : -1);
-				} else this.zm?.press(action, is, performance.now());
+				} else {
+					this.zm?.press(action, is, performance.now());
+					this.inf?.press(action, is, performance.now());
+				}
 				break;
 		}
 	}
@@ -899,9 +920,10 @@ export class Game implements CommandContext {
 		}
 		switch (cmd.kind) {
 			case 'restart':
-				return this.zm ? this.zm.chatRestart(performance.now()) : this.restart();
 			case 'back':
-				return this.zm ? this.zm.chatRestart(performance.now()) : this.back();
+				if (this.inf) return this.infectedRestart();
+				if (this.zm) return this.zm.chatRestart(performance.now());
+				return cmd.kind === 'restart' ? this.restart() : this.back();
 			case 'spec':
 				return this.spectate(cmd.target);
 			case 'rtv':
@@ -973,6 +995,44 @@ export class Game implements CommandContext {
 		this.hud.zombies = this.zm.frame(performance.now(), false, 0);
 	}
 
+	/** (Re)create the infected client for the current map and connection (docs/modes.md#infected). */
+	private resetInfected(): void {
+		this.inf?.dispose();
+		this.inf = null;
+		if (this.gameMode.id !== 'infected') {
+			if (this.hud.infected) this.hud.infected = null;
+			return;
+		}
+		const host: InfHost = {
+			online: () => this.mode === 'online',
+			selfId: () => this.selfId,
+			send: (msg) => this.send(msg),
+			zombieRenderer: () => this.renderer?.zombies ?? null,
+			infectedRenderer: () => this.renderer?.infected ?? null,
+			name: (id) => this.remoteName(id),
+			notice: (text) => this.notice(text),
+			teleport: (x, y, z, yaw) => {
+				this.placeAt({ pos: { x, y, z }, yaw });
+				this.afterTeleport();
+			},
+			voteOpen: () => !!this.hud.vote && !this.hud.vote.result,
+			sound: (name, at) => this.audio.infected(name, at, this.currEye, this.yaw),
+			setZoom: (fov) => this.renderer?.setFov(fov ?? this.cvars.num('fov')),
+			push: (vx, vy) => {
+				this.player.velocity.x = vx;
+				this.player.velocity.y = vy;
+			}
+		};
+		this.inf = new InfectedClient(host, performance.now(), this.world);
+		this.hud.infected = this.inf.frame(performance.now(), false, 0);
+	}
+
+	/** Chat `!r`/`!b` in infected: solo respawns; online rounds restart by themselves. */
+	private infectedRestart(): void {
+		if (this.inf?.localFallouts) return this.respawnRandom();
+		this.notice('Infected rounds restart by themselves (use !rtv to change map).');
+	}
+
 	private isRace(): boolean {
 		return this.gameMode.family === 'race';
 	}
@@ -1009,10 +1069,24 @@ export class Game implements CommandContext {
 		}
 	}
 
+	/** E (`beacon`): infected plant a respawn beacon; other modes ignore it. */
+	beacon(): void {
+		if (this.spec) return;
+		this.inf?.placeBeacon(performance.now());
+	}
+
+	/** N (`moab`, also key 4): infected survivors call an earned M.O.A.B.; other modes ignore it. */
+	moab(): void {
+		if (this.spec) return;
+		this.inf?.callMoab(performance.now());
+	}
+
 	restart(): void {
 		if (this.spec) return;
 		// Zombies: R reloads (chat !r restarts, see sendChat).
 		if (this.zm) return this.zm.reload(performance.now());
+		// Infected: R reloads the primary.
+		if (this.inf) return this.inf.reload(performance.now());
 		if (!this.isRace()) {
 			if (this.tagState?.phase === 'playing') return this.notice('!r is disabled during a tag round.');
 			return this.respawnRandom();
@@ -1227,18 +1301,24 @@ export class Game implements CommandContext {
 			c.pitch = this.pitch;
 			c.yaw = this.yaw;
 			const zm = this.zm;
-			if (zm) {
-				// Zombies: weapon move speed; no movement while down.
+			const inf = this.inf;
+			const armed = zm ?? inf;
+			if (armed) {
+				// Zombies / infected: weapon (or claws) move speed; no movement while down.
 				Object.assign(this.zmSv, this.sv);
-				this.zmSv.sv_maxspeed = zm.maxSpeed(end);
-				if (!zm.down) playerMove(this.world, p, c, this.zmSv, TICK_INTERVAL);
+				this.zmSv.sv_maxspeed = armed.maxSpeed(end);
+				if (!armed.down) playerMove(this.world, p, c, this.zmSv, TICK_INTERVAL);
 			} else playerMove(this.world, p, c, this.sv, TICK_INTERVAL);
 			if (this.isRace()) {
 				const events = this.tracker.update(p, this.tick);
 				for (const ev of events) this.onRunEvent(ev, now);
 				this.recordGhostSample();
 			} else if (zm) zm.tick(end, p.origin, p.origin.z + eyeHeight(p), this.pitch, this.yaw, p.ducked);
-			else this.modeTick();
+			else if (inf) {
+				inf.tick(end, p.origin, p.origin.z + eyeHeight(p), this.pitch, this.yaw, p.ducked);
+				// No server round (solo / waiting): fall-outs respawn locally.
+				if (inf.localFallouts) this.modeTick();
+			} else this.modeTick();
 			if (p.jumped) this.audio.jump();
 			if (p.landedSpeed > 0) this.audio.land(p.landedSpeed);
 
@@ -1284,6 +1364,12 @@ export class Game implements CommandContext {
 					? this.zm.down
 						? Status.Down
 						: Status.Alive
+					: this.inf
+						? this.inf.isAlpha
+							? Status.Alpha
+							: this.inf.isInfected
+								? Status.Infected
+								: Status.Alive
 					: this.tagState?.it.includes(this.selfId)
 						? Status.Tagger
 						: Status.Runner;
@@ -1352,6 +1438,12 @@ export class Game implements CommandContext {
 			const v = this.zm.frame(now, !this.spec, Math.hypot(this.player.velocity.x, this.player.velocity.y));
 			if (this.hud.zombies !== v) this.hud.zombies = v;
 		}
+		if (this.inf) {
+			// Spectating: the HUD shows the target (tagViewId), local viewmodel and input are off.
+			this.inf.setSpectate(!!this.spec, this.spec && !this.spec.freeFly ? this.tagViewId() : null);
+			const v = this.inf.frame(now, !this.spec,Math.hypot(this.player.velocity.x, this.player.velocity.y));
+			if (this.hud.infected !== v) this.hud.infected = v;
+		}
 		this.updateGhost();
 		this.updateHud(now, view);
 		this.audio.update(Math.min(dt, 100) / 1000, {
@@ -1406,10 +1498,12 @@ export class Game implements CommandContext {
 				s.status !== Status.Spectating &&
 				rm.id !== specTarget &&
 				now - rm.buf.lastArrival < 3000 &&
-				!(this.zm?.isDown(rm.id) ?? false);
+				!(this.zm?.isDown(rm.id) ?? false) &&
+				!(this.inf?.isDown(rm.id) ?? false);
 			players.setPose(rm.id, s.x, s.y, s.z, s.yaw, (s.flags & FLAG_DUCKED) !== 0, visible);
 			players.setIt(rm.id, it?.includes(rm.id) ?? false);
 			players.setZombie(rm.id, this.zm?.isZombiePlayer(rm.id) ?? false);
+			players.setInfected(rm.id, this.inf?.roleOf(rm.id) ?? 'none');
 		}
 	}
 
@@ -1514,6 +1608,10 @@ export class Game implements CommandContext {
 			const z = this.zm.soloRow();
 			Object.assign(row, { status: z.alive ? Status.Alive : Status.Down, kills: z.kills, deaths: z.deaths, score: undefined, it: undefined });
 		}
+		if (this.inf) {
+			const z = this.inf.soloRow();
+			Object.assign(row, { status: Status.Alive, kills: z.kills, deaths: z.deaths, score: z.score, it: undefined });
+		}
 		this.hud.scoreboard = [row];
 	}
 
@@ -1591,6 +1689,8 @@ export class Game implements CommandContext {
 		if (s.mapVoteOptions === 0 && s.rtvRequestOpen && (option === 1 || option === 2)) return this.rtvVote(option === 1);
 		// Zombies: 1-4 pick a weapon unless a map vote is open.
 		if (this.zm && this.zm.slot(option, performance.now())) return;
+		// Infected: 1 primary, 2 pistol, 3 knife, 4 M.O.A.B. unless a map vote is open.
+		if (this.inf && this.inf.slot(option, performance.now())) return;
 		this.castMapVote(option);
 	}
 
@@ -1973,10 +2073,14 @@ export class Game implements CommandContext {
 				break;
 			case 'modeState':
 				if (m.mode === 'zombies') this.zm?.onModeState(m, now);
+				else if (m.mode === 'infected') this.inf?.onModeState(m, now);
 				else this.onModeState(m, now);
 				break;
 			case 'zm':
 				this.zm?.onEvent(m.ev, now);
+				break;
+			case 'inf':
+				this.inf?.onEvent(m.ev, now);
 				break;
 			case 'tagged':
 				this.onTagged(m.by, m.target, now);
@@ -2064,6 +2168,7 @@ export class Game implements CommandContext {
 		this.tagFlash = null;
 		this.refreshTagView(performance.now());
 		this.resetZombies();
+		this.resetInfected();
 		this.soloPb = loadSoloPb(this.store, this.map.id);
 		this.applyRecords();
 		this.recordGhost = null;
@@ -2082,6 +2187,8 @@ export class Game implements CommandContext {
 		this.offCvars();
 		this.zm?.dispose();
 		this.zm = null;
+		this.inf?.dispose();
+		this.inf = null;
 		this.conn.dispose();
 		this.input.dispose();
 		this.audio.dispose();

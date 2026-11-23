@@ -8,6 +8,7 @@ import { applyViewAngles, setThree, toThree } from './coords.js';
 import { buildEffects, type Effects } from './effects.js';
 import { verticalFovFromHorizontal43 } from './fov.js';
 import { applyTheme, createSharedUniforms, type SharedUniforms } from './materials.js';
+import { InfectedRenderer } from './infected.js';
 import { GhostAvatar, RemotePlayers } from './players.js';
 import { Sky } from './sky.js';
 import { ZombieRenderer } from './zombies.js';
@@ -23,6 +24,8 @@ export class GameRenderer {
 	readonly ghost = new GhostAvatar();
 	/** Zombies mode: zombies, corpses, tracers and the first-person viewmodel (docs/modes.md#zombies). */
 	readonly zombies = new ZombieRenderer();
+	/** Infected mode: throwing knives and the last-survivor UAV pulse (docs/modes.md#infected). */
+	readonly infected = new InfectedRenderer();
 	private shared: SharedUniforms = createSharedUniforms();
 	private sky = new Sky();
 	private hemi = new THREE.HemisphereLight(0xffffff, 0x222222, 1);
@@ -40,7 +43,7 @@ export class GameRenderer {
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 		this.camera = new THREE.PerspectiveCamera(verticalFovFromHorizontal43(90), 16 / 9, 2, 250000);
 		this.scene.fog = this.fog;
-		this.scene.add(this.sky.mesh, this.hemi, this.sun, this.sun.target, this.players.group, this.ghost.group, this.zombies.group);
+		this.scene.add(this.sky.mesh, this.hemi, this.sun, this.sun.target, this.players.group, this.ghost.group, this.zombies.group, this.infected.group);
 		this.observer = new ResizeObserver(() => this.resize());
 		this.observer.observe(canvas);
 		this.resize();
@@ -95,6 +98,7 @@ export class GameRenderer {
 		this.world = this.zones = this.effects = null;
 		this.players.clear();
 		this.zombies.reset();
+		this.infected.clear();
 	}
 
 	/** Eye position in Source coordinates; Source view angles in degrees. */
@@ -107,6 +111,7 @@ export class GameRenderer {
 		this.shared.uTime.value = timeSec;
 		this.effects?.update(timeSec);
 		this.sky.follow(this.camera);
+		this.infected.update(timeSec * 1000);
 		this.renderer.render(this.scene, this.camera);
 		this.zombies.update(timeSec * 1000);
 		if (this.zombies.vmVisible) {
@@ -124,6 +129,7 @@ export class GameRenderer {
 		this.players.dispose();
 		this.ghost.dispose();
 		this.zombies.dispose();
+		this.infected.dispose();
 		this.sky.dispose();
 		this.renderer.dispose();
 		this.renderer.forceContextLoss();

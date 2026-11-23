@@ -448,7 +448,10 @@ export class Lobby {
 			case 'fire':
 			case 'reload':
 			case 'loadout':
-				// Zombies weapons (docs/modes.md#zombies); the mode validates every field.
+			case 'throwKnife':
+			case 'placeBeacon':
+			case 'callMoab':
+				// Zombies/infected weapons (docs/modes.md); the mode validates every field.
 				if (!c.spectating) this.mode.message?.(c, msg);
 				return;
 			case 'admin':

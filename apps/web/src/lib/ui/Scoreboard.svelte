@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { gameMode, type GameModeId, type ScoreColumn, type ScoreRow } from '@surf/shared';
-	import { formatClock, formatRunTime, splitScoreboard, statusText } from '#lib/ui/format.js';
+	import { deathsLabel, formatClock, formatRunTime, infectedRowRole, scoreText, splitScoreboard, statusText } from '#lib/ui/format.js';
 
 	let {
 		rows,
@@ -24,15 +24,15 @@
 
 	const columns = $derived(gameMode(mode).scoreColumns);
 	const split = $derived(splitScoreboard(rows, columns.includes('score') || columns.includes('kills')));
-	const HEAD: Record<ScoreColumn, { label: string; num: boolean; width: number }> = {
+	const HEAD: Record<ScoreColumn, { label: string; num: boolean; width: number }> = $derived({
 		rank: { label: 'Rank', num: true, width: 12 },
 		pb: { label: 'PB', num: true, width: 18 },
-		score: { label: 'Score', num: true, width: 22 },
-		kills: { label: 'Kills', num: true, width: 14 },
-		deaths: { label: 'Turned', num: true, width: 12 },
-		status: { label: 'Status', num: false, width: 24 },
-		ping: { label: 'Ping', num: true, width: 12 }
-	};
+		score: { label: 'Score', num: true, width: mode === 'infected' ? 13 : 22 },
+		kills: { label: 'Kills', num: true, width: mode === 'infected' ? 10 : 14 },
+		deaths: { label: deathsLabel(mode), num: true, width: mode === 'infected' ? 11 : 12 },
+		status: { label: 'Status', num: false, width: mode === 'infected' ? 16 : 24 },
+		ping: { label: 'Ping', num: true, width: mode === 'infected' ? 10 : 12 }
+	});
 	const nameWidth = $derived(100 - columns.reduce((n, c) => n + HEAD[c].width, 0));
 </script>
 
@@ -60,15 +60,16 @@
 			</thead>
 			<tbody>
 				{#each split.players as r (r.id)}
-					<tr class:it={r.it}>
-						<td class="name">{#if r.it}<span class="it-mark">IT</span> {/if}{r.name}{#if r.admin} <span class="admin-mark" title="Server admin">ADMIN</span>{/if}</td>
+					{@const inf = mode === 'infected' ? infectedRowRole(r) : null}
+					<tr class:it={r.it} class:infected={inf === 'infected'} class:alpha={inf === 'alpha'}>
+						<td class="name">{#if r.it}<span class="it-mark">IT</span> {/if}{#if inf}<span class="inf-mark" class:alpha={inf === 'alpha'}>{inf === 'alpha' ? 'ALPHA' : 'INFECTED'}</span> {/if}{r.name}{#if r.admin} <span class="admin-mark" title="Server admin">ADMIN</span>{/if}</td>
 						{#each columns as col (col)}
 							{#if col === 'rank'}
 								<td class="num ss-num">{r.rank === null ? '—' : `#${r.rank}`}</td>
 							{:else if col === 'pb'}
 								<td class="num ss-num">{r.pbTicks === null ? '—' : formatRunTime(r.pbTicks)}</td>
 							{:else if col === 'score'}
-								<td class="num ss-num">{(r.score ?? 0).toFixed(1)}</td>
+								<td class="num ss-num">{scoreText(r.score, mode)}</td>
 							{:else if col === 'kills'}
 								<td class="num ss-num">{r.kills ?? 0}</td>
 							{:else if col === 'deaths'}
@@ -170,6 +171,33 @@
 	}
 	tr.it td.name {
 		color: #ff9a9a;
+	}
+	.inf-mark {
+		display: inline-block;
+		padding: 0 6px;
+		margin-right: 4px;
+		border-radius: 3px;
+		background: #8e1018;
+		color: #fff;
+		font-size: 0.72em;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+	}
+	.inf-mark.alpha {
+		background: #d6680c;
+		color: #1a0d00;
+	}
+	tr.infected td {
+		background: rgba(142, 16, 24, 0.14);
+	}
+	tr.infected td.name {
+		color: #ff8a8a;
+	}
+	tr.alpha td {
+		background: rgba(214, 104, 12, 0.16);
+	}
+	tr.alpha td.name {
+		color: #ffc27a;
 	}
 	th {
 		position: sticky;
