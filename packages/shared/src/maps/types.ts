@@ -81,7 +81,17 @@ export interface Spawn {
  * Brush descriptions. The collision module turns each into a convex solid
  * (planes + bevels + face polygons); the renderer draws the face polygons.
  */
-export type BrushDef =
+/**
+ * Fields every brush may carry. `solid: false` makes a "fake" brush: rendered
+ * like any other but with no collision (players pass through it — hide and
+ * seek clip-through walls/props). Defaults to solid.
+ */
+export interface BrushCommon {
+	solid?: boolean;
+}
+
+export type BrushDef = BrushCommon &
+	(
 	| { type: 'box'; min: Vec3; max: Vec3; material: string }
 	| {
 			/**
@@ -101,7 +111,8 @@ export type BrushDef =
 			side: 'both' | 'left' | 'right';
 			material: string;
 	  }
-	| { type: 'convex'; planes: Plane[]; material: string };
+	| { type: 'convex'; planes: Plane[]; material: string }
+	);
 
 export type Zone =
 	| { type: 'start' | 'end'; min: Vec3; max: Vec3 }
@@ -112,7 +123,18 @@ export type Zone =
 			max: Vec3;
 			respawn: Spawn;
 	  }
-	| { type: 'teleport'; min: Vec3; max: Vec3; to: 'stage' | 'start' };
+	| {
+			type: 'teleport';
+			min: Vec3;
+			max: Vec3;
+			to: 'stage' | 'start';
+			/**
+			 * Fixed destination (map teleporters, e.g. hide and seek secret
+			 * passages). When set it overrides `to`: the player is moved to
+			 * `dest.pos` facing `dest.yaw` with velocity zeroed.
+			 */
+			dest?: Spawn;
+	  };
 
 export interface MaterialDef {
 	/** Base albedo, hex (0xRRGGBB). */
