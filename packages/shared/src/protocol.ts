@@ -3,6 +3,7 @@
  * JSON text frames for reliable events, binary frames for state/snapshots.
  */
 import type { Cvars } from './cvars.ts';
+import type { MapDef } from './maps/types.ts';
 import type { GameModeId } from './modes/index.ts';
 import type { HnsEvent, HnsStateView } from './modes/hns.ts';
 import type { InfEvent, InfStateView } from './modes/infected/game.ts';
@@ -193,6 +194,8 @@ export interface AdminMapInfo {
 	id: string;
 	title: string;
 	kind: GameModeId;
+	/** Map size tag, for maps that come in several sizes (MapDef.size). */
+	size?: MapDef['size'];
 	enabled: boolean;
 }
 

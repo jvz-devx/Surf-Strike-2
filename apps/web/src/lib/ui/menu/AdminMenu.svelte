@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { AdminState } from '@surf/shared';
+	import { mapTitle, type AdminState } from '@surf/shared';
 	import type { GameApi } from '#lib/game/contract.js';
 	import Tabs from '#lib/ui/menu/Tabs.svelte';
 	import Toggle from '#lib/ui/menu/Toggle.svelte';
@@ -103,7 +103,7 @@
 							<div class="grow">
 								{#key `${m.enabled}:${reset}`}
 									<Toggle
-										label={m.title}
+										label={mapTitle(m)}
 										hint={current ? `${m.id} · current map` : m.id}
 										checked={m.enabled}
 										onset={(on) => {

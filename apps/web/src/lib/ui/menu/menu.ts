@@ -2,7 +2,7 @@
  * Pure helpers for the Esc menu (docs/ui.md#esc-menu): map grouping by
  * gamemode, filtering, settings sections and their cvar defaults. No DOM.
  */
-import { GAME_MODES, GAME_MODE_IDS, type AdminMapInfo } from '@surf/shared';
+import { GAME_MODES, GAME_MODE_IDS, MAP_SIZE_LABELS, type AdminMapInfo } from '@surf/shared';
 import type { MapListEntry } from '#lib/game/contract.js';
 import { CLIENT_CVARS, type CvarDef } from '#lib/game/cvars.js';
 
@@ -24,12 +24,23 @@ export function difficultyRank(difficulty: string): number {
 	return i < 0 ? DIFFICULTY_ORDER.length : i;
 }
 
-/** Maps by difficulty (easy first), then title, then id. Does not mutate. */
+/** Sort rank of a size tag: medium before large; maps without one first. */
+export function sizeRank(size: MapListEntry['size']): number {
+	return size === 'medium' ? 1 : size === 'large' ? 2 : 0;
+}
+
+/** The badge of a map row: its size when it comes in sizes, else its difficulty. */
+export function mapTag(m: Pick<MapListEntry, 'difficulty' | 'size'>): { label: string; cls: string } {
+	return m.size ? { label: MAP_SIZE_LABELS[m.size], cls: `size-${m.size}` } : { label: m.difficulty, cls: `diff-${m.difficulty.toLowerCase()}` };
+}
+
+/** Maps by difficulty (easy first), then title, then size, then id. Does not mutate. */
 export function sortMaps(maps: readonly MapListEntry[]): MapListEntry[] {
 	return [...maps].sort(
 		(a, b) =>
 			difficultyRank(a.difficulty) - difficultyRank(b.difficulty) ||
 			a.title.localeCompare(b.title) ||
+			sizeRank(a.size) - sizeRank(b.size) ||
 			a.id.localeCompare(b.id)
 	);
 }
@@ -60,12 +71,12 @@ export function groupMapsByMode(
 	return kinds.map((k) => ({ id: k, label: modeLabel(k), maps: sortMaps(byKind.get(k) ?? []) }));
 }
 
-/** Case-insensitive match on title or id; every whitespace-separated word must match. */
+/** Case-insensitive match on title, id or size; every whitespace-separated word must match. */
 export function filterMaps(maps: readonly MapListEntry[], query: string): MapListEntry[] {
 	const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
 	if (words.length === 0) return [...maps];
 	return maps.filter((m) => {
-		const hay = `${m.title} ${m.id}`.toLowerCase();
+		const hay = `${m.title} ${m.id} ${m.size ?? ''}`.toLowerCase();
 		return words.every((w) => hay.includes(w));
 	});
 }
@@ -149,7 +160,7 @@ export function groupAdminMaps(maps: readonly AdminMapInfo[], order: readonly st
 	return kinds.map((k) => ({
 		id: k,
 		label: modeLabel(k),
-		maps: [...(byKind.get(k) ?? [])].sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id))
+		maps: [...(byKind.get(k) ?? [])].sort((a, b) => a.title.localeCompare(b.title) || sizeRank(a.size) - sizeRank(b.size) || a.id.localeCompare(b.id))
 	}));
 }
 

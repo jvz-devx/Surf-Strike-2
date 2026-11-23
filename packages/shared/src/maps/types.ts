@@ -9,6 +9,11 @@ export interface MapDef {
 	/** The map's gamemode (docs/modes.md). Race modes (surf, bhop) use start/end zones. */
 	kind: GameModeId;
 	difficulty: 'easy' | 'hard';
+	/**
+	 * Map size, for maps that come in several sizes under one title (hns_lido /
+	 * hns_lido_m). Shown instead of the difficulty tag and after the title.
+	 */
+	size?: 'medium' | 'large';
 	/** Race maps: 'linear' (checkpoints) or 'staged'. Tag maps: 'open'. Zombies maps: 'linear'. */
 	layout: 'linear' | 'staged' | 'open';
 	/** Physics overrides on top of the mode's profile (GAME_MODES[kind].cvars). */

@@ -37,6 +37,7 @@ import {
 	playerMove,
 	usernameError,
 	randomSpawn,
+	mapTitle,
 	RunTracker,
 	sanitizeText,
 	Status,
@@ -292,7 +293,7 @@ export class Game implements CommandContext {
 		// First visit (no session, never chose guest): account panel instead of the old name prompt.
 		this.hud.authPanelOpen = !this.session && !isGuest(this.store);
 		this.hud.cvars = this.cvars.snapshot();
-		this.hud.maps = MAPS.map((m) => ({ id: m.id, title: m.title, kind: m.kind, difficulty: m.difficulty }));
+		this.hud.maps = MAPS.map((m) => ({ id: m.id, title: m.title, kind: m.kind, difficulty: m.difficulty, ...(m.size && { size: m.size }) }));
 
 		this.con = new DevConsole({
 			print: (t, k) => this.print(t, k),
@@ -500,7 +501,7 @@ export class Game implements CommandContext {
 		this.renderer?.loadMap(def);
 		const h = this.hud;
 		h.mapId = def.id;
-		h.mapTitle = def.title;
+		h.mapTitle = mapTitle(def);
 		h.gameMode = this.gameMode.id;
 		h.modeFamily = this.gameMode.family;
 		this.tagState = null;
@@ -2002,7 +2003,7 @@ export class Game implements CommandContext {
 
 	status(): string[] {
 		return [
-			`map: ${this.map.id} (${this.map.title})`,
+			`map: ${this.map.id} (${mapTitle(this.map)})`,
 			`mode: ${this.mode}${this.mode === 'online' ? ` (${this.conn.client?.url ?? ''}, id ${this.selfId})` : ''}`,
 			`players: ${this.hud.playerCount}`,
 			`tick: ${this.tick}`
@@ -2202,7 +2203,7 @@ export class Game implements CommandContext {
 		this.hud.online = true;
 		this.hud.connecting = false;
 		this.updatePlayerCount();
-		this.notice(`Connected. Playing ${this.map.title} online.`);
+		this.notice(`Connected. Playing ${mapTitle(this.map)} online.`);
 		this.print(`Connected to ${client.url}`);
 	}
 

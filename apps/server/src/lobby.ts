@@ -20,6 +20,7 @@ import type {
 	VoteOption
 } from '@surf/shared';
 import {
+	mapTitle,
 	encodeSnapshot,
 	decodeState,
 	mapCvars as sharedMapCvars,
@@ -782,7 +783,7 @@ export class Lobby {
 
 	private mapLabel(id: string): string {
 		const m = this.maps.get(id);
-		return m ? `${modeOf(m).label} · ${m.title}` : id;
+		return m ? `${modeOf(m).label} · ${mapTitle(m)}` : id;
 	}
 
 	/**
@@ -910,7 +911,7 @@ export class Lobby {
 		this.rtvInitiator = null;
 		const wait = this.rotation.rtvAvailableIn(this.now());
 		if (wait) this.broadcast({ type: 'rtvCooldown', seconds: wait.seconds, reason: wait.reason });
-		this.system(`Map changed to ${map.title}.`);
+		this.system(`Map changed to ${mapTitle(map)}.`);
 		this.log(`map ${map.id}`);
 	}
 

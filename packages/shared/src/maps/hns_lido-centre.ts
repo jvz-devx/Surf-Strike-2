@@ -51,6 +51,7 @@ import {
 	type MapBuilder,
 	type Rect
 } from './hns-props.ts';
+import type { LidoVariant } from './hns_lido-variant.ts';
 
 export const CAGE = rect(-224, 224, 448, 800);
 export const CAGE_INNER = rect(-208, 208, 464, 784);
@@ -65,15 +66,15 @@ export const KIOSK3 = rect(1088, 1280, 384, 576);
 const HEDGE = 'hedge';
 const HEDGE_H = 136;
 
-export function buildCentre(b: MapBuilder, holes: Rect[]): void {
-	plaza(b);
+export function buildCentre(b: MapBuilder, holes: Rect[], variant: LidoVariant): void {
+	plaza(b, variant.size === 'medium');
 	cage(b);
 	bandstand(b);
 	kiosks(b);
 	playground(b);
 	maze(b);
 	gardens(b);
-	sewer(b, holes);
+	sewer(b, holes, variant.sewerX1);
 	b.loops.push(
 		'Plaza: round the fountain and the bandstand (under the stage for the brave)',
 		'Maze: braided loops round the centre',
@@ -81,7 +82,7 @@ export function buildCentre(b: MapBuilder, holes: Rect[]): void {
 	);
 }
 
-function plaza(b: MapBuilder): void {
+function plaza(b: MapBuilder, medium: boolean): void {
 	const { x, y } = FOUNTAIN;
 	// Fountain: rim, water, tiered pedestal and a statue.
 	b.box(x - 192, y - 192, 0, x + 192, y - 168, 24, 'marble');
@@ -107,6 +108,8 @@ function plaza(b: MapBuilder): void {
 			[900, -500],
 			[-900, -600]
 		] as const) {
+			// The medium size has the closed arcade houses along its east edge.
+			if (medium && tx > 1100) continue;
 			b.box(tx - 64, ty - 64, 0, tx + 64, ty + 64, 24, 'stone');
 			putC(b, tree(136, 80), tx, ty, 24);
 		}
@@ -386,8 +389,8 @@ function gardens(b: MapBuilder): void {
 	b.spot('shed-roof', 'Garden shed roof (compost bin climb)', v(500, 3700, 128), 'roof');
 }
 
-function sewer(b: MapBuilder, holes: Rect[]): void {
-	const s = SEWER;
+function sewer(b: MapBuilder, holes: Rect[], x1: number): void {
+	const s = rect(SEWER.x0, x1, SEWER.y0, SEWER.y1);
 	const z = SEWER_Z;
 	b.room('sewer tunnel', 'smugglers room', 'drain alcove', 'crawl pipe');
 	b.as('struct', () => {
@@ -402,14 +405,14 @@ function sewer(b: MapBuilder, holes: Rect[]): void {
 		b.box(s.x1, s.y0, z - 32, s.x1 + 32, s.y1, -32, 'sewer_brick');
 	});
 	// Underpass stairs up to the avenue at the east end.
-	const hole = rect(1168, 1472, 1280, 1376);
+	const hole = rect(x1 - 304, x1, 1280, 1376);
 	holes.push(hole);
-	flight(b, { x: 1184, y: 1328 }, '+x', 12, 96, z, 'concrete_stair');
-	railing(b, 'x', 1168, 1472, 1278, 0, 'iron');
-	railing(b, 'y', 1282, 1376, 1166, 0, 'iron');
+	flight(b, { x: x1 - 288, y: 1328 }, '+x', 12, 96, z, 'concrete_stair');
+	railing(b, 'x', x1 - 304, x1, 1278, 0, 'iron');
+	railing(b, 'y', 1282, 1376, x1 - 306, 0, 'iron');
 	// Pipes and lamps along the tunnel, crates on the walkways.
 	b.as('prop', () => {
-		b.box(s.x0, s.y1 - 24, -72, 1168, s.y1 - 8, -56, 'pipe');
+		b.box(s.x0, s.y1 - 24, -72, x1 - 304, s.y1 - 8, -56, 'pipe');
 		for (let x = s.x0 + 200; x < s.x1 - 100; x += 480) {
 			b.box(x, s.y0, -96, x + 16, s.y0 + 4, -80, 'lampglow');
 			put(b, crate(40, k(x) ? 'crate' : 'crate_dark'), x + 120, s.y0 + 8, z);

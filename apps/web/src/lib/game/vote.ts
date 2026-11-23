@@ -3,15 +3,17 @@
  * number-key routing for the map vote and the RTV request
  * (docs/ui.md#vote-panel, docs/gameplay.md#map-rotation-and-voting).
  */
-import { EXTEND_DURATION, gameMode, getMap, type VoteOption } from '@surf/shared';
+import { EXTEND_DURATION, gameMode, getMap, mapTitle, type MapDef, type VoteOption } from '@surf/shared';
 
-/** Map label with its category: "Surf · Kessler" (the id when the map is unknown). */
-export function mapLabel(id: string, lookup: (id: string) => { title: string; kind: string } | undefined = getMap): string {
+type MapNames = Pick<MapDef, 'title' | 'size'> & { kind: string };
+
+/** Map label with its category: "Surf · Kessler", "Hide and Seek · Lido Bay (Medium)" (the id when the map is unknown). */
+export function mapLabel(id: string, lookup: (id: string) => MapNames | undefined = getMap): string {
 	const m = lookup(id);
-	return m ? `${gameMode(m.kind).label} · ${m.title}` : id;
+	return m ? `${gameMode(m.kind).label} · ${mapTitle(m)}` : id;
 }
 
-export function voteLabel(o: VoteOption, lookup: (id: string) => { title: string; kind: string } | undefined = getMap): string {
+export function voteLabel(o: VoteOption, lookup: (id: string) => MapNames | undefined = getMap): string {
 	if (o.kind === 'extend') return `Extend ${Math.round(EXTEND_DURATION / 60)} min`;
 	return mapLabel(o.mapId, lookup);
 }

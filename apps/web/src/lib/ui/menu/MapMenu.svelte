@@ -1,7 +1,8 @@
 <script lang="ts">
 	import type { MapListEntry } from '#lib/game/contract.js';
+	import { mapTitle } from '@surf/shared';
 	import Tabs from '#lib/ui/menu/Tabs.svelte';
-	import { filterMaps, groupMapsByMode, mapMenuState, mapRowPickable, modeLabel } from '#lib/ui/menu/menu.js';
+	import { filterMaps, groupMapsByMode, mapMenuState, mapTag, mapRowPickable, modeLabel } from '#lib/ui/menu/menu.js';
 
 	let {
 		maps,
@@ -74,7 +75,7 @@
 <header class="head">
 	<h2 id="ss-menu-title">Change map</h2>
 	{#if currentMap}
-		<span class="now">Now playing <strong>{currentMap.title}</strong> · {modeLabel(currentMap.kind)}</span>
+		<span class="now">Now playing <strong>{mapTitle(currentMap)}</strong> · {modeLabel(currentMap.kind)}</span>
 	{/if}
 </header>
 
@@ -111,7 +112,7 @@
 								class="map"
 								class:current
 								aria-current={current ? 'true' : undefined}
-								title={request ? `Request map vote (${m.title})` : undefined}
+								title={request ? `Request map vote (${mapTitle(m)})` : undefined}
 								onclick={() => onpick(m.id)}
 							>
 								{@render entry(m, current)}
@@ -136,7 +137,8 @@
 	<span class="id">{m.id}</span>
 	{#if current}<span class="tag-now">Current</span>{/if}
 	{#if m.disabled}<span class="tag-off">Disabled by admin</span>{/if}
-	<span class="diff diff-{m.difficulty.toLowerCase()}">{m.difficulty}</span>
+	{@const tag = mapTag(m)}
+	<span class="diff {tag.cls}">{tag.label}</span>
 {/snippet}
 
 <style>
@@ -294,6 +296,11 @@
 	.diff-easy {
 		color: var(--good);
 		border-color: rgba(95, 224, 122, 0.45);
+	}
+	.size-medium,
+	.size-large {
+		color: var(--accent);
+		border-color: var(--panel-border-strong);
 	}
 	.diff-hard {
 		color: var(--bad);

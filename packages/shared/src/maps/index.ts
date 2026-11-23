@@ -19,7 +19,7 @@ import { zombies_lowtide } from './zombies_lowtide.ts';
 import { infected_outpost } from './infected_outpost.ts';
 import { infected_terminal } from './infected_terminal.ts';
 import { infected_foundry } from './infected_foundry.ts';
-import { hns_lido } from './hns_lido.ts';
+import { hns_lido, hns_lido_m } from './hns_lido.ts';
 import { SANDBOX } from './sandbox.ts';
 
 /**
@@ -64,7 +64,8 @@ export const MAPS: MapDef[] = [
 	infected_outpost,
 	infected_terminal,
 	infected_foundry,
-	hns_lido
+	hns_lido,
+	hns_lido_m
 ].map(liftSpawns);
 liftSpawns(SANDBOX);
 
@@ -80,6 +81,14 @@ const byId = new Map<string, MapDef>([...MAPS, SANDBOX].map((m) => [m.id, m]));
 /** Look up a rotation map or the sandbox by id. */
 export function getMap(id: string): MapDef | undefined {
 	return byId.get(id);
+}
+
+/** Tag texts of MapDef.size. */
+export const MAP_SIZE_LABELS: Readonly<Record<'medium' | 'large', string>> = Object.freeze({ medium: 'Medium', large: 'Large' });
+
+/** Title for text-only places (votes, chat): maps that come in sizes name theirs ("Lido Bay (Medium)"). */
+export function mapTitle(m: Pick<MapDef, 'title' | 'size'>): string {
+	return m.size ? `${m.title} (${MAP_SIZE_LABELS[m.size]})` : m.title;
 }
 
 /** Rotation maps of one gamemode, in rotation order. */

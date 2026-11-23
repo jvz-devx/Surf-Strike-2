@@ -14,7 +14,12 @@
  * Area modules: ./hns_lido-hotel.ts, ./hns_lido-town.ts, ./hns_lido-centre.ts,
  * ./hns_lido-east.ts, ./hns_lido-coast.ts; furniture and wall builders in
  * ./hns-props.ts. Secrets, teleporters, crawlspaces, rooms and loops are
- * recorded in `LIDO` for the tests and docs.
+ * recorded in `LIDO` / `LIDO_MEDIUM` for the tests and docs.
+ *
+ * Two sizes share all of it (./hns_lido-variant.ts): `hns_lido` is the whole
+ * resort (Large), `hns_lido_m` its western quarters closed at x = 1280
+ * (Medium; edges in ./hns_lido-medium.ts): hotel, old town, plaza, maze,
+ * beach, pier, lighthouse and sewer, without pool club, car park and boathouse.
  */
 import { HNS_CVARS } from '../modes/index.ts';
 import type { MapDef, Spawn, Theme, Zone } from './types.ts';
@@ -22,125 +27,12 @@ import { MapBuilder, pine, put, rect, rng, slab, v, type Rect, type Teleporter }
 import { buildHotel } from './hns_lido-hotel.ts';
 import { buildTown, WELL } from './hns_lido-town.ts';
 import { buildCentre, CAGE_INNER, PLINTH } from './hns_lido-centre.ts';
-import { buildEast, CUBICLE_POOL, DRAIN, PHONE_ROOF, SHAFT } from './hns_lido-east.ts';
+import { buildAvenue, buildEast, CUBICLE_POOL, DRAIN, PHONE_ROOF, SHAFT } from './hns_lido-east.ts';
+import { buildMediumEdges, PHONE_HOTEL } from './hns_lido-medium.ts';
+import { LARGE, MEDIUM, type LidoVariant } from './hns_lido-variant.ts';
 import { ARCADE, buildCoast, HUT_X0, HUT_Y0, HUT_FLOOR, PHONE_PROM, TP_CRATE } from './hns_lido-coast.ts';
 
-/** Playable area (inner faces of the boundary). */
-export const ARENA = rect(-4608, 4608, -3840, 3840);
 export const WALL_TOP = 2048;
-
-const b = new MapBuilder();
-const holes: Rect[] = [];
-buildHotel(b, holes);
-buildTown(b, holes);
-buildCentre(b, holes);
-buildEast(b, holes);
-buildCoast(b);
-
-// --- Ground (top 0, 32 thick) by region, minus the holes areas cut ----------
-const regions: Array<[Rect, string]> = [
-	[rect(-4608, 4608, -2976, -1664), 'sand'],
-	[rect(-4608, 4608, -1664, -1408), 'paving'],
-	[rect(-4608, -1792, -1408, 1152), 'cobble'],
-	[rect(-1792, 1664, -1408, 1152), 'plaza'],
-	[rect(1664, 4608, -1408, 1152), 'deck'],
-	[rect(-4608, 4608, 1152, 1408), 'asphalt'],
-	[rect(-4608, -896, 1408, 1792), 'paving'],
-	[rect(-4608, -896, 1792, 3840), 'grass'],
-	[rect(-896, 1280, 1408, 3840), 'grass'],
-	[rect(1280, 4608, 1408, 3840), 'asphalt']
-];
-b.as('ground', () => {
-	for (const [r, m] of regions) slab(b, r, -32, 0, m, holes);
-});
-
-// --- Boundary: terraced cliffs W/N/E (an invisible clip wall above the first
-// terrace keeps players in up to 2048), an invisible sea wall S, sea to the horizon.
-b.as('ground', () => {
-	const z0 = -256;
-	const tiers: Array<[number, number, number]> = [
-		[0, 256, 640],
-		[256, 768, 1024],
-		[768, 1792, 1408]
-	];
-	for (const [i0, i1, top] of tiers) {
-		b.box(ARENA.x0 - i1, ARENA.y0 - 256, z0, ARENA.x0 - i0, ARENA.y1 + i0, top, 'cliff');
-		b.box(ARENA.x1 + i0, ARENA.y0 - 256, z0, ARENA.x1 + i1, ARENA.y1 + i0, top, 'cliff');
-		b.box(ARENA.x0 - i1, ARENA.y1 + i0, z0, ARENA.x1 + i1, ARENA.y1 + i1, top, 'cliff');
-	}
-	b.box(ARENA.x0 - 256, ARENA.y0 - 256, 640, ARENA.x0, ARENA.y1, WALL_TOP, 'clip');
-	b.box(ARENA.x1, ARENA.y0 - 256, 640, ARENA.x1 + 256, ARENA.y1, WALL_TOP, 'clip');
-	b.box(ARENA.x0 - 256, ARENA.y1, 640, ARENA.x1 + 256, ARENA.y1 + 256, WALL_TOP, 'clip');
-	b.box(ARENA.x0, ARENA.y0 - 256, z0, ARENA.x1, ARENA.y0, WALL_TOP, 'clip');
-	b.box(-20000, -20000, -96, 20000, ARENA.y0 - 256, -16, 'water_far');
-});
-// Pines on the cliff terraces (scenery out of reach; no collision so they may overlap).
-const scenery0 = b.brushes.length;
-b.as('prop', () => {
-	const r = rng(77);
-	for (let k = 0; k < 40; k++) {
-		const side = k % 3;
-		const t = 0.05 + r() * 0.9;
-		const tier = r() < 0.6 ? 1 : 2;
-		const inset = tier === 1 ? 256 + 16 + r() * 352 : 768 + 16 + r() * 860;
-		const top = tier === 1 ? 1024 : 1408;
-		const s = putFar(side, t, inset);
-		put(b, pine(48 + Math.floor(r() * 48)), s.x - 64, s.y - 64, top);
-	}
-});
-for (let i = scenery0; i < b.brushes.length; i++) b.brushes[i]!.solid = false;
-function putFar(side: number, t: number, inset: number): { x: number; y: number } {
-	if (side === 0) return { x: ARENA.x0 - inset - 64, y: ARENA.y0 + t * (ARENA.y1 - ARENA.y0) };
-	if (side === 1) return { x: ARENA.x1 + inset + 64, y: ARENA.y0 + t * (ARENA.y1 - ARENA.y0) };
-	return { x: ARENA.x0 + t * (ARENA.x1 - ARENA.x0), y: ARENA.y1 + inset + 64 };
-}
-
-// --- Teleporters ----------------------------------------------------------------
-const tp = (t: Teleporter) => b.teleport(t);
-const box = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) => ({ min: v(x0, y0, z0), max: v(x1, y1, z1) });
-const sp = (x: number, y: number, z: number, yaw: number): Spawn => ({ pos: v(x, y, z), yaw });
-tp({ id: 'fireplace', zone: box(-3318, 2068, 8, -3300, 2124, 48), dest: sp(-2900, 3000, 576, 0), hidden: true, back: 'penthouse-wardrobe', note: 'Hotel lobby fireplace (duck in) → sealed roof penthouse' });
-tp({ id: 'penthouse-wardrobe', zone: box(-2848, 2912, 580, -2800, 2944, 680), dest: sp(-3232, 2140, 0, 0), hidden: true, back: 'fireplace', note: 'Penthouse wardrobe → hotel lobby' });
-tp({ id: 'cask', zone: box(-3096, 1848, -188, -3016, 1928, -104), dest: sp(-2160, 150, -192, 270), hidden: true, back: 'crypt-portal', note: 'Hotel wine cellar: inside the big cask → chapel crypt' });
-tp({ id: 'crypt-portal', zone: box(-2000, -610, -188, -1960, -570, -120), dest: sp(-3150, 2000, -192, 0), hidden: true, back: 'cask', note: 'Crypt, dark south-east corner → hotel wine cellar' });
-tp({ id: 'well', zone: box(WELL.x - 24, WELL.y - 24, -150, WELL.x + 24, WELL.y + 24, -80), dest: sp(-4200, 1216, -192, 0), hidden: true, back: 'drain', note: 'Back-yard well (drop in) → sewer west end' });
-tp({ id: 'drain', zone: box(-4312, 1424, -188, -4264, 1464, -110), dest: sp(-4160, 860, 0, 90), hidden: true, back: 'well', note: 'Sewer drain alcove behind fake bars → back yards by the well' });
-tp({ id: 'phone-prom', zone: box(PHONE_PROM.x + 20, PHONE_PROM.y + 28, 8, PHONE_PROM.x + 52, PHONE_PROM.y + 56, 90), dest: sp(PHONE_ROOF.x + 36, PHONE_ROOF.y - 40, 384, 270), hidden: false, back: 'phone-roof', note: 'Promenade phone box ↔ car park roof phone box' });
-tp({ id: 'phone-roof', zone: box(PHONE_ROOF.x + 20, PHONE_ROOF.y + 16, 392, PHONE_ROOF.x + 52, PHONE_ROOF.y + 44, 474), dest: sp(PHONE_PROM.x + 36, PHONE_PROM.y + 112, 0, 90), hidden: false, back: 'phone-prom', note: 'Car park roof phone box ↔ promenade phone box' });
-const hx = HUT_X0(0);
-tp({ id: 'hut-cubicle', zone: box(hx + 100, HUT_Y0 + 80, HUT_FLOOR + 4, hx + 140, HUT_Y0 + 124, HUT_FLOOR + 80), dest: sp(2880, 720, 0, 270), hidden: false, back: 'pool-cubicle', note: 'Beach hut 0 changing cubicle ↔ pool house changing cubicle' });
-tp({ id: 'pool-cubicle', zone: box(CUBICLE_POOL.x0 + 12, CUBICLE_POOL.y0 + 12, 4, CUBICLE_POOL.x1 - 12, CUBICLE_POOL.y1 - 12, 90), dest: sp(hx + 56, HUT_Y0 + 30, HUT_FLOOR, 90), hidden: false, back: 'hut-cubicle', note: 'Pool house changing cubicle ↔ beach hut 0' });
-tp({ id: 'boathouse-crate', zone: box(TP_CRATE.x0 + 8, TP_CRATE.y0 + 8, 8, TP_CRATE.x1 - 8, TP_CRATE.y1 - 8, 80), dest: sp(-4224, -3680, 576, 90), hidden: true, note: 'Boathouse: the hollow crate in the corner → lighthouse gallery (walk back down the spiral)' });
-tp({ id: 'plinth', zone: box(PLINTH.x0 + 8, PLINTH.y0 + 8, 8, PLINTH.x1 - 12, PLINTH.y1 - 8, 80), dest: sp(-2112, 440, 480, 90), hidden: true, back: 'bell', note: 'Maze statue plinth (fake east face) → chapel belfry' });
-tp({ id: 'bell', zone: box(-2196, 500, 484, -2156, 524, 530), dest: sp(300, 2560, 0, 0), hidden: true, back: 'plinth', note: 'Belfry: duck under the bell → maze centre' });
-tp({ id: 'elevator', zone: box(SHAFT.x0 + 24, SHAFT.y0 + 24, 8, SHAFT.x1 - 24, SHAFT.y1 - 24, 80), dest: sp(-3436, 2264, 596, 270), hidden: true, note: 'Car park: through the fake elevator doors → inside the hotel roof water tank' });
-tp({ id: 'arcade', zone: box(ARCADE.x0 + 6, ARCADE.y0 + 8, 54, ARCADE.x0 + 34, ARCADE.y0 + 38, 128), dest: sp(-3800, -3450, -48, 0), approach: v(ARCADE.x0 + 20, ARCADE.y0 + 76, 48), hidden: true, note: 'Pier arcade: the hollow cabinet → sea cave (walk out through the fake rock face)' });
-tp({ id: 'pool-drain', zone: box(DRAIN.x0 + 4, DRAIN.y0 + 4, -158, DRAIN.x1 - 4, DRAIN.y1 - 4, -110), dest: sp(4180, -400, -192, 180), hidden: true, note: 'Pool drain (deep end) → pump room (stairs up through a fake trapdoor)' });
-
-// --- Spawns ------------------------------------------------------------------------
-const hiderSpawns: Spawn[] = [
-	sp(0, -900, 0, 90),
-	sp(-1000, -320, 0, 0),
-	sp(800, -200, 0, 180),
-	sp(-400, -1100, 0, 90),
-	sp(400, -1000, 0, 90),
-	sp(1450, 0, 0, 180),
-	sp(-1600, -600, 0, 0),
-	sp(-320, 300, 0, 270),
-	sp(640, 640, 0, 270),
-	sp(1450, -1250, 0, 90),
-	sp(-1680, 1000, 0, 270),
-	sp(0, 1300, 0, 270),
-	sp(500, -2000, 0, 90),
-	sp(-1500, -2300, 0, 90),
-	sp(2000, -1500, 0, 90),
-	sp(-2000, 1280, 0, 0)
-];
-const seekerSpawns: Spawn[] = [sp(-96, 560, 0, 270), sp(96, 560, 0, 270), sp(-96, 660, 0, 270), sp(96, 660, 0, 270)];
-
-const zones: Zone[] = b.teleports.map((t) => ({ type: 'teleport', min: t.zone.min, max: t.zone.max, to: 'start', dest: t.dest }));
-// Fall-out safety net under everything: respawn at a spawn of the player's team.
-zones.push({ type: 'teleport', min: v(-24000, -24000, -4096), max: v(24000, 24000, -512), to: 'start' });
 
 const m = (color: number, o: Partial<Theme['materials'][string]> = {}) => ({ color, noise: 0.12, noiseScale: 96, roughness: 0.85, ...o });
 const theme: Theme = {
@@ -339,32 +231,213 @@ const theme: Theme = {
 	]
 };
 
-export const hns_lido: MapDef = {
-	id: 'hns_lido',
-	title: 'Lido Bay',
-	kind: 'hns',
-	difficulty: 'easy',
-	layout: 'open',
-	cvars: { ...HNS_CVARS },
-	spawn: hiderSpawns[0]!,
-	spawns: hiderSpawns,
-	hns: { hiderSpawns, seekerSpawns, seekerCage: { min: v(CAGE_INNER.x0, CAGE_INNER.y0, 0), max: v(CAGE_INNER.x1, CAGE_INNER.y1, 176) } },
-	brushes: b.brushes,
-	zones,
-	theme
-};
+/** Hider spawns [x, y, z, yaw]. */
+const LARGE_SPAWNS: Array<[number, number, number, number]> = [
+	[0, -900, 0, 90],
+	[-1000, -320, 0, 0],
+	[800, -200, 0, 180],
+	[-400, -1100, 0, 90],
+	[400, -1000, 0, 90],
+	[1450, 0, 0, 180],
+	[-1600, -600, 0, 0],
+	[-320, 300, 0, 270],
+	[640, 640, 0, 270],
+	[1450, -1250, 0, 90],
+	[-1680, 1000, 0, 270],
+	[0, 1300, 0, 270],
+	[500, -2000, 0, 90],
+	[-1500, -2300, 0, 90],
+	[2000, -1500, 0, 90],
+	[-2000, 1280, 0, 0],
+];
+const MEDIUM_SPAWNS: Array<[number, number, number, number]> = [
+	[0, -900, 0, 90],
+	[-1000, -320, 0, 0],
+	[800, -200, 0, 180],
+	[-400, -1100, 0, 90],
+	[400, -1000, 0, 90],
+	[-1600, -600, 0, 0],
+	[-320, 300, 0, 270],
+	[640, 640, 0, 270],
+	[-1680, 1000, 0, 270],
+	[0, 1300, 0, 270],
+	[500, -2000, 0, 90],
+	[-1500, -2300, 0, 90],
+	[-2000, 1280, 0, 0],
+	[-3100, -600, 0, 90],
+	[-1200, -2600, 0, 90],
+	[-3264, 1290, 0, 0],
+	[-2700, -1530, 0, 0],
+];
 
+export interface LidoDesign {
+	arena: Rect;
+	wallTop: number;
+	kinds: MapBuilder['kinds'];
+	spots: MapBuilder['spots'];
+	teleports: Teleporter[];
+	crawls: MapBuilder['crawls'];
+	rooms: string[];
+	buildings: string[];
+	loops: string[];
+	hiderSpawns: Spawn[];
+	seekerSpawns: Spawn[];
+}
+
+function buildLido(variant: LidoVariant): { map: MapDef; design: LidoDesign } {
+	const medium = variant.size === 'medium';
+	const ARENA = variant.arena;
+	const b = new MapBuilder();
+	const holes: Rect[] = [];
+	b.clip = medium ? ARENA : null;
+	buildHotel(b, holes);
+	buildTown(b, holes);
+	buildCentre(b, holes, variant);
+	if (medium) buildAvenue(b, variant);
+	else buildEast(b, holes, variant);
+	buildCoast(b, variant);
+	if (medium) buildMediumEdges(b);
+
+	// --- Ground (top 0, 32 thick) by region, minus the holes areas cut ----------
+	const regions: Array<[Rect, string]> = [
+		[rect(-4608, 4608, -2976, -1664), 'sand'],
+		[rect(-4608, 4608, -1664, -1408), 'paving'],
+		[rect(-4608, -1792, -1408, 1152), 'cobble'],
+		[rect(-1792, 1664, -1408, 1152), 'plaza'],
+		[rect(1664, 4608, -1408, 1152), 'deck'],
+		[rect(-4608, 4608, 1152, 1408), 'asphalt'],
+		[rect(-4608, -896, 1408, 1792), 'paving'],
+		[rect(-4608, -896, 1792, 3840), 'grass'],
+		[rect(-896, 1280, 1408, 3840), 'grass'],
+		[rect(1280, 4608, 1408, 3840), 'asphalt']
+	];
+	b.as('ground', () => {
+		for (const [r, m] of regions) slab(b, r, -32, 0, m, holes);
+	});
+
+	b.clip = null;
+	// --- Boundary: terraced cliffs W/N/E (an invisible clip wall above the first
+	// terrace keeps players in up to 2048), an invisible sea wall S, sea to the horizon.
+	b.as('ground', () => {
+		const z0 = -256;
+		const tiers: Array<[number, number, number]> = [
+			[0, 256, 640],
+			[256, 768, 1024],
+			[768, 1792, 1408]
+		];
+		for (const [i0, i1, top] of tiers) {
+			b.box(ARENA.x0 - i1, ARENA.y0 - 256, z0, ARENA.x0 - i0, ARENA.y1 + i0, top, 'cliff');
+			b.box(ARENA.x1 + i0, ARENA.y0 - 256, z0, ARENA.x1 + i1, ARENA.y1 + i0, top, 'cliff');
+			b.box(ARENA.x0 - i1, ARENA.y1 + i0, z0, ARENA.x1 + i1, ARENA.y1 + i1, top, 'cliff');
+		}
+		b.box(ARENA.x0 - 256, ARENA.y0 - 256, 640, ARENA.x0, ARENA.y1, WALL_TOP, 'clip');
+		b.box(ARENA.x1, ARENA.y0 - 256, 640, ARENA.x1 + 256, ARENA.y1, WALL_TOP, 'clip');
+		b.box(ARENA.x0 - 256, ARENA.y1, 640, ARENA.x1 + 256, ARENA.y1 + 256, WALL_TOP, 'clip');
+		b.box(ARENA.x0, ARENA.y0 - 256, z0, ARENA.x1, ARENA.y0, WALL_TOP, 'clip');
+		b.box(-20000, -20000, -96, 20000, ARENA.y0 - 256, -16, 'water_far');
+	});
+	// Pines on the cliff terraces (scenery out of reach; no collision so they may overlap).
+	const scenery0 = b.brushes.length;
+	b.as('prop', () => {
+		const r = rng(77);
+		for (let k = 0; k < 40; k++) {
+			const side = k % 3;
+			const t = 0.05 + r() * 0.9;
+			const tier = r() < 0.6 ? 1 : 2;
+			const inset = tier === 1 ? 256 + 16 + r() * 352 : 768 + 16 + r() * 860;
+			const top = tier === 1 ? 1024 : 1408;
+			const s = putFar(side, t, inset);
+			put(b, pine(48 + Math.floor(r() * 48)), s.x - 64, s.y - 64, top);
+		}
+	});
+	for (let i = scenery0; i < b.brushes.length; i++) b.brushes[i]!.solid = false;
+	function putFar(side: number, t: number, inset: number): { x: number; y: number } {
+		if (side === 0) return { x: ARENA.x0 - inset - 64, y: ARENA.y0 + t * (ARENA.y1 - ARENA.y0) };
+		if (side === 1) return { x: ARENA.x1 + inset + 64, y: ARENA.y0 + t * (ARENA.y1 - ARENA.y0) };
+		return { x: ARENA.x0 + t * (ARENA.x1 - ARENA.x0), y: ARENA.y1 + inset + 64 };
+	}
+
+	// --- Teleporters ----------------------------------------------------------------
+	const tp = (t: Teleporter) => b.teleport(t);
+	const box = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) => ({ min: v(x0, y0, z0), max: v(x1, y1, z1) });
+	const sp = (x: number, y: number, z: number, yaw: number): Spawn => ({ pos: v(x, y, z), yaw });
+	tp({ id: 'fireplace', zone: box(-3318, 2068, 8, -3300, 2124, 48), dest: sp(-2900, 3000, 576, 0), hidden: true, back: 'penthouse-wardrobe', note: 'Hotel lobby fireplace (duck in) → sealed roof penthouse' });
+	tp({ id: 'penthouse-wardrobe', zone: box(-2848, 2912, 580, -2800, 2944, 680), dest: sp(-3232, 2140, 0, 0), hidden: true, back: 'fireplace', note: 'Penthouse wardrobe → hotel lobby' });
+	tp({ id: 'cask', zone: box(-3096, 1848, -188, -3016, 1928, -104), dest: sp(-2160, 150, -192, 270), hidden: true, back: 'crypt-portal', note: 'Hotel wine cellar: inside the big cask → chapel crypt' });
+	tp({ id: 'crypt-portal', zone: box(-2000, -610, -188, -1960, -570, -120), dest: sp(-3150, 2000, -192, 0), hidden: true, back: 'cask', note: 'Crypt, dark south-east corner → hotel wine cellar' });
+	tp({ id: 'well', zone: box(WELL.x - 24, WELL.y - 24, -150, WELL.x + 24, WELL.y + 24, -80), dest: sp(-4200, 1216, -192, 0), hidden: true, back: 'drain', note: 'Back-yard well (drop in) → sewer west end' });
+	tp({ id: 'drain', zone: box(-4312, 1424, -188, -4264, 1464, -110), dest: sp(-4160, 860, 0, 90), hidden: true, back: 'well', note: 'Sewer drain alcove behind fake bars → back yards by the well' });
+	const hx = HUT_X0(0);
+	if (medium) {
+		const hx7 = HUT_X0(7);
+		const prom = PHONE_PROM;
+		const hotel = PHONE_HOTEL;
+		tp({ id: 'phone-prom', zone: box(prom.x + 20, prom.y + 28, 8, prom.x + 52, prom.y + 56, 90), dest: sp(hotel.x + 36, hotel.y - 40, 0, 270), hidden: false, back: 'phone-hotel', note: 'Promenade phone box ↔ hotel forecourt phone box' });
+		tp({ id: 'phone-hotel', zone: box(hotel.x + 20, hotel.y + 16, 8, hotel.x + 52, hotel.y + 44, 90), dest: sp(prom.x + 36, prom.y + 112, 0, 90), hidden: false, back: 'phone-prom', note: 'Hotel forecourt phone box ↔ promenade phone box' });
+		const cubicle = (x: number) => box(x + 100, HUT_Y0 + 80, HUT_FLOOR + 4, x + 140, HUT_Y0 + 124, HUT_FLOOR + 80);
+		const inHut = (x: number) => sp(x + 56, HUT_Y0 + 30, HUT_FLOOR, 90);
+		tp({ id: 'hut-cubicle', zone: cubicle(hx), dest: inHut(hx7), hidden: false, back: 'hut7-cubicle', note: 'Beach hut 0 changing cubicle ↔ beach hut 7 changing cubicle' });
+		tp({ id: 'hut7-cubicle', zone: cubicle(hx7), dest: inHut(hx), hidden: false, back: 'hut-cubicle', note: 'Beach hut 7 changing cubicle ↔ beach hut 0' });
+	} else {
+		tp({ id: 'phone-prom', zone: box(PHONE_PROM.x + 20, PHONE_PROM.y + 28, 8, PHONE_PROM.x + 52, PHONE_PROM.y + 56, 90), dest: sp(PHONE_ROOF.x + 36, PHONE_ROOF.y - 40, 384, 270), hidden: false, back: 'phone-roof', note: 'Promenade phone box ↔ car park roof phone box' });
+		tp({ id: 'phone-roof', zone: box(PHONE_ROOF.x + 20, PHONE_ROOF.y + 16, 392, PHONE_ROOF.x + 52, PHONE_ROOF.y + 44, 474), dest: sp(PHONE_PROM.x + 36, PHONE_PROM.y + 112, 0, 90), hidden: false, back: 'phone-prom', note: 'Car park roof phone box ↔ promenade phone box' });
+		tp({ id: 'hut-cubicle', zone: box(hx + 100, HUT_Y0 + 80, HUT_FLOOR + 4, hx + 140, HUT_Y0 + 124, HUT_FLOOR + 80), dest: sp(2880, 720, 0, 270), hidden: false, back: 'pool-cubicle', note: 'Beach hut 0 changing cubicle ↔ pool house changing cubicle' });
+		tp({ id: 'pool-cubicle', zone: box(CUBICLE_POOL.x0 + 12, CUBICLE_POOL.y0 + 12, 4, CUBICLE_POOL.x1 - 12, CUBICLE_POOL.y1 - 12, 90), dest: sp(hx + 56, HUT_Y0 + 30, HUT_FLOOR, 90), hidden: false, back: 'hut-cubicle', note: 'Pool house changing cubicle ↔ beach hut 0' });
+		tp({ id: 'boathouse-crate', zone: box(TP_CRATE.x0 + 8, TP_CRATE.y0 + 8, 8, TP_CRATE.x1 - 8, TP_CRATE.y1 - 8, 80), dest: sp(-4224, -3680, 576, 90), hidden: true, note: 'Boathouse: the hollow crate in the corner → lighthouse gallery (walk back down the spiral)' });
+	}
+	tp({ id: 'plinth', zone: box(PLINTH.x0 + 8, PLINTH.y0 + 8, 8, PLINTH.x1 - 12, PLINTH.y1 - 8, 80), dest: sp(-2112, 440, 480, 90), hidden: true, back: 'bell', note: 'Maze statue plinth (fake east face) → chapel belfry' });
+	tp({ id: 'bell', zone: box(-2196, 500, 484, -2156, 524, 530), dest: sp(300, 2560, 0, 0), hidden: true, back: 'plinth', note: 'Belfry: duck under the bell → maze centre' });
+	if (!medium) tp({ id: 'elevator', zone: box(SHAFT.x0 + 24, SHAFT.y0 + 24, 8, SHAFT.x1 - 24, SHAFT.y1 - 24, 80), dest: sp(-3436, 2264, 596, 270), hidden: true, note: 'Car park: through the fake elevator doors → inside the hotel roof water tank' });
+	tp({ id: 'arcade', zone: box(ARCADE.x0 + 6, ARCADE.y0 + 8, 54, ARCADE.x0 + 34, ARCADE.y0 + 38, 128), dest: sp(-3800, -3450, -48, 0), approach: v(ARCADE.x0 + 20, ARCADE.y0 + 76, 48), hidden: true, note: 'Pier arcade: the hollow cabinet → sea cave (walk out through the fake rock face)' });
+	if (!medium) tp({ id: 'pool-drain', zone: box(DRAIN.x0 + 4, DRAIN.y0 + 4, -158, DRAIN.x1 - 4, DRAIN.y1 - 4, -110), dest: sp(4180, -400, -192, 180), hidden: true, note: 'Pool drain (deep end) → pump room (stairs up through a fake trapdoor)' });
+
+	// --- Spawns ------------------------------------------------------------------------
+	const hiderSpawns: Spawn[] = (medium ? MEDIUM_SPAWNS : LARGE_SPAWNS).map((p) => sp(...p));
+
+	const seekerSpawns: Spawn[] = [sp(-96, 560, 0, 270), sp(96, 560, 0, 270), sp(-96, 660, 0, 270), sp(96, 660, 0, 270)];
+
+	const zones: Zone[] = b.teleports.map((t) => ({ type: 'teleport', min: t.zone.min, max: t.zone.max, to: 'start', dest: t.dest }));
+	// Fall-out safety net under everything: respawn at a spawn of the player's team.
+	zones.push({ type: 'teleport', min: v(-24000, -24000, -4096), max: v(24000, 24000, -512), to: 'start' });
+
+
+	const map: MapDef = {
+		id: medium ? 'hns_lido_m' : 'hns_lido',
+		title: 'Lido Bay',
+		kind: 'hns',
+		difficulty: 'easy',
+		size: variant.size,
+		layout: 'open',
+		cvars: { ...HNS_CVARS },
+		spawn: hiderSpawns[0]!,
+		spawns: hiderSpawns,
+		hns: { hiderSpawns, seekerSpawns, seekerCage: { min: v(CAGE_INNER.x0, CAGE_INNER.y0, 0), max: v(CAGE_INNER.x1, CAGE_INNER.y1, 176) } },
+		brushes: b.brushes,
+		zones,
+		theme
+	};
+	const design: LidoDesign = {
+		arena: ARENA,
+		wallTop: WALL_TOP,
+		kinds: b.kinds,
+		spots: b.spots,
+		teleports: b.teleports,
+		crawls: b.crawls,
+		rooms: b.rooms,
+		buildings: b.buildings,
+		loops: b.loops,
+		hiderSpawns,
+		seekerSpawns
+	};
+	return { map, design };
+}
+
+const large = buildLido(LARGE);
+const mediumBuild = buildLido(MEDIUM);
+/** Large: the whole resort. */
+export const hns_lido = large.map;
+/** Medium: the western quarters. */
+export const hns_lido_m = mediumBuild.map;
 /** Design data for tests and docs: secrets, teleporters, crawlspaces, rooms, loops, brush kinds. */
-export const LIDO = {
-	arena: ARENA,
-	wallTop: WALL_TOP,
-	kinds: b.kinds,
-	spots: b.spots,
-	teleports: b.teleports,
-	crawls: b.crawls,
-	rooms: b.rooms,
-	buildings: b.buildings,
-	loops: b.loops,
-	hiderSpawns,
-	seekerSpawns
-};
+export const LIDO = large.design;
+export const LIDO_MEDIUM = mediumBuild.design;

@@ -97,10 +97,32 @@ export class MapBuilder {
 	readonly loops: string[] = [];
 	/** Default kind for `box` (set while building furniture). */
 	kind: BrushKind = 'struct';
+	/**
+	 * Build only inside this rect (map variants): ground and structure are cut
+	 * at its edges, props, spots and crawlspaces outside it are left out whole.
+	 */
+	clip: Rect | null = null;
+
+	/** Is the XY rect completely inside the clip region (or is there none)? */
+	inClip(x0: number, y0: number, x1: number, y1: number): boolean {
+		const c = this.clip;
+		return !c || (x0 >= c.x0 && x1 <= c.x1 && y0 >= c.y0 && y1 <= c.y1);
+	}
 
 	box(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, material: string, solid = true, kind = this.kind): void {
 		const min = v(Math.min(x0, x1), Math.min(y0, y1), Math.min(z0, z1));
 		const max = v(Math.max(x0, x1), Math.max(y0, y1), Math.max(z0, z1));
+		if (this.clip) {
+			const c = this.clip;
+			if (kind === 'prop') {
+				if (!this.inClip(min.x, min.y, max.x, max.y)) return;
+			} else {
+				min.x = Math.max(min.x, c.x0);
+				max.x = Math.min(max.x, c.x1);
+				min.y = Math.max(min.y, c.y0);
+				max.y = Math.min(max.y, c.y1);
+			}
+		}
 		if (max.x - min.x < 0.5 || max.y - min.y < 0.5 || max.z - min.z < 0.5) return;
 		const b: BrushDef = { type: 'box', min, max, material };
 		if (!solid) b.solid = false;
@@ -139,6 +161,7 @@ export class MapBuilder {
 	}
 
 	spot(id: string, name: string, pos: Vec3, ...kinds: SpotKind[]): void {
+		if (!this.inClip(pos.x, pos.y, pos.x, pos.y)) return;
 		if (this.spots.some((s) => s.id === id)) throw new Error(`duplicate spot ${id}`);
 		this.spots.push({ id, name, pos, kinds });
 	}
@@ -149,6 +172,7 @@ export class MapBuilder {
 	}
 
 	crawl(id: string, from: Vec3, to: Vec3): void {
+		if (!this.inClip(from.x, from.y, from.x, from.y) || !this.inClip(to.x, to.y, to.x, to.y)) return;
 		this.crawls.push({ id, from, to });
 	}
 
@@ -423,7 +447,9 @@ export function put(b: MapBuilder, p: Prop, x: number, y: number, z: number, fac
 			f = new Frame(b, x, y + p.w, z, 'w');
 			break;
 	}
-	p.build(f);
+	// Props that would stick out of the map variant's region are left out whole.
+	const { sx, sy } = footprint(p, face);
+	if (b.inClip(x, y, x + sx, y + sy)) p.build(f);
 	return f;
 }
 

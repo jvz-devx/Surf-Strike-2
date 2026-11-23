@@ -13,6 +13,7 @@
  * crouch-jump onto the top stack; the garage roof phone box (visible pair
  * with the promenade).
  */
+import type { LidoVariant } from './hns_lido-variant.ts';
 import {
 	bench,
 	bin,
@@ -73,11 +74,12 @@ const RAMP2 = rect(2304, 3072, 3360, 3552);
 const COLS_X = [2176, 2688, 3200, 3712];
 const COLS_Y = [2240, 2688, 3136];
 
-export function buildEast(b: MapBuilder, holes: Rect[]): void {
+/** Everything east of the plaza plus the avenue (large size only; medium builds just the avenue). */
+export function buildEast(b: MapBuilder, holes: Rect[], variant: LidoVariant): void {
 	pool(b, holes);
 	poolHouse(b, holes);
 	tennis(b);
-	avenue(b);
+	buildAvenue(b, variant);
 	garage(b, holes);
 	lot(b);
 	b.loops.push(
@@ -251,12 +253,14 @@ function tennis(b: MapBuilder): void {
 	b.room('tennis court');
 }
 
-function avenue(b: MapBuilder): void {
+/** The road; in the medium size its east end stays clear (underpass stairs, closed tunnel). */
+export function buildAvenue(b: MapBuilder, variant: LidoVariant): void {
+	const medium = variant.size === 'medium';
 	const paints = ['car_red', 'car_blue', 'car_white', 'car_black', 'car_yellow', 'car_green', 'car_silver'];
 	b.as('prop', () => {
 		let k = 0;
 		for (let x = -4480; x < 4400; x += 264) {
-			const busy = (x > -1200 && x < -600) || (x > 1000 && x < 1600) || (x > -3000 && x < -2400);
+			const busy = (x > -1200 && x < -600) || (x > 1000 && x < 1600) || (x > -3000 && x < -2400) || (medium && x > 700);
 			if (busy || k % 3 === 2) {
 				k++;
 				continue;
@@ -266,7 +270,7 @@ function avenue(b: MapBuilder): void {
 		}
 		k = 0;
 		for (let x = -4400; x < 4400; x += 300) {
-			const busy = (x + 200 > 1000 && x < 1600) || (x > -400 && x < 400);
+			const busy = (x + 200 > 1000 && x < 1600) || (x > -400 && x < 400) || (medium && x + 200 > 800);
 			if (!busy && k % 4 !== 3) put(b, k % 5 === 0 ? van(paints[(k + 2) % paints.length]!) : car(paints[(k + 3) % paints.length]!), x, k % 5 === 0 ? 1308 : 1312, 0, k % 2 ? 'w' : 'e');
 			k++;
 		}
@@ -280,7 +284,7 @@ function avenue(b: MapBuilder): void {
 		b.box(-164, 1340, 0, -160, 1400, 112, 'iron');
 		b.box(160, 1340, 0, 164, 1400, 112, 'iron');
 		put(b, bench(128), -64, 1350, 0, 's');
-		for (let k2 = 0; k2 < 3; k2++) put(b, cone(), 1100 + k2 * 40, 1240, 0);
+		if (!medium) for (let k2 = 0; k2 < 3; k2++) put(b, cone(), 1100 + k2 * 40, 1240, 0);
 	});
 }
 

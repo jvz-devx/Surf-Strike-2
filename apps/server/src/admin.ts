@@ -16,7 +16,7 @@
 import type { IncomingMessage } from 'node:http';
 import { isIP } from 'node:net';
 import type { AdminAction, AdminState, MapDef, ServerMessage } from '@surf/shared';
-import { ADMIN_EXTEND, MAX_BAN_REASON, sanitizeText, usernameKey } from '@surf/shared';
+import { ADMIN_EXTEND, mapTitle, MAX_BAN_REASON, sanitizeText, usernameKey } from '@surf/shared';
 import { AttemptLimiter } from './auth.ts';
 import type { BanRow, Db } from './db.ts';
 
@@ -136,7 +136,7 @@ export class AdminController<C extends AdminClient> {
 			});
 		}
 		return {
-			maps: this.host.maps.map((m) => ({ id: m.id, title: m.title, kind: m.kind, enabled: this.isEnabled(m.id) })),
+			maps: this.host.maps.map((m) => ({ id: m.id, title: m.title, kind: m.kind, size: m.size, enabled: this.isEnabled(m.id) })),
 			bans: this.host.db.bans().map((b) => ({
 				id: b.id,
 				username: b.usernameSnapshot,
@@ -232,7 +232,7 @@ export class AdminController<C extends AdminClient> {
 		this.host.db.setMapEnabled(map.id, enabled);
 		this.audit(c, enabled ? 'enable-map' : 'disable-map', map.id);
 		this.host.broadcast(this.mapsMessage());
-		return { ok: true, changed: true, message: `${map.title} ${enabled ? 'enabled' : 'disabled'}.` };
+		return { ok: true, changed: true, message: `${mapTitle(map)} ${enabled ? 'enabled' : 'disabled'}.` };
 	}
 
 	private ban(c: C, targetId: unknown, username: unknown, rawReason: unknown): Result {
@@ -316,7 +316,7 @@ export class AdminController<C extends AdminClient> {
 		this.audit(c, 'force-map', map.id);
 		this.host.system(`${c.name} (admin) changed the map.`);
 		if (!this.host.forceMap(map.id)) return { ok: false, error: 'Unknown map.' };
-		return { ok: true, changed: true, message: `Changed to ${map.title}.` };
+		return { ok: true, changed: true, message: `Changed to ${mapTitle(map)}.` };
 	}
 
 	private extend(c: C): Result {

@@ -17,6 +17,7 @@
  * hollow arcade cabinet (teleporter → sea cave); the sea cave behind a fake
  * rock face; the lighthouse gallery.
  */
+import type { LidoVariant } from './hns_lido-variant.ts';
 import {
 	barrel,
 	bench,
@@ -71,15 +72,18 @@ export const PHONE_PROM = { x: -704, y: -1600 };
 const SEABED = -48;
 const DECK = 48;
 
-export function buildCoast(b: MapBuilder): void {
+export function buildCoast(b: MapBuilder, variant: LidoVariant): void {
+	const medium = variant.size === 'medium';
 	sea(b);
 	rocks(b);
 	lighthouse(b);
-	huts(b);
+	huts(b, medium);
 	lifeguard(b);
-	beachProps(b);
-	beachBar(b);
-	boathouse(b);
+	beachProps(b, medium);
+	if (!medium) {
+		beachBar(b);
+		boathouse(b);
+	}
 	pier(b);
 	promenade(b);
 	b.loops.push(
@@ -207,7 +211,7 @@ function lighthouse(b: MapBuilder): void {
 	b.spot('lighthouse-lamp', 'Lighthouse: lamp room behind the lamp', v(ix0 + 112, iy0 + 184, LAMP_Z), 'roof');
 }
 
-function huts(b: MapBuilder): void {
+function huts(b: MapBuilder, medium: boolean): void {
 	const mats = ['hut_red', 'hut_blue', 'hut_yellow', 'hut_green', 'hut_white', 'hut_red', 'hut_blue', 'hut_yellow'];
 	for (let i = 0; i < 8; i++) {
 		const x0 = HUT_X0(i);
@@ -216,6 +220,7 @@ function huts(b: MapBuilder): void {
 		const y1 = y0 + 160;
 		const m = mats[i]!;
 		const fz = HUT_FLOOR;
+		const cubicle = i === 0 || (medium && i === 7);
 		b.buildings.push(`beach hut ${i}`);
 		b.room(`beach hut ${i}`);
 		// Stilts (duck-only crawlspace under the floor: 60 clear).
@@ -231,12 +236,12 @@ function huts(b: MapBuilder): void {
 		b.kinds.push('struct');
 		flight(b, { x: x0 + 80, y: y0 - 96 }, '+y', 4, 64, 0, 'planks', 18);
 		b.as('prop', () => {
-			if (i !== 5) put(b, bench(i === 0 ? 56 : 112, 'wood_light'), x0 + 24, y1 - 32, fz, 's');
+			if (i !== 5) put(b, bench(cubicle ? 56 : 112, 'wood_light'), x0 + 24, y1 - 32, fz, 's');
 			put(b, surfboard(i % 2 ? 'plastic_yellow' : 'plastic_blue'), x0 + 8, y0 + 40, fz, 'e');
 			if (i % 3 === 1) put(b, crate(24, 'plastic_red'), x1 - 40, y0 + 20, fz);
 		});
-		if (i === 0) {
-			// Changing cubicle (teleporter to the pool house cubicle).
+		if (cubicle) {
+			// Changing cubicle with a teleporter (large: to the pool house; medium: first hut ↔ last hut).
 			b.box(x0 + 84, y1 - 88, fz, x0 + 88, y1 - 8, fz + 112, 'wood_light');
 			wall(b, 'x', x0 + 88, x1 - 8, y1 - 92, y1 - 88, fz, fz + 112, 'wood_light', [{ a: x0 + 88, b: x1 - 8, z0: fz, z1: fz + 104, fill: 'fake', mat: 'curtain' }]);
 		}
@@ -279,7 +284,7 @@ function lifeguard(b: MapBuilder): void {
 	b.spot('lifeguard-roof', 'Lifeguard tower: on the cabin roof', v(-848, -2512, z + 96), 'roof', 'crouchjump');
 }
 
-function beachProps(b: MapBuilder): void {
+function beachProps(b: MapBuilder, medium: boolean): void {
 	const avoid = [
 		rect(-960, -620, -2740, -2380),
 		rect(840, 1150, -2976, -2600),
@@ -288,6 +293,8 @@ function beachProps(b: MapBuilder): void {
 		rect(3540, 4460, -2990, -2330),
 		rect(-3900, -3700, -2990, -2880)
 	];
+	// The rocks at the medium size's cut-off beach end.
+	if (medium) avoid.push(rect(1040, 1280, -2990, -1664));
 	const free = (r: Rect) => !avoid.some((a) => r.x0 < a.x1 && a.x0 < r.x1 && r.y0 < a.y1 && a.y0 < r.y1);
 	const canv = ['canvas_red', 'canvas_blue', 'canvas_yellow', 'canvas_green'];
 	let k = 0;

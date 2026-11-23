@@ -12,6 +12,7 @@ interface MapDef {
   title: string;               // "Aurora"
   kind: GameModeId;            // the gamemode: 'surf' | 'bhop' | 'tag' | 'zombies' | 'hns' (modes.md)
   difficulty: 'easy' | 'hard';
+  size?: 'medium' | 'large'; // maps that come in sizes: shown instead of the difficulty
   layout: 'linear' | 'staged' | 'open';  // 'open' = tag maps
   cvars: Partial<Cvars>;       // overrides on top of the mode's profile (physics.md, modes.md)
   spawn: { pos: Vec3; yaw: number };     // race: in the start zone; tag: fallback spawn
@@ -112,7 +113,11 @@ Theme: desert canyon at golden hour. Checkpoints are splits; any fall resets to 
 
 Theme: an abandoned seaside town at dusk in sea fog. Beach car park (start) → main street with side pockets and a barricade → narrow alley → promenade and a bridge over a creek → cannery yard → harbour road → pier with the evac boat. Five gates split it into six zones, each with a checkpoint and an unlock area before its gate. Zombies maps add `zombies: { path, spawnZones, gates }` (`ZombieRoute` in `maps/types.ts`): the waypoint route the AI follows, zombie spawn areas tagged with the route node they feed, and the gates (solid boxes outside `brushes`, an `unlock` area and a route `node`). Map tests check spawns, checkpoint respawns, waypoints and spawn areas stand free, and walk the whole route with the real movement at the slowest weapon speed; shared tests send a zombie from every spawn area to the evac point.
 
-## hns_lido — hide and seek, open ("Lido Bay")
+## hns_lido / hns_lido_m — hide and seek, open ("Lido Bay", Large / Medium)
+
+Two sizes under one title; `MapDef.size` is shown instead of the difficulty badge (Change map) and after the title in text (`mapTitle()`: votes, RTV, chat, admin list, scoreboard). The two are built by the same modules (`maps/hns_lido-variant.ts`); the text below is Large (`hns_lido`).
+
+**Medium** (`hns_lido_m`) is the western part, closed at x = 1280: 5888 × 7680 (63.9% of the area, 62.9% of the walkable positions, ~43 s to cross). It has the hotel, old town and chapel, plaza with the security office, hedge maze and gardens, avenue, sewer, promenade, west beach with the huts and lifeguard tower, pier, lighthouse and sea cave; no pool club, car park, boathouse, beach bar or tennis court. `MapBuilder.clip` cuts ground and structure at the edge and leaves out props that would stick out; `maps/hns_lido-medium.ts` builds what stands at the cut: a row of closed houses with café terraces, a closed road tunnel, a locked promenade gate, fallen rocks on the beach and in the sea, and a garden wall with a duck-only culvert (the cliff behind all of it is the boundary). The sewer's underpass stairs move west to x = 864–1152. Teleporters: the pool drain, the elevator and the boathouse crate are gone; the phone boxes link promenade ↔ hotel forecourt, the changing cubicles link beach hut 0 ↔ hut 7; the rest is unchanged (13 in all, 9 hidden). 44 hiding spots, 5 crawlspaces, 17 hider spawns.
 
 A seaside resort in a cove, 9216 × 7680 (x [-4608, 4608], y [-3840, 3840]), built from ~11 900 brushes in `maps/hns_lido*.ts` with the furniture and wall builders in `maps/hns-props.ts`. Design and checklist: [research/hide-and-seek-maps.md](research/hide-and-seek-maps.md).
 
@@ -123,7 +128,7 @@ A seaside resort in a cove, 9216 × 7680 (x [-4608, 4608], y [-3840, 3840]), bui
 
 `MapDef.hns`: 16 hider spawns around the plaza and beyond; 4 seeker spawns in the security office (`seekerCage` = its interior; one doorway, seekers are frozen there by the mode). 55 declared hiding spots (`LIDO.spots`, each with a floor position) include 25 behind or inside clip-through brushes (fake bookcases, lockers, hedges, rock face, brick wall, vending machine, ceiling tiles, wardrobes, dumpsters, a sarcophagus, a covered boat, a container), roof spots reached by prop climbs, five crouch-jump climbs, five duck-only crawlspaces (hotel ceiling void, laundry pipe, under the beach huts, under the bandstand, the car park duct) and 16 teleporters with fixed destinations (12 hidden: fireplace ↔ penthouse wardrobe, wine cask ↔ crypt, well ↔ sewer drain, maze plinth ↔ belfry bell, elevator → hotel water tank, arcade cabinet → sea cave, boathouse crate → lighthouse gallery, pool drain → pump room; 2 visible pairs: phone boxes, changing cubicles). Every one-way teleporter has a walking way back. The boundary is terraced cliffs with an invisible clip wall to 2048 and an invisible sea wall; a teleport under the map respawns fall-outs.
 
-`hns_lido.test.ts` proves it with the real collision and movement: no intersecting solid boxes, free spawns and destinations, closed boundary (sampled), non-solid fakes, crawlspaces (stand blocked, duck passes), the crouch-jump climbs with `playerMove`, and a conservative reachability graph (`maps/hns-nav.ts`: 32-unit columns plus explicit points, box-path moves with walk ≤ 18 rise, jump 50, crouch-jump 62, duck-jump 48) showing every spot and teleporter is reachable from the hider spawns and from the cage, nothing reachable is a trap (everything leads back to the cage) or outside the boundary, and the farthest walking route is ~14 200 units (~57 s at 250 u/s).
+`hns_lido.test.ts` runs every check on both sizes and proves them with the real collision and movement: no intersecting solid boxes, free spawns and destinations, closed boundary (sampled), non-solid fakes, crawlspaces (stand blocked, duck passes), the crouch-jump climbs with `playerMove`, and a conservative reachability graph (`maps/hns-nav.ts`: 32-unit columns plus explicit points, box-path moves with walk ≤ 18 rise, jump 50, crouch-jump 62, duck-jump 48) showing every spot and teleporter is reachable from the hider spawns and from the cage, nothing reachable is a trap (everything leads back to the cage) or outside the boundary, and the farthest walking route is ~14 200 units (~57 s at 250 u/s).
 
 ## Default map
 

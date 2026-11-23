@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import type { AdminState } from '@surf/shared';
+	import { mapTitle, type AdminState } from '@surf/shared';
 	import type { GameApi, MapListEntry } from '#lib/game/contract.js';
 	import SettingsMenu from '#lib/ui/menu/SettingsMenu.svelte';
 	import MapMenu from '#lib/ui/menu/MapMenu.svelte';
@@ -147,7 +147,7 @@
 		<div class="brand">
 			<span class="logo">Surf Strike 2</span>
 			{#if current}
-				<span class="map ss-label">{current.title} · {modeLabel(current.kind)}</span>
+				<span class="map ss-label">{mapTitle(current)} · {modeLabel(current.kind)}</span>
 			{/if}
 		</div>
 

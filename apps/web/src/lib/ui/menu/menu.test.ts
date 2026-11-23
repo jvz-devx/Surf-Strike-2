@@ -14,6 +14,7 @@ import {
 	difficultyRank,
 	filterMaps,
 	groupMapsByMode,
+	mapTag,
 	isSettingsSection,
 	modeLabel,
 	SETTINGS_SECTIONS,
@@ -46,6 +47,22 @@ describe('difficulty order', () => {
 		const before = input.map((x) => x.id);
 		expect(sortMaps(input).map((x) => x.id)).toEqual(['surf_aurora', 'surf_zen', 'surf_ember']);
 		expect(input.map((x) => x.id)).toEqual(before);
+	});
+});
+
+describe('size tags', () => {
+	const lido = (id: string, size: 'medium' | 'large'): MapListEntry => ({ ...m(id, 'hns', 'easy', 'Lido Bay'), size });
+
+	it('replaces the difficulty badge; other maps keep it', () => {
+		expect(mapTag(lido('a', 'medium'))).toEqual({ label: 'Medium', cls: 'size-medium' });
+		expect(mapTag(lido('b', 'large'))).toEqual({ label: 'Large', cls: 'size-large' });
+		expect(mapTag(m('c', 'surf', 'hard'))).toEqual({ label: 'hard', cls: 'diff-hard' });
+	});
+
+	it('sorts same-titled maps medium before large and filters by size', () => {
+		const maps = [lido('big', 'large'), lido('mid', 'medium')];
+		expect(sortMaps(maps).map((x) => x.id)).toEqual(['mid', 'big']);
+		expect(filterMaps(maps, 'lido medium').map((x) => x.id)).toEqual(['mid']);
 	});
 });
 

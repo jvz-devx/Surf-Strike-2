@@ -76,6 +76,8 @@ export interface MapListEntry {
 	title: string;
 	kind: string; // gamemode (surf, bhop, ...)
 	difficulty: string;
+	/** Maps that come in sizes: shown instead of the difficulty (MapDef.size). */
+	size?: 'medium' | 'large';
 	/** Disabled by an admin (online): not in votes, greyed in Change map. */
 	disabled?: boolean;
 }
