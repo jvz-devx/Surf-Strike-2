@@ -53,3 +53,9 @@ venv/
 tmp/
 temp/
 .cache/
+
+# Game server data (production DB + SQLite journal files)
+apps/server/data/
+*.db-wal
+*.db-shm
+*.db-journal
