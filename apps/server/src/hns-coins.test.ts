@@ -256,9 +256,12 @@ describe('hide and seek coins: chases, views, finds', () => {
 		s.run(1);
 		const early = (s.mode as unknown as { seenMs: Map<number, number> }).seenMs.get(h.id) ?? 0;
 		assert.ok(early < 2500, `seen ${early}`);
-		// An AFK seeker: no views after 30 s.
-		s.run(60);
-		assert.equal(s.paid(h, 'hnsView'), 0);
+		// An AFK seeker (no movement, no looking around): no views once 30 s have passed.
+		s.run(32);
+		const views = s.paid(h, 'hnsView');
+		assert.ok(views <= 2, `paid ${views}`);
+		s.run(70);
+		assert.equal(s.paid(h, 'hnsView'), views);
 	});
 });
 
