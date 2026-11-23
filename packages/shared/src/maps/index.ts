@@ -19,6 +19,7 @@ import { zombies_lowtide } from './zombies_lowtide.ts';
 import { infected_outpost } from './infected_outpost.ts';
 import { infected_terminal } from './infected_terminal.ts';
 import { infected_foundry } from './infected_foundry.ts';
+import { hns_lido } from './hns_lido.ts';
 import { SANDBOX } from './sandbox.ts';
 
 /**
@@ -30,8 +31,10 @@ export const SPAWN_CLEARANCE = 0.25;
 
 function liftSpawns(map: MapDef): MapDef {
 	// Tag spawn lists may share objects with `spawn`: lift each object once.
+	// Hide and seek spawns and fixed teleport destinations are authored on floors too.
 	const lifted = new Set<Spawn>();
-	for (const s of [map.spawn, ...(map.spawns ?? [])]) {
+	const dests = map.zones.flatMap((z) => (z.type === 'teleport' && z.dest ? [z.dest] : []));
+	for (const s of [map.spawn, ...(map.spawns ?? []), ...(map.hns?.hiderSpawns ?? []), ...(map.hns?.seekerSpawns ?? []), ...dests]) {
 		if (lifted.has(s)) continue;
 		lifted.add(s);
 		s.pos = { ...s.pos, z: s.pos.z + SPAWN_CLEARANCE };
@@ -60,7 +63,8 @@ export const MAPS: MapDef[] = [
 	zombies_lowtide,
 	infected_outpost,
 	infected_terminal,
-	infected_foundry
+	infected_foundry,
+	hns_lido
 ].map(liftSpawns);
 liftSpawns(SANDBOX);
 

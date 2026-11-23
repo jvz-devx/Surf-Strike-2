@@ -148,28 +148,28 @@ Rules for the build:
 
 ## 3. Quality checklist (enforced by `hns_lido.test.ts`)
 
-| Item | Target |
-| --- | --- |
-| Playable footprint | ≥ 8192 × 7168 units |
-| Crossing route (farthest walkable pair, real nav graph) | ≥ 11250 units (≥ 45 s at the 250 u/s knife run speed) and ≤ 22500 (≤ 90 s) |
-| Brushes total | ≥ 3000 |
-| Prop brushes (furniture, vehicles, trees, crates…) | ≥ 1200 |
-| Enterable buildings | ≥ 10 |
-| Rooms (enclosed spaces with a ceiling) | ≥ 40 |
-| Vertical levels | ≥ 5 (basement, ground, 1st, 2nd, roofs/tower) |
-| Secret spots (declared, each with a position) | ≥ 30 |
-| … of which behind/inside clip-through brushes | ≥ 12 |
-| … roof-only / high-ledge spots | ≥ 5 |
-| … crouch-jump-chain spots | ≥ 3 |
-| … inside-a-prop spots (hollow fake props) | ≥ 4 |
-| Clip-through (`solid: false`) brushes | ≥ 25 |
-| Teleporters (zones with `dest`) | ≥ 10, ≥ 5 hidden, ≥ 2 visible pairs |
-| Crawlspaces/vents (stand hull blocked, duck passes) | ≥ 5 |
-| Chase loops (cycles through ≥ 2 doors/levels) | ≥ 8 (documented) |
-| Hider spawns / seeker spawns | ≥ 12 / ≥ 4 (seekers inside the cage) |
-| Every secret spot reachable from hider spawns and from the cage | yes (nav graph) |
-| No trap: every reachable place can walk/teleport back to the cage | yes (reverse nav graph) |
-| Nothing reachable outside the boundary | yes |
-| Teleport destinations free, on ground, reachable | yes |
-| Non-solid brushes have no collision | yes (traces pass) |
-| Collision build time | < 1 s |
+| Item | Target | hns_lido |
+| --- | --- | --- |
+| Playable footprint | ≥ 8192 × 7168 units | 9216 × 7680 |
+| Crossing route (farthest walkable pair, real nav graph) | ≥ 11250 units (≥ 45 s at the 250 u/s knife run speed) and ≤ 22500 (≤ 90 s) | ~14 160 (~57 s) |
+| Brushes total | ≥ 3000 | ~11 900 |
+| Prop brushes (furniture, vehicles, trees, crates…) | ≥ 1200 | ~9 350 |
+| Enterable buildings | ≥ 10 | 34 |
+| Rooms (enclosed spaces with a ceiling) | ≥ 40 | 139 recorded |
+| Vertical levels | ≥ 5 (basement, ground, 1st, 2nd, roofs/tower) | basement −192, ground, 192, 384, 576 (+ belfry 480, lighthouse 576) |
+| Secret spots (declared, each with a position) | ≥ 30 | 55 |
+| … of which behind/inside clip-through brushes | ≥ 12 | 25 |
+| … roof-only / high-ledge spots | ≥ 5 | 17 |
+| … crouch-jump-chain spots | ≥ 3 | 5 (tested with `playerMove`) |
+| … inside-a-prop spots (hollow fake props) | ≥ 4 | 12 |
+| Clip-through (`solid: false`) brushes | ≥ 25 | 123 in the arena |
+| Teleporters (zones with `dest`) | ≥ 10, ≥ 5 hidden, ≥ 2 visible pairs | 16, 12 hidden, 2 visible pairs |
+| Crawlspaces/vents (stand hull blocked, duck passes) | ≥ 5 | 5 |
+| Chase loops (cycles through ≥ 2 doors/levels) | ≥ 8 (documented) | 17 |
+| Hider spawns / seeker spawns | ≥ 12 / ≥ 4 (seekers inside the cage) | 16 / 4 |
+| Every secret spot reachable from hider spawns and from the cage | yes (nav graph) | yes |
+| No trap: every reachable place can walk/teleport back to the cage | yes (reverse nav graph) | yes |
+| Nothing reachable outside the boundary | yes | yes |
+| Teleport destinations free, on ground, reachable | yes | yes |
+| Non-solid brushes have no collision | yes (traces pass) | yes |
+| Collision build time | < 1 s | ~0.3 s (138k triangles) |
