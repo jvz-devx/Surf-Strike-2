@@ -19,6 +19,9 @@ export function createServerMode(host: ModeHost, opts: ModeOptions = {}): Server
 			return new TagMode(host, opts.tag);
 		case 'coop':
 			return new ZombiesMode(host, opts.zombies);
+		case 'hns':
+			// Placeholder until HnsMode lands (docs/modes.md#hide-and-seek).
+			return new TagMode(host, opts.tag);
 	}
 }
 

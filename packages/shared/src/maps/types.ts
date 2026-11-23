@@ -22,6 +22,8 @@ export interface MapDef {
 	spawns?: Spawn[];
 	/** Zombies maps (required there): the route zombies follow and where they spawn (docs/maps.md). */
 	zombies?: ZombieRoute;
+	/** Hide and seek maps (required there): hider/seeker spawns and the seeker cage (docs/modes.md#hide-and-seek). */
+	hns?: HnsMapInfo;
 	brushes: BrushDef[];
 	zones: Zone[];
 	theme: Theme;
@@ -52,6 +54,22 @@ export interface ZombieRoute {
 	 * evac zone.
 	 */
 	gates: ZombieGate[];
+}
+
+/**
+ * Hide and seek spawns (docs/modes.md#hide-and-seek). Hiders spawn spread over
+ * `hiderSpawns` at round start; seekers (and players converted mid-round)
+ * spawn at `seekerSpawns`. During the hiding phase seekers are frozen and
+ * blindfolded at their spawn; `seekerCage` (optional) is the box their spawns
+ * sit in, used by the server to keep frozen seekers there.
+ */
+export interface HnsMapInfo {
+	/** >= 8 spread-out hider start positions. */
+	hiderSpawns: Spawn[];
+	/** >= 2 seeker start positions (ideally inside `seekerCage`). */
+	seekerSpawns: Spawn[];
+	/** Box around the seeker spawns (feet positions inside it). */
+	seekerCage?: { min: Vec3; max: Vec3 };
 }
 
 export interface ZombieGate {

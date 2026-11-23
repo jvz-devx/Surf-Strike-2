@@ -29,7 +29,11 @@ export const Status = {
 	/** Zombies: alive in the round. */
 	Alive: 7,
 	/** Zombies: down, waiting for the next checkpoint. */
-	Down: 8
+	Down: 8,
+	/** Hide and seek: hiding this round. */
+	Hider: 9,
+	/** Hide and seek: seeking (picked at round start or found). */
+	Seeker: 10
 } as const;
 export type Status = (typeof Status)[keyof typeof Status];
 

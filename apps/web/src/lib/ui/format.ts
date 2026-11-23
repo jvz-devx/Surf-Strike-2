@@ -67,6 +67,10 @@ export function statusText(row: Pick<ScoreRow, 'status' | 'stage' | 'spectating'
 			return 'Survivor';
 		case Status.Down:
 			return 'Zombie';
+		case Status.Hider:
+			return 'Hider';
+		case Status.Seeker:
+			return 'Seeker';
 		default:
 			return 'Idle';
 	}

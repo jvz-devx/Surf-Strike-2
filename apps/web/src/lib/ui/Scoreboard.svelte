@@ -23,7 +23,7 @@
 	} = $props();
 
 	const columns = $derived(gameMode(mode).scoreColumns);
-	const split = $derived(splitScoreboard(rows, columns.includes('score') || columns.includes('kills')));
+	const split = $derived(splitScoreboard(rows, columns.includes('score') || columns.includes('kills') || columns.includes('survived')));
 	const HEAD: Record<ScoreColumn, { label: string; num: boolean; width: number }> = {
 		rank: { label: 'Rank', num: true, width: 12 },
 		pb: { label: 'PB', num: true, width: 18 },
@@ -31,7 +31,10 @@
 		kills: { label: 'Kills', num: true, width: 14 },
 		deaths: { label: 'Turned', num: true, width: 12 },
 		status: { label: 'Status', num: false, width: 24 },
-		ping: { label: 'Ping', num: true, width: 12 }
+		ping: { label: 'Ping', num: true, width: 12 },
+		role: { label: 'Role', num: false, width: 18 },
+		finds: { label: 'Finds', num: true, width: 12 },
+		survived: { label: 'Survived', num: true, width: 16 }
 	};
 	const nameWidth = $derived(100 - columns.reduce((n, c) => n + HEAD[c].width, 0));
 </script>
@@ -73,7 +76,11 @@
 								<td class="num ss-num">{r.kills ?? 0}</td>
 							{:else if col === 'deaths'}
 								<td class="num ss-num">{r.deaths ?? 0}</td>
-							{:else if col === 'status'}
+							{:else if col === 'finds'}
+								<td class="num ss-num">{r.kills ?? 0}</td>
+							{:else if col === 'survived'}
+								<td class="num ss-num">{formatClock(r.score ?? 0)}</td>
+							{:else if col === 'status' || col === 'role'}
 								<td class="status">{statusText(r, staged)}</td>
 							{:else}
 								<td class="num ss-num">{r.ping}</td>
