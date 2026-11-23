@@ -56,6 +56,19 @@ export function clientIp(req: Pick<IncomingMessage, 'headers' | 'socket'> | unde
 	return v.startsWith('::ffff:') ? v.slice(7) : v;
 }
 
+/**
+ * Address for per-IP limits: IPv4 as is, IPv6 as its /64 (one household or
+ * machine usually owns a whole /64, so limiting single addresses limits nothing).
+ */
+export function ipKey(ip: string): string {
+	if (isIP(ip) !== 6) return ip;
+	const [head, tail] = ip.toLowerCase().split('::') as [string, string | undefined];
+	const a = head ? head.split(':') : [];
+	const b = tail ? tail.split(':') : [];
+	const groups = tail === undefined ? a : [...a, ...Array<string>(Math.max(0, 8 - a.length - b.length)).fill('0'), ...b];
+	return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':')}::/64`;
+}
+
 /** What the admin module needs to know about a connection. */
 export interface AdminClient {
 	id: number;

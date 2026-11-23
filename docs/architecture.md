@@ -72,7 +72,7 @@ Each client simulates its own movement with zero input lag. The server trusts po
   - horizontal speed never exceeded `sv_maxvelocity`;
   - no position jumps larger than speed allows (teleport detection), except server-known teleport triggers.
   A run failing any check is not saved, and the player gets a chat notice.
-- **Close codes:** 4000 no hello within 10 s, 4001 bad player id, 4002 same player id or same account connected again (old socket; that client stops auto-reconnecting until reload), 4003 server full, 4008 rate-limit kick, 4009 banned (sent after a `banned { reason }` message; the client shows "You are banned" and stops auto-reconnecting until reload; see [Admin and bans](#admin-and-bans)).
+- **Close codes:** 4000 no hello within 10 s, 4001 bad player id, 4002 same player id or same account connected again (old socket; that client stops auto-reconnecting until reload), 4003 server full, 4008 rate-limit kick, 4009 banned (sent after a `banned { reason }` message; the client shows "You are banned" and stops auto-reconnecting until reload; see [Admin and bans](#admin-and-bans)), 4010 too many clients from this IP address ([connection limit](#connection-limit); the client stops auto-reconnecting until reload).
 - **Security:** friends-only by design. Chat is HTML-escaped, names are limited to 24 chars, and each client is rate-limited (state 70 msg/s, chat 2 msg/s). No anti-cheat beyond run validation. Accounts: see below. Admin rights come only from the logged-in account (`ADMIN_USERNAMES`), never from a display name, and guests cannot use a registered username as their name ([Admin and bans](#admin-and-bans)).
 
 ## Protocol sketch
@@ -122,6 +122,10 @@ Username + password, no email or verification ([gameplay.md](gameplay.md#account
 | `accounts` | `id`, `username`, `username_lower` (unique), `password_hash`, `created_at`, `last_login` |
 | `sessions` | `token_hash` (SHA-256 hex), `account_id`, `created_at`, `expires_at` |
 | `replays` | `map` (primary key), `account_id`, `time_ticks`, `samples`, `data` (deflate-raw BLOB), `created_at`: one record ghost per map, replaced only by a faster validated account run ([gameplay.md](gameplay.md#ghosts)) |
+
+## Connection limit
+
+The public host (`pnpm host`, so `./start.sh`) accepts at most 3 connected clients per IP address (`maxPerIp`, close 4010), so one person cannot fill the lobby with bots to raise the [player multiplier](economy.md#player-multiplier). IPv6 is counted per /64. A reload, or the same account in another tab, replaces the old connection first and does not count twice. Clients with an unknown address (loopback, local dev) are never limited, and the dev server (`pnpm server`) has no limit.
 
 ## Admin and bans
 

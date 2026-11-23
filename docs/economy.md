@@ -7,7 +7,7 @@ Status: design, not implemented. The owner asked for a balanced point system and
 - **Points** are what you earn. "Total points" on the scoreboard is the lifetime sum and never goes down.
 - **Coins** are the spendable balance. Every point earned adds 1 coin. Buying in the shop lowers the coins only.
 - Accounts only. Guests play everything but earn nothing.
-- All awards are whole numbers, decided by the server.
+- All base awards are whole numbers, decided by the server. The multiplier makes fractions, so amounts are stored in tenths of a point (integers). Popups show one decimal when needed (`+1.2`); totals and the balance are shown rounded down.
 
 ## Target rates
 
@@ -20,6 +20,22 @@ A basic shop item costs 75 coins. The intent is that the first one takes about 4
 | Very good player in any mode, including playtime | 150–190 |
 
 No mode should pay clearly more per hour than another at the same skill. Where a mode can be repeated quickly, the awards decay.
+
+Both ranges are at multiplier ×1.0. In the multiplayer modes a full lobby pays up to twice as much.
+
+## Player multiplier
+
+Owner's rule. In Zombie Run, Infected, Hide and seek and Tag every award, including the cash bag, is multiplied by the number of active players on the server when it is paid. It does not apply to surf, bhop or playtime.
+
+| Active players | 1–2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 and up |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Multiplier | ×1.0 | ×1.2 | ×1.3 | ×1.4 | ×1.5 | ×1.6 | ×1.7 | ×1.8 | ×1.9 | ×2.0 |
+
+**Active player:** connected, not spectating, and has moved in the last 30 seconds. Anyone still for longer is AFK: not kicked, only not counted. Time in which the game itself holds a player still (frozen or blindfolded seeker, respawn wait, map change) does not run the 30 seconds down. Hiders in Hide and seek also stay active by looking around, because sitting still is how they play. An account connected more than once counts once. Guests count as players.
+
+The minimum player counts below use the same definition of active.
+
+**Connections:** in production at most 3 clients per IP address (IPv6: per /64) may be connected, so a lobby cannot be filled with one person's bots.
 
 ## Playtime
 
@@ -95,9 +111,9 @@ Detection must not be sensitive. Friends who play together, a bad seeker, a luck
 **Prevention** (no punishment, the award is simply not paid):
 
 - AFK players do not count towards minimum player counts and earn nothing.
-- Minimum player counts are counted in distinct accounts.
+- At most 3 connections per IP address in production, and one count per account.
 - Caps and decay as listed per mode.
-- A backstop of 250 points per rolling hour per account, excluding first-finish and record bonuses.
+- A backstop of 250 points per rolling hour per account, counted before the multiplier, excluding first-finish and record bonuses.
 - Awards are rejected for players over the mode's speed cap, or teleported by something other than a map trigger, in the last 5 seconds.
 
 **Signals** (each adds strike weight):
@@ -121,4 +137,4 @@ Detection must not be sensitive. Friends who play together, a bad seeker, a luck
 
 ## Feedback to the player
 
-A small, non-blocking popup shows each award with its reason (for example `+3 Found a hider`), grouped when several arrive together. The Esc menu shows coins, lifetime points and the latest awards.
+Every award shows a small, non-blocking popup with the amount, the reason and the multiplier (for example `+4.5 coins · Found a hider · ×1.5`). Awards that arrive together are stacked. Outside the multiplayer modes the multiplier reads `×1.0`. The current multiplier and the active player count are also visible in the right-side panel. The Esc menu shows coins, lifetime points and the latest awards.

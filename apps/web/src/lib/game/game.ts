@@ -22,6 +22,7 @@ import {
 	hnsSpawns,
 	HNS_NAMETAG_RANGE,
 	hullInBox,
+	CLOSE_IP_LIMIT,
 	MAP_IDS,
 	mapCvars,
 	modeOf,
@@ -2271,6 +2272,11 @@ export class Game implements CommandContext {
 			this.conn.disconnect();
 			this.notice('You connected from another tab or device. Playing solo here; reload the page to reconnect.');
 		}
+		if (code === CLOSE_IP_LIMIT) {
+			// Retrying would fail until someone on this network leaves.
+			this.conn.disconnect();
+			this.notice('Too many players are connected from your network (3 at most). Playing solo; reload the page to try again.');
+		}
 		if (this.mode !== 'online') {
 			if (wasOpen) this.net = null;
 			return;
@@ -2301,7 +2307,7 @@ export class Game implements CommandContext {
 		this.refreshGhost();
 		this.startSoloRotation();
 		this.updatePlayerCount();
-		if (code !== 4002 && code !== 4009) this.notice('Disconnected from server. Playing solo; reconnecting automatically.');
+		if (code !== 4002 && code !== 4009 && code !== CLOSE_IP_LIMIT) this.notice('Disconnected from server. Playing solo; reconnecting automatically.');
 	}
 
 	// -----------------------------------------------------------------------

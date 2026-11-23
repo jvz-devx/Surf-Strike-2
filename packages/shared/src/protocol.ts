@@ -15,6 +15,8 @@ import { TICK_RATE } from './units.ts';
 
 export const PROTOCOL_VERSION = 1;
 export const MAX_PLAYERS = 32;
+/** Close code: too many clients from this IP address (docs/architecture.md#connection-limit). */
+export const CLOSE_IP_LIMIT = 4010;
 export const MAX_NAME = 24;
 export const MAX_CHAT = 128;
 

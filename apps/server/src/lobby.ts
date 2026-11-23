@@ -20,6 +20,7 @@ import type {
 	VoteOption
 } from '@surf/shared';
 import {
+	CLOSE_IP_LIMIT,
 	mapTitle,
 	encodeSnapshot,
 	decodeState,
@@ -34,7 +35,7 @@ import {
 	TAG_TICK_HZ,
 	usernameKey
 } from '@surf/shared';
-import { AdminController, parseAdminUsernames } from './admin.ts';
+import { AdminController, ipKey, parseAdminUsernames } from './admin.ts';
 import { Accounts, AttemptLimiter, AUTH_LIMITS, TOO_MANY } from './auth.ts';
 import { HELP_LINES, parseCommand } from './commands.ts';
 import type { AccountRow, Db } from './db.ts';
@@ -68,6 +69,8 @@ export interface LobbyOptions {
 	/** Start interval timers (snapshot, scoreboard, rotation, ping). Default true. */
 	timers?: boolean;
 	maxPlayers?: number;
+	/** Connected clients allowed per IP address (ipKey); 0 = no limit (default; `pnpm host` sets 3). */
+	maxPerIp?: number;
 	log?: (msg: string) => void;
 	/** Seconds per map (default MAP_DURATION); dev testing only, see server.ts. */
 	mapDuration?: number;
@@ -138,6 +141,7 @@ export class Lobby {
 	private readonly db: Db;
 	private readonly now: () => number;
 	private readonly maxPlayers: number;
+	private readonly maxPerIp: number;
 	private readonly log: (msg: string) => void;
 	private map: MapDef;
 	private timers: NodeJS.Timeout[] = [];
@@ -159,6 +163,7 @@ export class Lobby {
 		this.db = opts.db;
 		this.now = opts.now ?? Date.now;
 		this.maxPlayers = opts.maxPlayers ?? MAX_PLAYERS;
+		this.maxPerIp = opts.maxPerIp ?? 0;
 		this.log = opts.log ?? ((m) => console.log(m));
 		this.accounts = new Accounts(this.db, () => this.now());
 		const initial = opts.initialMap && this.maps.has(opts.initialMap) ? opts.initialMap : opts.maps[0].id;
@@ -279,6 +284,15 @@ export class Lobby {
 		let fallback = `Guest-${playerId.replace(/[^A-Za-z0-9]/g, '').slice(0, 4)}`;
 		while (this.db.accountByName(fallback)) fallback = `Guest-${Math.floor(10000 + this.rng() * 90000)}`;
 		return { name: fallback, taken: true };
+	}
+
+	/** True if `c`'s address already has `maxPerIp` connected clients. Unknown addresses (dev, loopback) are never limited. */
+	private ipFull(c: Client): boolean {
+		if (this.maxPerIp <= 0 || c.ip === null) return false;
+		const key = ipKey(c.ip);
+		let n = 0;
+		for (const o of this.clients) if (o !== c && o.helloed && o.ip !== null && ipKey(o.ip) === key) n++;
+		return n >= this.maxPerIp;
 	}
 
 	get playerCount(): number {
@@ -493,6 +507,12 @@ export class Lobby {
 		const guest = this.guestNameFor(typeof msg.name === 'string' ? msg.name : '', msg.playerId);
 		const guestName = guest.name;
 		if (resumed) this.dropAccountDuplicates(c, resumed.account.id);
+		// After the duplicates are gone, so a reload or account takeover never counts twice.
+		if (this.ipFull(c)) {
+			this.log(`too many connections from one address: #${c.id}`);
+			c.socket.close(CLOSE_IP_LIMIT, 'too many connections from this network');
+			return;
+		}
 		const name = resumed ? resumed.account.username : guestName;
 		c.playerId = msg.playerId;
 		c.name = name;

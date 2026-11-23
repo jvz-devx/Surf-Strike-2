@@ -8,6 +8,8 @@ import { loadDotEnv, startServer } from './server.ts';
 import type { HostEnv } from './tunnel.ts';
 import { cloudflaredBinary, parseTunnelUrl, publishUrl, readHostEnv } from './tunnel.ts';
 
+/** Public host only: clients allowed per IP address (docs/architecture.md#connection-limit). */
+const HOST_MAX_PER_IP = 3;
 const HEARTBEAT_MS = 60_000;
 const TUNNEL_TIMEOUT_MS = 60_000;
 
@@ -23,7 +25,7 @@ try {
 
 let server: Awaited<ReturnType<typeof startServer>>;
 try {
-	server = await startServer({ port: env.port });
+	server = await startServer({ port: env.port, maxPerIp: HOST_MAX_PER_IP });
 } catch (err) {
 	console.error(`host: failed to start the game server: ${(err as Error).message}`);
 	process.exit(1);

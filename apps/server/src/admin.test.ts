@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join as pathJoin } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import type { AdminAction } from '@surf/shared';
-import { ADMIN_EXTEND, RTV_BLOCK } from '@surf/shared';
-import { clientIp, parseAdminUsernames } from './admin.ts';
+import { ADMIN_EXTEND, CLOSE_IP_LIMIT, RTV_BLOCK } from '@surf/shared';
+import { clientIp, ipKey, parseAdminUsernames } from './admin.ts';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
 import { TestClient, testMap } from './test-helpers.ts';
@@ -310,5 +310,54 @@ describe('admin', () => {
 		assert.ok(st.players.some((p) => p.name === 'Tim' && p.admin && p.account === 'Tim'));
 		assert.ok(st.players.some((p) => p.name === 'Again' && p.guest && !p.admin));
 		assert.equal((await bannedHello('Again', { headers: { 'cf-connecting-ip': '198.51.100.23' } })).closeCode, 4009);
+	});
+});
+
+describe('connection limit per IP', () => {
+	it('ipKey: IPv4 as is, IPv6 per /64', () => {
+		assert.equal(ipKey('203.0.113.7'), '203.0.113.7');
+		assert.equal(ipKey('2001:db8:1:2:aaaa::1'), ipKey('2001:0DB8:0001:0002::ffff'));
+		assert.notEqual(ipKey('2001:db8:1:2::1'), ipKey('2001:db8:1:3::1'));
+		assert.equal(ipKey('2001:db8::1'), ipKey('2001:db8:0:0:5:6:7:8'));
+	});
+
+	it('maxPerIp: the 4th client is refused, a reload and other addresses are not, a leaver frees a slot', async () => {
+		const d = mkdtempSync(pathJoin(tmpdir(), 'surf-iplimit-'));
+		const s = await startServer({ port: 0, host: '127.0.0.1', dbPath: pathJoin(d, 't.db'), maps: MAPS, log: () => {}, maxPerIp: 3 });
+		const all: TestClient[] = [];
+		const open = (headers?: Record<string, string>) => {
+			const c = new TestClient(s.port, headers);
+			all.push(c);
+			return c;
+		};
+		const refused = async (headers: Record<string, string>) => {
+			const c = open(headers);
+			await c.open();
+			c.send({ type: 'hello', version: 0, playerId: crypto.randomUUID(), name: 'Bot' });
+			await c.until(() => c.closed);
+			assert.equal(c.closeCode, CLOSE_IP_LIMIT);
+		};
+		try {
+			const home = { 'cf-connecting-ip': '198.51.100.7' };
+			const pid = crypto.randomUUID();
+			await open(home).hello('A', pid);
+			const b = open(home);
+			await b.hello('B');
+			await open(home).hello('C');
+			await refused(home);
+			await open({ 'cf-connecting-ip': '198.51.100.8' }).hello('Elsewhere');
+			await open(home).hello('A', pid); // reload
+			await refused(home);
+			b.close();
+			await b.until(() => b.closed);
+			await new Promise((r) => setTimeout(r, 50));
+			await open(home).hello('D');
+			for (let i = 0; i < 5; i++) await open().hello(`Dev${i}`); // unknown address: no limit
+			assert.equal(s.lobby.playerCount, 9);
+		} finally {
+			for (const c of all) c.close();
+			await s.close();
+			rmSync(d, { recursive: true, force: true });
+		}
 	});
 });
