@@ -32,6 +32,7 @@ import {
 	RTV_REQUEST_DURATION,
 	MAX_TICKS_PER_FRAME,
 	HULL_MIN,
+	DUCK_HULL_MAX,
 	playerMaxs,
 	PROTOCOL_VERSION,
 	passwordError,
@@ -66,7 +67,8 @@ import {
 	type SnapshotEntry,
 	type UserCmd,
 	type Vec3,
-	type VoteOption
+	type VoteOption,
+	type WeaponId
 } from '@surf/shared';
 import { GameAudio } from '../audio/audio.js';
 import { GameFullscreen } from '../input/fullscreen.js';
@@ -77,6 +79,7 @@ import type { NetClient } from '../net/client.js';
 import { Connection } from '../net/connection.js';
 import { serverOverride } from '../net/discovery.js';
 import { emptySample, INTERP_DELAY_MS, SnapshotBuffer, type Sample } from '../net/interp.js';
+import { emptyPose } from '../render/players.js';
 import { GameRenderer } from '../render/renderer.js';
 import { Binds } from './binds.js';
 import { CHAT_HELP, parseChatCommand } from './chat.js';
@@ -248,6 +251,8 @@ export class Game implements CommandContext {
 	private net: NetClient | null = null;
 	private selfId = -1;
 	private remotes = new Map<number, Remote>();
+	/** Scratch pose for `players.setPose`. */
+	private readonly avatarPose = emptyPose();
 	private records: MapRecordInfo | null = null;
 	private mapEndsAt = 0;
 	private netState: NetState = {
@@ -1382,7 +1387,8 @@ export class Game implements CommandContext {
 		const on = this.cvars.num('cl_ghost') !== 0 && !this.spec && this.isRace();
 		const visible = on && this.ghost.update(st.phase, st.ticks, this.step.alpha);
 		const g = this.ghost.pose;
-		r.ghost.setPose(g.x, g.y, g.z, g.yaw, (g.flags & FLAG_DUCKED) !== 0, visible);
+		const onGround = (g.flags & FLAG_ON_GROUND) !== 0;
+		r.ghost.setPose(g.x, g.y, g.z, g.pitch, g.yaw, (g.flags & FLAG_DUCKED) !== 0, onGround, visible && !onGround ? this.rampUnder(g) : null, visible);
 	}
 
 	// -----------------------------------------------------------------------
@@ -1592,6 +1598,18 @@ export class Game implements CommandContext {
 		return null;
 	}
 
+	/** Third-person recoil or swing of a remote player. */
+	private avatarShot(id: number, weapon: WeaponId): void {
+		this.renderer?.players.act(id, weapon === 'knife' || weapon === 'claws' ? 'swing' : 'fire');
+	}
+
+	/** Normal of the surf ramp an airborne hull at feet `p` rests on, for the surf stance (visual only). */
+	private rampUnder(p: Vec3): Vec3 | null {
+		const a = { x: p.x, y: p.y, z: p.z + 2 };
+		const n = this.world.trace(a, { x: p.x, y: p.y, z: p.z - 4 }, HULL_MIN, DUCK_HULL_MAX).plane.normal;
+		return n.z > 0.1 && n.z < 0.7 ? n : null;
+	}
+
 	private updateRemotes(now: number): void {
 		if (this.remotes.size === 0) return;
 		const renderAt = now - INTERP_DELAY_MS;
@@ -1611,7 +1629,20 @@ export class Game implements CommandContext {
 				now - rm.buf.lastArrival < 3000 &&
 				!(this.zm?.isDown(rm.id) ?? false) &&
 				!(this.inf?.isDown(rm.id) ?? false);
-			players.setPose(rm.id, s.x, s.y, s.z, s.yaw, (s.flags & FLAG_DUCKED) !== 0, visible);
+			const pose = this.avatarPose;
+			pose.x = s.x;
+			pose.y = s.y;
+			pose.z = s.z;
+			pose.vx = s.vx;
+			pose.vy = s.vy;
+			pose.vz = s.vz;
+			pose.yaw = s.yaw;
+			pose.pitch = s.pitch;
+			pose.ducked = (s.flags & FLAG_DUCKED) !== 0;
+			pose.onGround = (s.flags & FLAG_ON_GROUND) !== 0;
+			pose.ramp = visible && !pose.onGround ? this.rampUnder(s) : null;
+			players.setPose(rm.id, pose, visible);
+			players.setHeld(rm.id, this.zm?.heldOf(rm.id) ?? this.inf?.heldOf(rm.id) ?? (this.hns?.roleOf(rm.id) === 'seeker' ? 'knife' : null));
 			players.setIt(rm.id, it?.includes(rm.id) ?? false);
 			players.setZombie(rm.id, this.zm?.isZombiePlayer(rm.id) ?? false);
 			players.setInfected(rm.id, this.inf?.roleOf(rm.id) ?? 'none');
@@ -2212,12 +2243,15 @@ export class Game implements CommandContext {
 				break;
 			case 'zm':
 				this.zm?.onEvent(m.ev, now);
+				if (m.ev.e === 'shot') this.avatarShot(m.ev.by, m.ev.weapon);
 				break;
 			case 'inf':
 				this.inf?.onEvent(m.ev, now);
+				if (m.ev.e === 'shot') this.avatarShot(m.ev.by, m.ev.weapon);
 				break;
 			case 'hns':
 				this.hns?.onEvent(m.ev, now);
+				if (m.ev.e === 'swing') this.avatarShot(m.ev.by, 'knife');
 				break;
 			case 'tagged':
 				this.onTagged(m.by, m.target, now);

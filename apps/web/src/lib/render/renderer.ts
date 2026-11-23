@@ -4,6 +4,8 @@
  */
 import type { MapDef, Vec3 } from '@surf/shared';
 import * as THREE from 'three';
+import { CrowdView } from './character/crowd.js';
+import { HeldAssets } from './character/held.js';
 import { applyViewAngles, setThree, toThree } from './coords.js';
 import { buildEffects, type Effects } from './effects.js';
 import { verticalFovFromHorizontal43 } from './fov.js';
@@ -19,11 +21,14 @@ export class GameRenderer {
 	readonly renderer: THREE.WebGLRenderer;
 	readonly scene = new THREE.Scene();
 	readonly camera: THREE.PerspectiveCamera;
-	readonly players = new RemotePlayers();
+	/** Third-person held items, shared by all characters. */
+	private readonly held = new HeldAssets();
+	private readonly crowd = new CrowdView();
+	readonly players = new RemotePlayers(this.held);
 	/** Race ghost (docs/gameplay.md#ghosts); posed by game.ts every frame. */
-	readonly ghost = new GhostAvatar();
+	readonly ghost = new GhostAvatar(this.held);
 	/** Zombies mode: zombies, corpses, tracers and the first-person viewmodel (docs/modes.md#zombies). */
-	readonly zombies = new ZombieRenderer();
+	readonly zombies = new ZombieRenderer(this.held);
 	/** Infected mode: throwing knives and the last-survivor UAV pulse (docs/modes.md#infected). */
 	readonly infected = new InfectedRenderer();
 	private shared: SharedUniforms = createSharedUniforms();
@@ -112,6 +117,10 @@ export class GameRenderer {
 		this.effects?.update(timeSec);
 		this.sky.follow(this.camera);
 		this.infected.update(timeSec * 1000);
+		this.crowd.begin(timeSec, this.camera);
+		this.players.update(this.crowd);
+		this.ghost.update(this.crowd);
+		this.zombies.animate(this.crowd);
 		this.renderer.render(this.scene, this.camera);
 		this.zombies.update(timeSec * 1000);
 		if (this.zombies.vmVisible) {
@@ -130,6 +139,7 @@ export class GameRenderer {
 		this.ghost.dispose();
 		this.zombies.dispose();
 		this.infected.dispose();
+		this.held.dispose();
 		this.sky.dispose();
 		this.renderer.dispose();
 		this.renderer.forceContextLoss();

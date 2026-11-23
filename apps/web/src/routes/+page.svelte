@@ -10,10 +10,18 @@
 	onMount(() => {
 		let destroyed = false;
 		let h: GameHandle | null = null;
+		let stopGallery: (() => void) | null = null;
 		const params = new URLSearchParams(location.search);
 
 		(async () => {
 			try {
+				// Dev-only character viewer (docs/characters.md).
+				if (import.meta.env.DEV && params.has('characters')) {
+					const { startGallery } = await import('#lib/render/character/gallery.js');
+					if (destroyed) return;
+					stopGallery = startGallery(canvas);
+					return;
+				}
 				let created: GameHandle;
 				if (import.meta.env.DEV && params.has('mockhud')) {
 					const { createMockGame } = await import('#lib/ui/mock.svelte.js');
@@ -35,6 +43,7 @@
 		return () => {
 			destroyed = true;
 			h?.destroy();
+			stopGallery?.();
 			handle = null;
 		};
 	});

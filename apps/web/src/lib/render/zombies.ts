@@ -1,19 +1,20 @@
 /**
- * Zombies visuals (docs/modes.md#zombies): low-poly zombies (the remote-player
- * humanoid, hunched, greenish grey, glowing eyes), hit flash, death collapse
+ * Zombies visuals (docs/modes.md#zombies): zombies (the character model of
+ * docs/characters.md, hunched, greenish grey, glowing eyes), hit flash, death collapse
  * and fade (no blood), tracers, and first-person viewmodels with a muzzle
  * flash drawn in their own scene over the world. Positions are Source feet
  * origins; Source → Three is (x, y, z) → (x, z, −y).
  */
 import type { GateState, WeaponId, ZombieGate } from '@surf/shared';
-import { ZF_ATTACKING, ZF_HIT } from '@surf/shared';
+import { ZF_ATTACKING, ZF_HIT, ZF_ON_GROUND } from '@surf/shared';
 import * as THREE from 'three';
-import { buildHumanoid } from './players.js';
+import { emptyMotion, type MotionState } from './character/animator.js';
+import type { CrowdView } from './character/crowd.js';
+import type { HeldAssets } from './character/held.js';
+import { CharacterModel, personOf } from './character/model.js';
+import { VelocityTracker } from './character/motion.js';
 
 const DEG = Math.PI / 180;
-/** Upper body lean (matches the shared head hitbox: 7.5 forward, 65 up). */
-const LEAN = 14 * DEG;
-const HIP = 34;
 const CORPSE_FALL_MS = 380;
 const CORPSE_FADE_MS = 1300;
 const TRACER_MS = 90;
@@ -44,9 +45,6 @@ const DEFAULT_KICK = { ms: 110, back: 1.2, rise: 0.12 };
 /** `vmPart` arguments after the parent group. */
 type PartArgs = [m: THREE.Material, sx: number, sy: number, sz: number, x: number, y: number, z: number, rx?: number, ry?: number, rz?: number];
 
-const SKIN = new THREE.Color(0x7d9a6e);
-const SHIRT = new THREE.Color(0x4e5a52);
-const PANTS = new THREE.Color(0x3a3a40);
 const FLASH = new THREE.Color(0xffffff);
 const NO_GLOW = new THREE.Color(0x000000);
 const ATTACK_GLOW = new THREE.Color(0x3a0a00);
@@ -63,11 +61,15 @@ export interface ZombiePose {
 interface ZombieMesh {
 	root: THREE.Group;
 	body: THREE.Group;
-	upper: THREE.Group;
-	mats: THREE.MeshLambertMaterial[];
+	model: CharacterModel;
+	motion: MotionState;
+	velocity: VelocityTracker;
 	/** Local hit flash until (ms). */
 	flashUntil: number;
-	phase: number;
+	/** Source feet position of this frame. */
+	x: number;
+	y: number;
+	z: number;
 }
 
 interface Corpse {
@@ -87,7 +89,7 @@ export class ZombieRenderer {
 	readonly vmScene = new THREE.Scene();
 	readonly vmCamera = new THREE.PerspectiveCamera(62, 16 / 9, 0.5, 200);
 	private box = new THREE.BoxGeometry(1, 1, 1);
-	private eyeMat = new THREE.MeshBasicMaterial({ color: 0xd8ff6a, fog: false });
+	private made = 1;
 	private live = new Map<number, ZombieMesh>();
 	private free: ZombieMesh[] = [];
 	private corpses: Corpse[] = [];
@@ -113,7 +115,7 @@ export class ZombieRenderer {
 	// Gates: glowing barrier boxes and unlock-area floor markers.
 	private gates: Array<{ mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; area: THREE.Mesh; areaMat: THREE.MeshBasicMaterial; state: GateState; at: number }> = [];
 
-	constructor() {
+	constructor(private readonly assets: HeldAssets) {
 		this.group.name = 'zombies';
 		this.vmScene.add(new THREE.HemisphereLight(0xd8d4e8, 0x3a3030, 1.6));
 		const sun = new THREE.DirectionalLight(0xffc8a0, 1.4);
@@ -131,39 +133,14 @@ export class ZombieRenderer {
 	// Zombies
 
 	private create(): ZombieMesh {
-		const skin = new THREE.MeshLambertMaterial({ color: SKIN.clone() });
-		const shirt = new THREE.MeshLambertMaterial({ color: SHIRT.clone() });
-		const pants = new THREE.MeshLambertMaterial({ color: PANTS.clone() });
-		const body = buildHumanoid(this.box, shirt, pants, skin);
-		// Children: legs ×2, torso, arms ×2, head, visor. Hunch the upper body over the hips.
-		const upper = new THREE.Group();
-		upper.position.set(0, HIP, 0);
-		upper.rotation.z = -LEAN;
-		for (const m of body.children.slice(2)) {
-			m.position.y -= HIP;
-			upper.add(m);
-		}
-		const [, arm1, arm2, , visor] = upper.children; // torso, arms, head, visor
-		// Arms reach forward.
-		for (const a of [arm1, arm2]) {
-			if (!a) continue;
-			a.rotation.z = -80 * DEG;
-			a.position.x += 11;
-			a.position.y += 8;
-		}
-		// Glowing eyes instead of the visor.
-		if (visor) visor.visible = false;
-		for (const s of [-2.6, 2.6]) {
-			const e = new THREE.Mesh(this.box, this.eyeMat);
-			e.scale.set(1.2, 1.6, 2);
-			e.position.set(5.8, 68 - HIP, s);
-			upper.add(e);
-		}
-		body.add(upper);
+		const model = new CharacterModel(personOf(this.made++), this.assets);
+		model.setRole('zombie');
+		const body = new THREE.Group();
+		body.add(model.group);
 		const root = new THREE.Group();
 		root.add(body);
 		this.group.add(root);
-		return { root, body, upper, mats: [skin, shirt, pants], flashUntil: 0, phase: Math.random() * 10 };
+		return { root, body, model, motion: emptyMotion(), velocity: new VelocityTracker(), flashUntil: 0, x: 0, y: 0, z: 0 };
 	}
 
 	private take(): ZombieMesh {
@@ -171,11 +148,16 @@ export class ZombieRenderer {
 		m.root.visible = true;
 		m.body.rotation.set(0, 0, 0);
 		m.body.position.set(0, 0, 0);
-		for (const mat of m.mats) {
-			mat.opacity = 1;
+		const mat = m.model.material;
+		mat.opacity = 1;
+		if (mat.transparent) {
 			mat.transparent = false;
-			mat.emissive.copy(NO_GLOW);
+			mat.needsUpdate = true;
 		}
+		mat.emissive.copy(NO_GLOW);
+		Object.assign(m.motion, emptyMotion());
+		m.velocity.reset();
+		m.model.animator.reset();
 		return m;
 	}
 
@@ -195,19 +177,30 @@ export class ZombieRenderer {
 				this.live.set(z.id, m);
 			}
 			m.root.position.set(z.x, z.z, -z.y);
-			m.body.rotation.y = z.yaw * DEG;
-			// Shamble: sway and arm bob.
-			const t = now / 1000 + m.phase;
-			m.upper.rotation.x = Math.sin(t * 6) * 0.06;
-			m.upper.rotation.z = -LEAN - ((z.flags & ZF_ATTACKING) !== 0 ? 0.25 : 0);
+			m.x = z.x;
+			m.y = z.y;
+			m.z = z.z;
+			m.motion.yaw = z.yaw;
+			m.motion.onGround = (z.flags & ZF_ON_GROUND) !== 0;
+			const attacking = (z.flags & ZF_ATTACKING) !== 0;
+			m.model.animator.lunging = attacking;
 			const hit = (z.flags & ZF_HIT) !== 0 || now < m.flashUntil;
-			const glow = hit ? FLASH : (z.flags & ZF_ATTACKING) !== 0 ? ATTACK_GLOW : NO_GLOW;
-			for (const mat of m.mats) mat.emissive.copy(glow).multiplyScalar(hit ? 0.55 : 1);
+			m.model.material.emissive.copy(hit ? FLASH : attacking ? ATTACK_GLOW : NO_GLOW).multiplyScalar(hit ? 0.55 : 1);
 		}
 		for (const [id, m] of this.live) {
 			if (this.seen.has(id)) continue;
 			this.live.delete(id);
 			this.release(m);
+		}
+	}
+
+	/** Animate the live zombies (once per frame, before rendering). */
+	animate(view: CrowdView): void {
+		for (const m of this.live.values()) {
+			m.velocity.push(m.x, m.y, m.z, view.dt, m.motion);
+			const dist = view.distance(m.root.position);
+			if (dist < 0) m.model.skipFrame(view.dt, m.motion);
+			else m.model.update(view.dt, m.motion, dist);
 		}
 	}
 
@@ -224,12 +217,16 @@ export class ZombieRenderer {
 		else if (pose) {
 			m = this.take();
 			m.root.position.set(pose.x, pose.z, -pose.y);
-			m.body.rotation.y = pose.yaw * DEG;
+			m.motion.yaw = pose.yaw;
+			m.model.update(0, m.motion, 0);
 		} else return;
-		for (const mat of m.mats) {
-			mat.transparent = true;
-			mat.emissive.copy(NO_GLOW);
-		}
+		const mat = m.model.material;
+		mat.transparent = true;
+		mat.needsUpdate = true;
+		mat.emissive.copy(NO_GLOW);
+		// The fall turns around the facing: move the yaw out to the body.
+		m.model.setYaw(0);
+		m.body.rotation.y = m.motion.yaw * DEG;
 		this.corpses.push({ m, at: now, dir: Math.random() < 0.5 ? 1 : -1 });
 	}
 
@@ -732,7 +729,7 @@ export class ZombieRenderer {
 			c.m.body.rotation.z = c.dir * ease * (Math.PI / 2) * 0.95;
 			c.m.body.position.y = -ease * 4;
 			const fade = Math.max(0, Math.min(1, (t - CORPSE_FALL_MS) / CORPSE_FADE_MS));
-			for (const mat of c.m.mats) mat.opacity = 1 - fade;
+			c.m.model.material.opacity = 1 - fade;
 			if (fade >= 1) {
 				this.corpses.splice(i, 1);
 				this.release(c.m);
@@ -771,14 +768,13 @@ export class ZombieRenderer {
 
 	dispose(): void {
 		this.reset();
-		for (const m of this.free) for (const mat of m.mats) mat.dispose();
+		for (const m of this.free) m.model.dispose();
 		this.free = [];
 		for (const t of this.tracers) {
 			t.line.geometry.dispose();
 			(t.line.material as THREE.Material).dispose();
 		}
 		this.tracerMat.dispose();
-		this.eyeMat.dispose();
 		for (const m of this.vmMats) m.dispose();
 		for (const g of this.vmGeoms) g.dispose();
 		this.vmGeoms = [];

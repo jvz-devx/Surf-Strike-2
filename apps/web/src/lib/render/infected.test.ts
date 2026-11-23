@@ -16,6 +16,7 @@ import {
 	type BeaconRenderPose,
 	type KnifeRenderPose
 } from './infected.js';
+import { HeldAssets } from './character/held.js';
 import { ZombieRenderer } from './zombies.js';
 
 const DEG = Math.PI / 180;
@@ -390,7 +391,7 @@ describe('respawn beacons', () => {
 
 describe('claws viewmodel off-hand knife (ZombieRenderer)', () => {
 	it('held with claws, stays in the hand until the throw releases, pops back, cleared on reset', () => {
-		const z = new ZombieRenderer();
+		const z = new ZombieRenderer(new HeldAssets());
 		z.setWeapon('claws');
 		z.updateViewmodel(0, true, 1, 0);
 		expect(z.offhandDrawn).toBe(false); // zombies mode default: off

@@ -45,6 +45,7 @@ In solo mode (no server), `?map=<id>` opens that map directly, e.g. `http://loca
 | [modes.md](modes.md) | Gamemode framework (surf, bhop, tag, Zombie Run, hide and seek), how to add a mode, per-mode rules |
 | [maps.md](maps.md) | Map format and the four map designs |
 | [ui.md](ui.md) | HUD, console, cvars, Esc settings, account panel, audio |
+| [characters.md](characters.md) | Character models, animation, cosmetic slots and how to add an item |
 | [economy.md](economy.md) | Points, coins, payouts per mode, abuse detection (design) |
 | [roadmap.md](roadmap.md) | Milestones and out of scope |
 | [overview.html](overview.html) | Interactive visual overview of all the above (open in a browser) |
@@ -69,7 +70,7 @@ In solo mode (no server), `?map=<id>` opens that map directly, e.g. `http://loca
 | HUD | CS2-era layout and feel, original art, open fonts |
 | Map vote | 15:00 per map; vote at 0:30 left; 3 other maps + "Extend 10 min"; `!rtv` at 60% |
 | Maps | original: surf (aurora, ember, skyrend, hadal: all rated easy), bhop (meadow easy, circuit / reliquary / rimefall hard), tag (quayside), Zombie Run (lowtide); themed, stylised |
-| Lobby | 32 players max, no player collision, low-poly humanoids with name tags |
+| Lobby | 32 players max, no player collision, animated low-poly characters with name tags ([characters.md](characters.md)) |
 | Platform | Desktop browsers, mouse + keyboard, pointer lock |
 | Audio | Real CC0 field/foley recordings (Freesound), one measured hall IR; no synthesised sound ([ui.md](ui.md#audio), [CREDITS.md](../CREDITS.md)) |
 

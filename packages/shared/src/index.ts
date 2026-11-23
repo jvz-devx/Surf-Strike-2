@@ -16,3 +16,4 @@ export * from './ghost.ts';
 export * from './rotation-impl.ts';
 export * from './maps/index.ts';
 export * from './modes/index.ts';
+export * from './cosmetics.ts';

@@ -37,6 +37,7 @@ import {
 } from '@surf/shared';
 import { INTERP_DELAY_MS } from '../net/interp.js';
 import { ZombieBuffer, type ZombieSample } from '../net/zombie-interp.js';
+import type { HeldItem } from '../render/character/held.js';
 import type { ZombieRenderer } from '../render/zombies.js';
 import type { KillFeedLine, ZombiesView } from './contract.js';
 import { FIRE_BUFFER_MS, forwardDir, liveKillFeed, pushKillFeed, slotAction, spreadDir } from './zombies-view.js';
@@ -144,6 +145,12 @@ export class ZombiesClient {
 	/** A remote player is on the zombie side (zombie look). */
 	isZombiePlayer(id: number): boolean {
 		return this.state?.players.some((p) => p.id === id && p.team === 'zombie') ?? false;
+	}
+
+	/** Weapon a remote survivor holds (third person); null for zombies and unknown players. */
+	heldOf(id: number): HeldItem | null {
+		const p = this.state?.players.find((q) => q.id === id);
+		return p && p.team !== 'zombie' && p.weapon !== 'claws' ? p.weapon : null;
 	}
 
 	/** Down: no movement, camera follows a teammate. */

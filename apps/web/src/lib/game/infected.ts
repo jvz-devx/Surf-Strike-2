@@ -376,6 +376,11 @@ export class InfectedClient {
 		return infRole(this.state?.players.find((p) => p.id === id));
 	}
 
+	/** Weapon (or claws) a remote player holds, third person. */
+	heldOf(id: number): WeaponId | null {
+		return this.state?.players.find((p) => p.id === id)?.weapon ?? null;
+	}
+
 	/** Remote players not in play (respawning) are hidden. */
 	isDown(id: number): boolean {
 		return this.state?.players.some((p) => p.id === id && !p.alive) ?? false;

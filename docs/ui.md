@@ -130,7 +130,7 @@ Dev preview: `/?mockhud&open=settings` (main menu), `&open=maps` (map submenu), 
 
 ## Ghost
 
-The race ghost ([gameplay.md](gameplay.md#ghosts)) is the remote-player humanoid in a pale cyan, at opacity 0.35 with a faint glow, drawn without depth writes so it never hides the map. Its name tag is a small drawn ghost icon (no emoji font needed) and `Name · 01:23.456`, or `Your PB · 01:23.456` for your local best. `cl_ghost 0` hides it; `cl_hideplayers` does not affect it. The console prints `Record ghost: Name time` when one loads.
+The race ghost ([gameplay.md](gameplay.md#ghosts)) is the player character ([characters.md](characters.md)) in a pale cyan, at opacity 0.35 (stronger at the silhouette) with a faint glow, drawn without depth writes so it never hides the map. Its name tag is a small drawn ghost icon (no emoji font needed) and `Name · 01:23.456`, or `Your PB · 01:23.456` for your local best. `cl_ghost 0` hides it; `cl_hideplayers` does not affect it. The console prints `Record ghost: Name time` when one loads.
 
 ## Default key binds
 

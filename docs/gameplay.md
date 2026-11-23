@@ -145,4 +145,4 @@ Lobby:
 
 - Up to 32 players. Player 33 gets "Server full" and stays in solo mode.
 - No player-to-player collision.
-- Other players are simple original low-poly humanoids with a per-player tint and a name tag. `cl_hideplayers 1` hides them.
+- Other players are original animated characters ([characters.md](characters.md)) with a per-player tint and a name tag. `cl_hideplayers 1` hides them.

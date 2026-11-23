@@ -1,64 +1,45 @@
 /**
- * Remote players: original low-poly humanoids (boxes) with a per-player tint
- * and a name tag sprite. Positions are Source feet origins.
+ * Remote players and the race ghost: character models (docs/characters.md)
+ * with a name tag sprite. Positions are Source feet origins.
  */
+import { emptyLoadout, type Loadout } from '@surf/shared';
 import * as THREE from 'three';
+import { emptyMotion, type MotionState } from './character/animator.js';
+import type { CrowdView } from './character/crowd.js';
+import { HeldAssets, type HeldItem } from './character/held.js';
+import { applyLoadout, CharacterModel, personOf, type CharacterRole } from './character/model.js';
+import { VelocityTracker } from './character/motion.js';
 
-const DEG = Math.PI / 180;
+/** Height of the name tag centre above the crown. */
+const TAG_ABOVE = 14;
 
-/** Stable hue from a player id. */
-export function playerHue(id: number): number {
-	let h = (id + 1) * 2654435761;
-	h = (h ^ (h >>> 16)) >>> 0;
-	return (h % 360) / 360;
+/** Pose and motion of a player this frame (Source units and axes). */
+export interface AvatarPose extends MotionState {
+	x: number;
+	y: number;
+	z: number;
+}
+
+export function emptyPose(): AvatarPose {
+	return { x: 0, y: 0, z: 0, ...emptyMotion() };
 }
 
 interface Avatar {
 	root: THREE.Group;
-	body: THREE.Group;
-	materials: THREE.Material[];
+	model: CharacterModel;
+	motion: MotionState;
 	tag: THREE.Sprite;
 	tagTex: THREE.CanvasTexture;
 	name: string;
 	/** Tag mode: this player is IT (red tint, red name tag). */
 	it: boolean;
-	/** Zombies mode: turned into a zombie (zombie colours, green tag). */
+	/** Zombie Run: turned into a zombie (zombie colours, green tag). */
 	zombie: boolean;
 	/** Infected mode: 'infected' (blood-red look, red tag) or 'alpha' (Patient Zero: charred, orange glow and tag). */
 	infected: InfectedRole;
 	/** Hide and seek: a seeker (red tint, red SEEKER tag). */
 	seeker: boolean;
-	skin: THREE.MeshLambertMaterial;
-	baseSkin: THREE.Color;
-	shirt: THREE.MeshLambertMaterial;
-	pants: THREE.MeshLambertMaterial;
-	baseShirt: THREE.Color;
-	basePants: THREE.Color;
-	/** Glowing eyes (infected roles); the visor is hidden while they show. */
-	eyes: THREE.Mesh[];
-	eyeMat: THREE.MeshBasicMaterial;
-	visor: THREE.Object3D | undefined;
 }
-
-const IT_SHIRT = new THREE.Color(0xe02424);
-const IT_PANTS = new THREE.Color(0x5a0c0c);
-const IT_GLOW = new THREE.Color(0x400000);
-const NO_GLOW = new THREE.Color(0x000000);
-const ZOMBIE_SKIN = new THREE.Color(0x7d9a6e);
-const ZOMBIE_SHIRT = new THREE.Color(0x4e5a52);
-const ZOMBIE_PANTS = new THREE.Color(0x3a3a40);
-// Infected looks are dark crimson / charcoal: well below the luminance of warm desert sand and
-// terracotta (infected_outpost 0xd2b589, 0xc29e70) and far from any survivor tint, with glowing eyes.
-const INF_SKIN = new THREE.Color(0x5a3432);
-const INF_SHIRT = new THREE.Color(0x4a0c10);
-const INF_PANTS = new THREE.Color(0x1c1012);
-const INF_GLOW = new THREE.Color(0x400406);
-const INF_EYES = 0xff3a1e;
-const ALPHA_SKIN = new THREE.Color(0x3a2a28);
-const ALPHA_SHIRT = new THREE.Color(0x181012);
-const ALPHA_PANTS = new THREE.Color(0x100c0e);
-const ALPHA_GLOW = new THREE.Color(0x6a2a00);
-const ALPHA_EYES = 0xffb21e;
 
 export type InfectedRole = 'none' | 'infected' | 'alpha';
 
@@ -110,35 +91,13 @@ function makeTag(name: string, style: TagStyle = 'plain'): { tex: THREE.CanvasTe
 	return { tex, aspect: 4 };
 }
 
-/**
- * Low-poly humanoid built facing +X (yaw 0), Three Y up, feet at y = 0.
- * Sizes in Hammer units. Shared by remote players and the ghost.
- */
-export function buildHumanoid(box: THREE.BoxGeometry, shirt: THREE.Material, pants: THREE.Material, skin: THREE.Material): THREE.Group {
-	const body = new THREE.Group();
-	const part = (mat: THREE.Material, sx: number, sy: number, sz: number, x: number, y: number, z: number) => {
-		const m = new THREE.Mesh(box, mat);
-		m.scale.set(sx, sy, sz);
-		m.position.set(x, y, z);
-		body.add(m);
-	};
-	part(pants, 8, 34, 8, 0, 17, 5); // legs
-	part(pants, 8, 34, 8, 0, 17, -5);
-	part(shirt, 11, 26, 20, 0, 47, 0); // torso
-	part(shirt, 6, 24, 6, 0, 46, 13.5); // arms
-	part(shirt, 6, 24, 6, 0, 46, -13.5);
-	part(skin, 11, 11, 11, 0, 66.5, 0); // head
-	part(pants, 3, 3, 8, 6, 67.5, 0); // visor (shows facing)
-	return body;
-}
-
 export class RemotePlayers {
 	readonly group = new THREE.Group();
 	private avatars = new Map<number, Avatar>();
-	private box = new THREE.BoxGeometry(1, 1, 1);
+	private loadouts = new Map<number, Loadout>();
 	private hidden = false;
 
-	constructor() {
+	constructor(private readonly assets: HeldAssets) {
 		this.group.name = 'players';
 	}
 
@@ -152,55 +111,21 @@ export class RemotePlayers {
 	}
 
 	private create(id: number, name: string): Avatar {
-		const hue = playerHue(id);
-		const shirt = new THREE.MeshLambertMaterial({ color: new THREE.Color().setHSL(hue, 0.65, 0.5) });
-		const pants = new THREE.MeshLambertMaterial({ color: new THREE.Color().setHSL(hue, 0.35, 0.22) });
-		const skin = new THREE.MeshLambertMaterial({ color: new THREE.Color().setHSL(hue, 0.25, 0.78) });
-		const body = buildHumanoid(this.box, shirt, pants, skin);
-		const visor = body.children[6]; // legs ×2, torso, arms ×2, head, visor
-		// Glowing eyes for the infected looks (hidden otherwise); unlit and unfogged so they read at range.
-		const eyeMat = new THREE.MeshBasicMaterial({ color: INF_EYES, fog: false });
-		const eyes: THREE.Mesh[] = [];
-		for (const z of [-2.6, 2.6]) {
-			const e = new THREE.Mesh(this.box, eyeMat);
-			e.scale.set(1.4, 1.8, 2.2);
-			e.position.set(5.8, 68, z);
-			e.visible = false;
-			body.add(e);
-			eyes.push(e);
-		}
+		const model = new CharacterModel(personOf(id), this.assets);
+		const loadout = this.loadouts.get(id);
+		if (loadout) applyLoadout(model, loadout);
 
 		const { tex } = makeTag(name);
 		const tagMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, fog: false });
 		const tag = new THREE.Sprite(tagMat);
 		tag.scale.set(64, 16, 1);
-		tag.position.set(0, 86, 0);
+		tag.position.set(0, 72 + TAG_ABOVE, 0);
 		tag.renderOrder = 5;
 
 		const root = new THREE.Group();
-		root.add(body, tag);
+		root.add(model.group, tag);
 		this.group.add(root);
-		return {
-			root,
-			body,
-			materials: [shirt, pants, skin, tagMat, eyeMat],
-			tag,
-			tagTex: tex,
-			name,
-			it: false,
-			zombie: false,
-			infected: 'none',
-			seeker: false,
-			skin,
-			baseSkin: skin.color.clone(),
-			shirt,
-			pants,
-			baseShirt: shirt.color.clone(),
-			basePants: pants.color.clone(),
-			eyes,
-			eyeMat,
-			visor
-		};
+		return { root, model, motion: emptyMotion(), tag, tagTex: tex, name, it: false, zombie: false, infected: 'none', seeker: false };
 	}
 
 	/** Ensure an avatar exists with this name. */
@@ -251,33 +176,29 @@ export class RemotePlayers {
 		this.restyle(a);
 	}
 
-	/** Colours, glow, posture and tag from the avatar's flags (infected > zombie > IT > base). */
+	/** Look, posture and tag from the avatar's flags (infected > zombie > IT > base). */
 	private restyle(a: Avatar): void {
-		let skin = a.baseSkin;
-		let shirt = a.baseShirt;
-		let pants = a.basePants;
-		let glow = NO_GLOW;
-		let hunch = 0;
-		if (a.infected === 'alpha') {
-			[skin, shirt, pants, glow, hunch] = [ALPHA_SKIN, ALPHA_SHIRT, ALPHA_PANTS, ALPHA_GLOW, -0.12];
-		} else if (a.infected === 'infected') {
-			[skin, shirt, pants, glow, hunch] = [INF_SKIN, INF_SHIRT, INF_PANTS, INF_GLOW, -0.22];
-		} else if (a.zombie) {
-			[skin, shirt, pants, hunch] = [ZOMBIE_SKIN, ZOMBIE_SHIRT, ZOMBIE_PANTS, -0.2];
-		} else if (a.it || a.seeker) {
-			[shirt, pants, glow] = [IT_SHIRT, IT_PANTS, IT_GLOW];
-		}
-		a.skin.color.copy(skin);
-		a.shirt.color.copy(shirt);
-		a.pants.color.copy(pants);
-		a.shirt.emissive.copy(glow);
-		a.skin.emissive.copy(a.infected === 'none' ? NO_GLOW : glow);
-		a.body.rotation.z = hunch; // hunched forward
-		const eyes = a.infected !== 'none';
-		for (const e of a.eyes) e.visible = eyes;
-		if (a.visor) a.visor.visible = !eyes;
-		a.eyeMat.color.setHex(a.infected === 'alpha' ? ALPHA_EYES : INF_EYES);
+		const role: CharacterRole = a.infected !== 'none' ? a.infected : a.zombie ? 'zombie' : a.seeker ? 'seeker' : a.it ? 'it' : 'none';
+		a.model.setRole(role);
 		this.retag(a);
+	}
+
+	/** Item in a player's hands (third person), `claws` for infected claws. */
+	setHeld(id: number, item: HeldItem | 'claws' | null): void {
+		this.avatars.get(id)?.model.setHeld(item);
+	}
+
+	/** A player shot (recoil) or swung a knife or claws. */
+	act(id: number, kind: 'fire' | 'swing'): void {
+		this.avatars.get(id)?.model.animator.act(kind);
+	}
+
+	/** Cosmetics of a player (docs/characters.md); kept across map changes. */
+	setLoadout(id: number, loadout: Loadout | null): void {
+		if (loadout) this.loadouts.set(id, { ...loadout });
+		else this.loadouts.delete(id);
+		const a = this.avatars.get(id);
+		if (a) applyLoadout(a.model, loadout ?? emptyLoadout());
 	}
 
 	/** Hide and seek: mark a seeker (red tint and SEEKER tag) or a hider. */
@@ -298,41 +219,72 @@ export class RemotePlayers {
 		return this.avatars.has(id);
 	}
 
-	/** Pose from Source coordinates (feet origin), yaw in degrees. */
-	setPose(id: number, x: number, y: number, z: number, yawDeg: number, ducked: boolean, visible: boolean): void {
+	/** Pose and motion for this frame; `update` animates it. */
+	setPose(id: number, p: AvatarPose, visible: boolean): void {
 		const a = this.avatars.get(id);
 		if (!a) return;
+		if (visible && !a.root.visible) a.model.animator.reset();
 		a.root.visible = visible;
 		if (!visible) return;
-		a.root.position.set(x, z, -y);
-		a.body.rotation.y = yawDeg * DEG;
-		const sy = ducked ? 0.75 : 1;
-		a.body.scale.y = sy;
-		a.tag.position.y = 86 * sy;
+		a.root.position.set(p.x, p.z, -p.y);
+		copyMotion(a.motion, p);
+	}
+
+	/** Animate the visible players (once per frame, before rendering). */
+	update(view: CrowdView): void {
+		if (this.hidden) return;
+		for (const a of this.avatars.values()) {
+			if (!a.root.visible) continue;
+			const dist = view.distance(a.root.position);
+			if (dist < 0) {
+				a.model.skipFrame(view.dt, a.motion);
+				continue;
+			}
+			a.tag.position.y = a.model.update(view.dt, a.motion, dist) + TAG_ABOVE;
+		}
 	}
 
 	ids(): IterableIterator<number> {
 		return this.avatars.keys();
 	}
 
+	/** A player left for good. */
 	remove(id: number): void {
+		this.loadouts.delete(id);
+		this.drop(id);
+	}
+
+	private drop(id: number): void {
 		const a = this.avatars.get(id);
 		if (!a) return;
 		a.root.removeFromParent();
-		for (const m of a.materials) m.dispose();
+		a.model.dispose();
+		a.tag.material.dispose();
 		a.tagTex.dispose();
 		this.avatars.delete(id);
 	}
 
+	/** Map change: drop the models, keep the loadouts. */
 	clear(): void {
-		for (const id of [...this.avatars.keys()]) this.remove(id);
+		for (const id of [...this.avatars.keys()]) this.drop(id);
 	}
 
 	dispose(): void {
 		this.clear();
-		this.box.dispose();
+		this.loadouts.clear();
 		this.group.removeFromParent();
 	}
+}
+
+function copyMotion(out: MotionState, s: MotionState): void {
+	out.vx = s.vx;
+	out.vy = s.vy;
+	out.vz = s.vz;
+	out.yaw = s.yaw;
+	out.pitch = s.pitch;
+	out.onGround = s.onGround;
+	out.ducked = s.ducked;
+	out.ramp = s.ramp;
 }
 
 // ---------------------------------------------------------------------------
@@ -377,45 +329,33 @@ function makeGhostTag(label: string): THREE.CanvasTexture {
 	return tex;
 }
 
-const GHOST_COLOR = new THREE.Color(0x9fdcff);
-const GHOST_GLOW = new THREE.Color(0x2a6a90);
 export const GHOST_OPACITY = 0.35;
 
 /**
- * The race ghost: a translucent, slightly glowing humanoid with a name tag.
+ * The race ghost: a translucent, slightly glowing character with a name tag.
  * Purely visual (no collision). One instance, owned by the renderer.
  */
 export class GhostAvatar {
 	readonly group = new THREE.Group();
-	private box = new THREE.BoxGeometry(1, 1, 1);
-	private body: THREE.Group;
-	private materials: THREE.Material[];
+	private readonly model: CharacterModel;
+	private readonly motion = emptyMotion();
+	private readonly velocity = new VelocityTracker();
+	private readonly pos = { x: 0, y: 0, z: 0 };
 	private tag: THREE.Sprite;
 	private tagTex: THREE.CanvasTexture | null = null;
 	private label = '';
 
-	constructor() {
+	constructor(assets: HeldAssets) {
 		this.group.name = 'ghost';
-		const mat = (lightness: number) =>
-			new THREE.MeshLambertMaterial({
-				color: GHOST_COLOR.clone().offsetHSL(0, 0, lightness),
-				emissive: GHOST_GLOW,
-				transparent: true,
-				opacity: GHOST_OPACITY,
-				depthWrite: false
-			});
-		const shirt = mat(0);
-		const pants = mat(-0.25);
-		const skin = mat(0.1);
-		this.body = buildHumanoid(this.box, shirt, pants, skin);
-		for (const m of this.body.children) m.renderOrder = 4;
+		this.model = new CharacterModel(personOf(0), assets, { ghost: true });
+		this.model.material.opacity = GHOST_OPACITY;
+		this.model.mesh.renderOrder = 4;
 		const tagMat = new THREE.SpriteMaterial({ transparent: true, opacity: 0.9, depthWrite: false, fog: false });
 		this.tag = new THREE.Sprite(tagMat);
 		this.tag.scale.set(96, 12, 1);
-		this.tag.position.set(0, 86, 0);
+		this.tag.position.set(0, 72 + TAG_ABOVE, 0);
 		this.tag.renderOrder = 5;
-		this.materials = [shirt, pants, skin, tagMat];
-		this.group.add(this.body, this.tag);
+		this.group.add(this.model.group, this.tag);
 		this.group.visible = false;
 	}
 
@@ -429,21 +369,37 @@ export class GhostAvatar {
 		m.needsUpdate = true;
 	}
 
-	/** Pose from Source coordinates (feet origin), yaw in degrees. */
-	setPose(x: number, y: number, z: number, yawDeg: number, ducked: boolean, visible: boolean): void {
+	/** Pose from Source coordinates (feet origin), angles in degrees; the velocity comes from the motion. */
+	setPose(x: number, y: number, z: number, pitch: number, yaw: number, ducked: boolean, onGround: boolean, ramp: MotionState['ramp'], visible: boolean): void {
+		if (visible && !this.group.visible) {
+			this.velocity.reset();
+			this.model.animator.reset();
+		}
 		this.group.visible = visible;
 		if (!visible) return;
 		this.group.position.set(x, z, -y);
-		this.body.rotation.y = yawDeg * DEG;
-		const sy = ducked ? 0.75 : 1;
-		this.body.scale.y = sy;
-		this.tag.position.y = 86 * sy;
+		this.pos.x = x;
+		this.pos.y = y;
+		this.pos.z = z;
+		this.motion.pitch = pitch;
+		this.motion.yaw = yaw;
+		this.motion.ducked = ducked;
+		this.motion.onGround = onGround;
+		this.motion.ramp = ramp;
+	}
+
+	update(view: CrowdView): void {
+		if (!this.group.visible) return;
+		this.velocity.push(this.pos.x, this.pos.y, this.pos.z, view.dt, this.motion);
+		const dist = view.distance(this.group.position);
+		if (dist < 0) this.model.skipFrame(view.dt, this.motion);
+		else this.tag.position.y = this.model.update(view.dt, this.motion, dist) + TAG_ABOVE;
 	}
 
 	dispose(): void {
 		this.group.removeFromParent();
-		for (const m of this.materials) m.dispose();
+		this.model.dispose();
+		this.tag.material.dispose();
 		this.tagTex?.dispose();
-		this.box.dispose();
 	}
 }
