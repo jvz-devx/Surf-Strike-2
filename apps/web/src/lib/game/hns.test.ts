@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getMap, HNS_CVARS, HNS_KNIFE, HNS_NAMETAG_RANGE, type ClientMessage, type HnsModeState, type MapDef } from '@surf/shared';
 import { HnsClient, type HnsHost, type HnsSound } from './hns.js';
-import { hnsBlindfold, hnsCanSwing, hnsFrozen, hnsPhaseLabel, hnsTagVisible } from './hns-view.js';
+import { bagTakenText, hnsBagNote, hnsBlindfold, hnsCanSwing, hnsFrozen, hnsPhaseLabel, hnsTagVisible } from './hns-view.js';
 
 describe('hns view helpers', () => {
 	it('never shows hider tags to seekers; others only close and in sight', () => {
@@ -71,7 +71,9 @@ function client() {
 			from.push(f);
 		},
 		viewmodel: () => null,
-		viewId: () => 1
+		viewId: () => 1,
+		cashBag: () => null,
+		eye: () => ({ x: 0, y: 0, yaw: 0 })
 	};
 	return { c: new HnsClient(host, mapDef()), sent, sounds, from, teleports };
 }
@@ -164,6 +166,37 @@ describe('HnsClient', () => {
 		c.onEvent({ e: 'found', by: 3, target: 1, hidersLeft: 0 }, 40);
 		expect(sounds).toEqual(['swing', 'hit']);
 		expect(from[1]).toBeUndefined();
+	});
+
+	it('shows the cash bag: due, out with its place and direction, taken', () => {
+		const { c, sounds } = client();
+		c.onModeState(state('seeking', [3], [1, 2], { bag: { phase: 'pending', secs: 20 } }), 1000);
+		expect(c.frame(1010, true, 0).bag).toEqual({ phase: 'pending', at: 21_000 });
+		c.onEvent({ e: 'bag', pos: { x: 0, y: -1000, z: 0 }, place: 'on the plaza' }, 2000);
+		expect(sounds).toEqual(['bag']);
+		const v = c.frame(2010, true, 0);
+		expect(v.bag).toEqual({ phase: 'out', place: 'on the plaza', meters: 25, turn: 90, canTake: true });
+		expect(v.flash).toMatchObject({ tone: 'cash', text: 'A bag of cash appeared on the plaza!' });
+		c.onEvent({ e: 'bagTaken', by: 1, coins: 7, paid: 98 }, 3000);
+		const t = c.frame(3010, true, 0);
+		expect(t.bag).toEqual({ phase: 'taken', by: 'Me', mine: true });
+		expect(t.flash?.text).toBe('You grabbed the cash bag: 9.8 coins!');
+		c.onModeState(state('ended', [3], [1]), 4000);
+		expect(c.frame(4010, true, 0).bag).toBeNull();
+	});
+
+	it('a late joiner sees the bag from modeState; seekers are told they cannot take it; older servers have none', () => {
+		const { c } = client();
+		c.onModeState(state('seeking', [1], [2], { bag: { phase: 'out', pos: { x: 1000, y: 0, z: 0 }, place: 'here' } }), 0);
+		expect(c.frame(10, true, 0).bag).toMatchObject({ phase: 'out', turn: 0, canTake: false });
+		c.onModeState(state('seeking', [1], [2]), 20);
+		expect(c.frame(30, true, 0).bag).toBeNull();
+		const name = (id: number) => `P${id}`;
+		const out = (x: number, y: number, yaw: number) => hnsBagNote({ phase: 'out', pos: { x, y, z: 0 }, place: '' }, 0, { x: 0, y: 0, yaw }, 'hider', 1, name) as { turn: number | null };
+		expect(out(1000, 0, 90).turn).toBe(90);
+		expect(out(1000, 0, -90).turn).toBe(-90);
+		expect(out(50, 0, 0).turn).toBeNull();
+		expect(bagTakenText('Bob', false, 0)).toBe('Bob grabbed the cash bag');
 	});
 
 	it('falls back to role spawns', () => {

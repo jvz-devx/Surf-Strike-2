@@ -17,7 +17,7 @@ interface MapDef {
   cvars: Partial<Cvars>;       // overrides on top of the mode's profile (physics.md, modes.md)
   spawn: { pos: Vec3; yaw: number };     // race: in the start zone; tag: fallback spawn
   spawns?: Spawn[];            // tag (required, >= 8): random spawns for joins and fall-outs
-  hns?: { hiderSpawns: Spawn[]; seekerSpawns: Spawn[]; seekerCage?: { min: Vec3; max: Vec3 } };  // hide and seek (required there): >= 8 hider spawns, >= 2 seeker spawns (modes.md#hide-and-seek)
+  hns?: { hiderSpawns: Spawn[]; seekerSpawns: Spawn[]; seekerCage?: { min: Vec3; max: Vec3 }; cashBag?: { pos: Vec3; place: string } };  // hide and seek (required there): >= 8 hider spawns, >= 2 seeker spawns (modes.md#hide-and-seek)
   brushes: Brush[];            // solid convex brushes
   zones: Zone[];               // start, end, stage/checkpoint, teleport
   theme: Theme;                // sky, fog, palette, lights, materials
@@ -127,6 +127,8 @@ A seaside resort in a cove, 9216 × 7680 (x [-4608, 4608], y [-3840, 3840]), bui
 - **South:** promenade, beach (huts on stilts, lifeguard tower, beach bar, boathouse), the pier with an arcade pavilion, knee-deep sea, the lighthouse on the rocks with a sea cave.
 
 `MapDef.hns`: 16 hider spawns around the plaza and beyond; 4 seeker spawns in the security office (`seekerCage` = its interior; one doorway, seekers are frozen there by the mode). 55 declared hiding spots (`LIDO.spots`, each with a floor position) include 25 behind or inside clip-through brushes (fake bookcases, lockers, hedges, rock face, brick wall, vending machine, ceiling tiles, wardrobes, dumpsters, a sarcophagus, a covered boat, a container), roof spots reached by prop climbs, five crouch-jump climbs, five duck-only crawlspaces (hotel ceiling void, laundry pipe, under the beach huts, under the bandstand, the car park duct) and 16 teleporters with fixed destinations (12 hidden: fireplace ↔ penthouse wardrobe, wine cask ↔ crypt, well ↔ sewer drain, maze plinth ↔ belfry bell, elevator → hotel water tank, arcade cabinet → sea cave, boathouse crate → lighthouse gallery, pool drain → pump room; 2 visible pairs: phone boxes, changing cubicles). Every one-way teleporter has a walking way back. The boundary is terraced cliffs with an invisible clip wall to 2048 and an invisible sea wall; a teleport under the map respawns fall-outs.
+
+The **cash bag** spot (`cashBag`, per size in `maps/hns_lido-variant.ts`) is open plaza ground: Large (320, −64, 0), east of the fountain, 326 units from the arena's centre; Medium (−1664, 0, 0), the exact centre, between the bandstand and the chapel. The tests check 96 free units around it, ground, open sky, distance to the centre, spots, teleporters and cage, and that it is walked to without a jump from the cage and every hider spawn.
 
 `hns_lido.test.ts` runs every check on both sizes and proves them with the real collision and movement: no intersecting solid boxes, free spawns and destinations, closed boundary (sampled), non-solid fakes, crawlspaces (stand blocked, duck passes), the crouch-jump climbs with `playerMove`, and a conservative reachability graph (`maps/hns-nav.ts`: 32-unit columns plus explicit points, box-path moves with walk ≤ 18 rise, jump 50, crouch-jump 62, duck-jump 48) showing every spot and teleporter is reachable from the hider spawns and from the cage, nothing reachable is a trap (everything leads back to the cage) or outside the boundary, and the farthest walking route is ~14 200 units (~57 s at 250 u/s).
 

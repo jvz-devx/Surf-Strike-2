@@ -411,7 +411,7 @@ function buildLido(variant: LidoVariant): { map: MapDef; design: LidoDesign } {
 		cvars: { ...HNS_CVARS },
 		spawn: hiderSpawns[0]!,
 		spawns: hiderSpawns,
-		hns: { hiderSpawns, seekerSpawns, seekerCage: { min: v(CAGE_INNER.x0, CAGE_INNER.y0, 0), max: v(CAGE_INNER.x1, CAGE_INNER.y1, 176) } },
+		hns: { hiderSpawns, seekerSpawns, seekerCage: { min: v(CAGE_INNER.x0, CAGE_INNER.y0, 0), max: v(CAGE_INNER.x1, CAGE_INNER.y1, 176) }, cashBag: variant.cashBag },
 		brushes: b.brushes,
 		zones,
 		theme

@@ -6,12 +6,13 @@
  */
 import type { ClientMessage, HnsEvent, HnsModeState, HnsRole, MapDef, Spawn, Vec3 } from '@surf/shared';
 import { hnsSpawns } from '@surf/shared';
+import type { CashBagRenderer } from '../render/cashbag.js';
 import type { ZombieRenderer } from '../render/zombies.js';
 import type { HnsView, KillFeedLine } from './contract.js';
-import { hnsBlindfold, hnsCanSwing, hnsFrozen } from './hns-view.js';
+import { bagTakenText, hnsBagNote, hnsBlindfold, hnsCanSwing, hnsFrozen } from './hns-view.js';
 import { forwardDir, liveKillFeed, pushKillFeed } from './zombies-view.js';
 
-export type HnsSound = 'swing' | 'hit' | 'release';
+export type HnsSound = 'swing' | 'hit' | 'release' | 'bag';
 
 export interface HnsHost {
 	online(): boolean;
@@ -25,6 +26,9 @@ export interface HnsHost {
 	viewmodel(): ZombieRenderer | null;
 	/** Player whose role the HUD shows (spectated target, else self). */
 	viewId(): number;
+	cashBag(): CashBagRenderer | null;
+	/** Where the camera is and looks (yaw in degrees). */
+	eye(): { x: number; y: number; yaw: number };
 }
 
 const FLASH_MS = 3200;
@@ -129,6 +133,18 @@ export class HnsClient {
 				}
 				break;
 			}
+			case 'bag':
+				this.host.sound('bag');
+				this.setFlash(`A bag of cash appeared ${ev.place}!`, 'cash', now);
+				if (this.state) this.state = { ...this.state, bag: { phase: 'out', pos: ev.pos, place: ev.place } };
+				break;
+			case 'bagTaken': {
+				const bag = this.state?.bag;
+				if (bag?.phase === 'out') this.host.cashBag()?.burst(bag.pos, now);
+				if (this.state) this.state = { ...this.state, bag: { phase: 'taken', by: ev.by, coins: ev.coins } };
+				this.setFlash(bagTakenText(this.host.name(ev.by), ev.by === self, ev.paid), 'cash', now);
+				break;
+			}
 			case 'lastHider':
 				this.setFlash(ev.id === self ? 'You are the last hider!' : `${this.host.name(ev.id)} is the last hider`, 'info', now);
 				break;
@@ -161,7 +177,7 @@ export class HnsClient {
 		this.host.send({ type: 'knife', origin: { x: eye.x, y: eye.y, z: eye.z }, dir: forwardDir(pitch, yaw) });
 	}
 
-	private setFlash(text: string, tone: 'seeker' | 'hider' | 'info', now: number): void {
+	private setFlash(text: string, tone: NonNullable<HnsView['flash']>['tone'], now: number): void {
 		this.flash = { text, at: now, tone };
 	}
 
@@ -182,8 +198,12 @@ export class HnsClient {
 			this.killFeed = feed;
 			this.viewKey = '';
 		}
+		const bag = this.phase === 'seeking' ? this.state?.bag : null;
+		this.host.cashBag()?.place(bag?.phase === 'out' ? bag.pos : null);
 		const id = this.host.viewId();
-		const key = `${this.stateAt}|${id}|${this.frozenUntil}|${this.flash?.at ?? 0}|${this.feedId}|${this.killFeed.length}|${this.host.online()}`;
+		const note = hnsBagNote(bag, this.stateAt, this.host.eye(), this.roleOf(id) ?? 'seeker', this.host.selfId(), (i) => this.host.name(i));
+		const noteKey = note?.phase === 'out' ? `${note.meters},${note.turn},${note.canTake}` : (note?.phase ?? '');
+		const key = `${noteKey}|${this.stateAt}|${id}|${this.frozenUntil}|${this.flash?.at ?? 0}|${this.feedId}|${this.killFeed.length}|${this.host.online()}`;
 		if (this.view && key === this.viewKey) return this.view;
 		this.viewKey = key;
 		const s = this.state;
@@ -201,12 +221,14 @@ export class HnsClient {
 			finds: s?.players.find((p) => p.id === id)?.finds ?? 0,
 			flash: this.flash,
 			killFeed: this.killFeed,
-			summary: phase === 'ended' ? this.summary : null
+			summary: phase === 'ended' ? this.summary : null,
+			bag: note
 		};
 		return this.view;
 	}
 
 	dispose(): void {
+		this.host.cashBag()?.clear();
 		this.host.viewmodel()?.setWeapon(null);
 		this.host.viewmodel()?.updateViewmodel(0, false, 1, 0);
 	}

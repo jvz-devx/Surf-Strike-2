@@ -1131,7 +1131,12 @@ export class Game implements CommandContext {
 				this.audio.hns(name, Math.hypot(r.sample.x - o.x, r.sample.y - o.y, r.sample.z - o.z));
 			},
 			viewmodel: () => this.renderer?.zombies ?? null,
-			viewId: () => this.tagViewId()
+			viewId: () => this.tagViewId(),
+			cashBag: () => this.renderer?.cashBag ?? null,
+			eye: () => {
+				const pos = this.spec ? this.spec.pos : this.currEye;
+				return { x: pos.x, y: pos.y, yaw: this.yaw };
+			}
 		};
 		this.hns = new HnsClient(host, this.map);
 		this.hud.hns = this.hns.frame(performance.now(), false, 0);

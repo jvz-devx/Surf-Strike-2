@@ -259,11 +259,13 @@ export class GameAudio {
 	 * Hide and seek sounds (docs/modes.md#hide-and-seek), all real CC0
 	 * recordings (CREDITS.md): knife swing (stick whooshes, pool of 4), knife
 	 * hit (knife into foam, pool of 4); the seeker release reuses the vote
-	 * gavel. `dist`: how far away another player's swing is (units); omitted
+	 * gavel and the cash bag's appearance the zone bell (no recording of coins
+	 * is sourced, so the pickup itself is silent). `dist`: how far away another player's swing is (units); omitted
 	 * for your own sounds.
 	 */
-	hns(name: 'swing' | 'hit' | 'release', dist?: number): void {
+	hns(name: 'swing' | 'hit' | 'release' | 'bag', dist?: number): void {
 		if (name === 'release') return this.voteChime();
+		if (name === 'bag') return this.zoneBeep();
 		const falloff = dist === undefined ? 0 : distanceDb(dist);
 		if (falloff === null) return;
 		this.play(name, eventDb(name) + falloff, true);

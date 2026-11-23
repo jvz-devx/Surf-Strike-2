@@ -75,6 +75,16 @@ export interface HnsMapInfo {
 	seekerSpawns: Spawn[];
 	/** Box around the seeker spawns (feet positions inside it). */
 	seekerCage?: { min: Vec3; max: Vec3 };
+	/** Where the cash bag appears (docs/economy.md#hide-and-seek). Without it the map has no bag. */
+	cashBag?: HnsCashBag;
+}
+
+/** A fixed, open spot near the middle of the playable area that is walkable from everywhere. */
+export interface HnsCashBag {
+	/** Floor point the bag floats above. */
+	pos: Vec3;
+	/** Where that is, for the announcement: "on the plaza, by the fountain". */
+	place: string;
 }
 
 export interface ZombieGate {

@@ -11,7 +11,8 @@
  * Seekers win when no hiders are left; hiders win when the seeking time runs
  * out with at least one hider alive.
  */
-import type { MapDef, Spawn } from '../maps/types.ts';
+import { HNS_PAY, POINTS_SCALE } from '../economy.ts';
+import type { HnsCashBag, MapDef, Spawn } from '../maps/types.ts';
 import { DUCK_HULL_MAX, HULL_MAX } from '../movement/api.ts';
 import type { Vec3 } from '../types.ts';
 import { tagSpawns } from './tag.ts';
@@ -45,6 +46,16 @@ export const HNS_MAX_REWIND_MS = 400;
 export const HNS_ORIGIN_SLACK = 80;
 /** A frozen seeker this far from their freeze point is teleported back. */
 export const HNS_FREEZE_SLACK = 48;
+/** Share of the seeking phase that has passed when the cash bag appears. */
+export const HNS_BAG_AT = 0.5;
+/**
+ * Cash bag touch: horizontal distance from the player's feet origin (hull 16 +
+ * bag 18 + a little for packet spacing), and how far above and below the bag's
+ * floor point the feet may be (a jump over it counts).
+ */
+export const HNS_BAG_TOUCH = Object.freeze({ radius: 44, up: 48, down: 24 });
+/** Between two state packets a player cannot run further than this; longer steps are not swept for a touch. */
+export const HNS_BAG_SWEEP = 128;
 /** Player hull radius for knife hits (hull is 32 wide). */
 export const HNS_HULL_RADIUS = 16;
 /** Name tags of other players are only drawn this close (and in line of sight). */
@@ -73,6 +84,12 @@ export interface HnsPlayerView {
 	frozen: number;
 }
 
+/** The cash bag of the running round: still to come, waiting to be taken, or taken. */
+export type HnsBagView =
+	| { phase: 'pending'; secs: number }
+	| { phase: 'out'; pos: Vec3; place: string }
+	| { phase: 'taken'; by: number; coins: number };
+
 /** Round state for the HUD and scoreboard (`modeState { mode: 'hns' }`). */
 export interface HnsStateView {
 	phase: HnsPhase;
@@ -84,6 +101,8 @@ export interface HnsStateView {
 	/** Last round's winner (shown while ended). */
 	winner: HnsWinner | null;
 	players: HnsPlayerView[];
+	/** Cash bag; absent or null when this round has none (or the server is older). */
+	bag?: HnsBagView | null;
 }
 
 export type HnsEvent =
@@ -102,7 +121,26 @@ export type HnsEvent =
 	| { e: 'newSeeker'; id: number }
 	| { e: 'lastHider'; id: number }
 	| { e: 'warn'; secs: number }
+	/** The cash bag appeared. */
+	| { e: 'bag'; pos: Vec3; place: string }
+	/** A hider took it: `coins` it held (whole points, before the multiplier), `paid` credited (tenths; 0 for guests). */
+	| { e: 'bagTaken'; by: number; coins: number; paid: number }
 	| { e: 'end'; round: number; winner: HnsWinner; survivors: number[]; topSeeker: { id: number; finds: number } | null };
+
+/** Does a player at `p` touch the bag at `bag`? `from`: their previous position, for the way between two packets. */
+export function touchesBag(p: Vec3, bag: Vec3, from?: Vec3 | null): boolean {
+	const t = HNS_BAG_TOUCH;
+	const near = (q: Vec3) => Math.hypot(q.x - bag.x, q.y - bag.y) <= t.radius && q.z >= bag.z - t.down && q.z <= bag.z + t.up;
+	if (near(p)) return true;
+	if (!from) return false;
+	const dx = p.x - from.x;
+	const dy = p.y - from.y;
+	const dz = p.z - from.z;
+	const len2 = dx * dx + dy * dy;
+	if (len2 === 0 || len2 + dz * dz > HNS_BAG_SWEEP * HNS_BAG_SWEEP) return false;
+	const f = Math.max(0, Math.min(1, ((bag.x - from.x) * dx + (bag.y - from.y) * dy) / len2));
+	return near({ x: from.x + dx * f, y: from.y + dy * f, z: from.z + dz * f });
+}
 
 /** How many players seek at round start. */
 export function seekerCount(players: number): number {
@@ -165,6 +203,8 @@ export interface HnsGameOptions {
 	minPlayers?: number;
 	/** Line of sight between two points (server: a world trace); default: always clear. */
 	los?: (a: Vec3, b: Vec3) => boolean;
+	/** Are there enough players for the cash bag right now (asked when it would appear)? Default: always. */
+	bagAllowed?: () => boolean;
 }
 
 export interface HnsSwing {
@@ -209,6 +249,9 @@ export class HnsGame {
 	private readonly minPlayers: number;
 	private readonly spawns: { hiders: Spawn[]; seekers: Spawn[] };
 	private readonly los: (a: Vec3, b: Vec3) => boolean;
+	private readonly bagSpot: HnsCashBag | null;
+	private readonly bagAllowed: () => boolean;
+	private bag: { phase: 'none' | 'pending' } | { phase: 'out'; coins: number } | { phase: 'taken'; by: number; coins: number } = { phase: 'none' };
 	private last: number;
 	private warned = new Set<number>();
 	private pending: HnsEvent[] = [];
@@ -223,6 +266,8 @@ export class HnsGame {
 		this.minPlayers = opts.minPlayers ?? HNS_MIN_PLAYERS;
 		this.spawns = hnsSpawns(opts.map);
 		this.los = opts.los ?? (() => true);
+		this.bagSpot = opts.map.hns?.cashBag ?? null;
+		this.bagAllowed = opts.bagAllowed ?? (() => true);
 		this.last = opts.now;
 	}
 
@@ -290,8 +335,57 @@ export class HnsGame {
 			seekers: this.seekers,
 			hiders: this.hiders,
 			winner: this.phase === 'ended' ? this.winner : null,
-			players
+			players,
+			bag: this.bagView(now)
 		};
+	}
+
+	/** Whole coins in the bag that is waiting to be taken, or null. */
+	get bagCoins(): number | null {
+		return this.bag.phase === 'out' ? this.bag.coins : null;
+	}
+
+	/** ms: when the cash bag appears in this seeking phase. */
+	private get bagDue(): number {
+		return this.endsAt - this.seekMs * (1 - HNS_BAG_AT);
+	}
+
+	private bagView(now: number): HnsBagView | null {
+		const b = this.bag;
+		const spot = this.bagSpot;
+		if (!spot || this.phase !== 'seeking') return null;
+		if (b.phase === 'out') return { phase: 'out', pos: { ...spot.pos }, place: spot.place };
+		if (b.phase === 'taken') return { phase: 'taken', by: b.by, coins: b.coins };
+		if (b.phase === 'none' || !this.bagAllowed()) return null;
+		return { phase: 'pending', secs: Math.round(Math.max(0, this.bagDue - now) / 100) / 10 };
+	}
+
+	/**
+	 * Is this living hider touching the bag? `swept`: also count the way from
+	 * their previous position (call it once per state packet).
+	 */
+	reachesBag(id: number, swept = false): boolean {
+		const p = this.players.get(id);
+		if (!this.bagSpot || this.bag.phase !== 'out' || this.phase !== 'seeking' || p?.role !== 'hider') return false;
+		const h = p.history;
+		const pos = h[h.length - 1];
+		return !!pos && touchesBag(pos, this.bagSpot.pos, swept ? h[h.length - 2] : null);
+	}
+
+	/** Distance of a player's latest position from the bag's spot (Infinity when unknown). */
+	bagDistance(id: number): number {
+		const pos = this.pos(id);
+		const b = this.bagSpot?.pos;
+		return pos && b ? Math.hypot(pos.x - b.x, pos.y - b.y, pos.z - b.z) : Infinity;
+	}
+
+	/** The hider takes the bag; `paid`: tenths credited for it. */
+	takeBag(id: number, paid: number): HnsEvent[] {
+		if (this.bag.phase !== 'out' || this.role(id) !== 'hider') return [];
+		const coins = this.bag.coins;
+		this.bag = { phase: 'taken', by: id, coins };
+		this.emit({ e: 'bagTaken', by: id, coins, paid });
+		return this.flush();
 	}
 
 	/** Record a player's position as it arrived (`now`), for lag compensation. */
@@ -339,6 +433,7 @@ export class HnsGame {
 				this.phase = 'waiting';
 				this.endsAt = 0;
 				this.winner = null;
+				this.bag = { phase: 'none' };
 				for (const p of this.players.values()) this.resetRole(p);
 				this.emit({ e: 'waiting', cancelled });
 			}
@@ -355,6 +450,7 @@ export class HnsGame {
 			this.phase = 'seeking';
 			this.endsAt = now + this.seekMs;
 			this.warned.clear();
+			this.bag = { phase: this.bagSpot ? 'pending' : 'none' };
 			for (const p of this.players.values()) {
 				if (p.role === 'seeker' && p.frozenUntil <= now + this.foundMs) {
 					p.frozenUntil = 0;
@@ -367,6 +463,7 @@ export class HnsGame {
 			if (this.hiders.length === 0) this.endRound(now, 'seekers');
 			else if (now >= this.endsAt) this.endRound(now, 'hiders');
 			else {
+				if (this.bag.phase === 'pending' && now >= this.bagDue) this.spawnBag();
 				const left = (this.endsAt - now) / 1000;
 				for (const w of HNS_WARN_SECS) {
 					if (left <= w && !this.warned.has(w) && this.seekMs / 1000 > w) {
@@ -500,6 +597,7 @@ export class HnsGame {
 		this.endsAt = now + this.hideMs;
 		this.winner = null;
 		this.warned.clear();
+		this.bag = { phase: 'none' };
 		const ids = [...this.players.keys()];
 		for (const p of this.players.values()) {
 			this.resetRole(p);
@@ -531,6 +629,18 @@ export class HnsGame {
 				this.emit({ e: 'spawn', id, role: 'hider', pos: { ...s.pos }, yaw: s.yaw, freezeSecs: 0 });
 			}
 		}
+	}
+
+	/** Halfway through the seeking phase: once per round, only with enough players at that moment. */
+	private spawnBag(): void {
+		if (!this.bagSpot || !this.bagAllowed()) {
+			this.bag = { phase: 'none' };
+			return;
+		}
+		const min = HNS_PAY.bagMin / POINTS_SCALE;
+		const max = HNS_PAY.bagMax / POINTS_SCALE;
+		this.bag = { phase: 'out', coins: min + Math.min(max - min, Math.floor(this.rng() * (max - min + 1))) };
+		this.emit({ e: 'bag', pos: { ...this.bagSpot.pos }, place: this.bagSpot.place });
 	}
 
 	private endRound(now: number, winner: HnsWinner): void {

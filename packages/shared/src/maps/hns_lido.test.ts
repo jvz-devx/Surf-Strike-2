@@ -129,6 +129,24 @@ describe.each(SPECS)('$id', (spec) => {
 		});
 	});
 
+	describe('cash bag', () => {
+		const bag = hns.cashBag!;
+		it('lies on open ground inside the boundary, near the centre, away from spots, teleporters and the cage', () => {
+			const p = lifted(bag.pos);
+			expect(world.trace(p, p, { x: -96, y: -96, z: 0 }, { x: 96, y: 96, z: 128 }).startsolid, 'nothing within 96 units').toBe(false);
+			expect(standsFree(p)).toEqual({ free: true, ground: true });
+			// Open sky: not inside a building or under a roof.
+			expect(world.trace({ ...p, z: p.z + 4 }, { ...p, z: 1500 }, ZERO, ZERO).fraction).toBe(1);
+			expect(bag.pos.x > A.x0 + 512 && bag.pos.x < A.x1 - 512 && bag.pos.y > A.y0 + 512 && bag.pos.y < A.y1 - 512).toBe(true);
+			expect(Math.hypot(bag.pos.x - (A.x0 + A.x1) / 2, bag.pos.y - (A.y0 + A.y1) / 2)).toBeLessThan(400);
+			for (const s of LIDO.spots) expect(Math.hypot(s.pos.x - bag.pos.x, s.pos.y - bag.pos.y, s.pos.z - bag.pos.z), s.id).toBeGreaterThan(320);
+			for (const z of tpZones.filter((q) => q.dest)) expect(Math.hypot((z.min.x + z.max.x) / 2 - bag.pos.x, (z.min.y + z.max.y) / 2 - bag.pos.y)).toBeGreaterThan(320);
+			const c = hns.seekerCage!;
+			expect(bag.pos.x > c.min.x - 96 && bag.pos.x < c.max.x + 96 && bag.pos.y > c.min.y - 96 && bag.pos.y < c.max.y + 96).toBe(false);
+			expect(bag.place.length).toBeGreaterThan(8);
+		});
+	});
+
 	describe('enclosure and fall-outs', () => {
 		it('cliffs, clip walls and the invisible sea wall close every side up to 2048', () => {
 			const walls = m.brushes.filter((b) => b.material === 'cliff' || b.material === 'clip').map(brushBounds);
@@ -306,7 +324,7 @@ describe.each(SPECS)('$id', (spec) => {
 	});
 
 	describe('reachability with the conservative nav graph', () => {
-		const extras = [...hns.hiderSpawns.map((s) => s.pos), ...hns.seekerSpawns.map((s) => s.pos), ...LIDO.spots.map((s) => s.pos), ...T().flatMap((t) => (t.approach ? [t.approach] : []))];
+		const extras = [...hns.hiderSpawns.map((s) => s.pos), ...hns.seekerSpawns.map((s) => s.pos), ...LIDO.spots.map((s) => s.pos), ...T().flatMap((t) => (t.approach ? [t.approach] : [])), hns.cashBag!.pos];
 		function T() {
 			return LIDO.teleports;
 		}
@@ -337,6 +355,22 @@ describe.each(SPECS)('$id', (spec) => {
 				expect(fromSeekers[n], `${s.id} from seekers`).toBe(1);
 			}
 		});
+
+		it('the cash bag is walked to (no jump) from the cage and every hider spawn; everything else leads to the cage', () => {
+			const bag = nav.extraNodes.at(-1)!;
+			for (const src of nav.extraNodes.slice(0, nh + ns)) {
+				const seen = new Set([src]);
+				const q = [src];
+				for (let h = 0; h < q.length && !seen.has(bag); h++)
+					for (const [n, len] of nav.edges(q[h]!))
+						if (len >= 0 && !seen.has(n) && nav.move(nav.nodes[q[h]!]!, nav.nodes[n]!) === 'walk') {
+							seen.add(n);
+							q.push(n);
+						}
+				const p = nav.nodes[src]!;
+				expect(seen.has(bag), `from ${p.x},${p.y}`).toBe(true);
+			}
+		}, 120000);
 
 		it('every teleporter is entered from the walkable map and its destination is reached', () => {
 			const dz = tpZones.filter((z) => z.dest);

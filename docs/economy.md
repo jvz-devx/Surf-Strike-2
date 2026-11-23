@@ -1,6 +1,6 @@
 # Points and coins
 
-Status: the core is implemented (ledger, activity, playtime points, abuse detection, client views, the API for modes), and the awards of surf, bhop, Zombie Run, Tag and Infected. The awards of Hide and seek and the shop are not. The owner asked for a balanced point system and left the final numbers to us. Change the numbers here first, then in `packages/shared/src/economy.ts`, which holds all of them.
+Status: the core is implemented (ledger, activity, playtime points, abuse detection, client views, the API for modes), and the awards of every mode. The shop is not. The owner asked for a balanced point system and left the final numbers to us. Change the numbers here first, then in `packages/shared/src/economy.ts`, which holds all of them.
 
 ## Terms
 
@@ -101,8 +101,17 @@ Triggered with more than 4 players (5 or more active). Below that the mode pays 
 - **Seeker finds a hider:** 3 points each.
 - **Hider in plain view:** 2 points per 30 seconds seen by a seeker while staying in the same small area (within 128 units), at most 6 per round. Seen means in the seeker's field of view, in line of sight, within 2000 units. Moving to a new area restarts the 30 seconds. Chase time does not count twice.
 - **Hider survives the round:** 5 points if any seeker saw them for 5 seconds or more in total, 2 points if never seen.
-- **Seekers win:** 3 points for each player who started as a seeker.
-- **Cash bag:** once per round, halfway through the seeking phase, a bag with 4–10 coins (random) appears at a fixed, open, reachable spot near the middle of the map. Announced to everyone in chat and on the HUD. Only hiders can take it, by touch. Seekers can guard it. It stays until it is taken or the round ends. Each map declares the spot.
+- **Seekers win:** 3 points for each player who started as a seeker and stayed one, if anyone was found (not when the hiders only left).
+- **Cash bag:** once per round, halfway through the seeking phase, a bag with 4–10 coins (random) appears at a fixed, open, reachable spot near the middle of the map. Announced to everyone in chat and on the HUD. Only hiders can take it, by touch. Seekers can guard it. It stays until it is taken or the round ends. Each map declares the spot. It only appears with 5 or more active players at that moment.
+
+Details (`apps/server/src/modes/hns.ts`):
+
+- Only the seeking phase counts. Frozen or blindfolded seekers, and seekers who are AFK, see and chase nobody.
+- A hider who is found keeps what they earned and is paid as a seeker from then on. Only the "Seekers win" bonus is for starters. Players who leave or spectate lose it.
+- The time in plain view only runs while seen and not chased; being out of sight pauses it, leaving the 128 units restarts it.
+- The bag is taken on the server, when a living hider's reported position (or the way between two packets, up to 128 units) is within 44 units of it. There is no client message. An impossible speed or jump is refused, and that hider must then be 256 units away before trying again, so waiting next to it does not help. A guest can take it without earning coins. If fewer than 5 players are active it stays where it is. What it holds is said only when it is taken.
+
+Bot estimate (Lido Bay Medium, 6–12 bots, ×1.0, playtime included): average 85–115 points per hour, very good 142–158, always unseen 75–86. Rough: the bots' seekers are weak, and bots never pose in plain view. Getting found on purpose paid less than hiding normally at the same skill (71 against 101 for an average seeker, 104 against 113 for a very good one).
 
 ## Infected
 

@@ -16,6 +16,7 @@ import {
 	knifeHit,
 	overSpeedCap,
 	seekerCount,
+	touchesBag,
 	type HnsEvent,
 	type HnsPos
 } from './hns.ts';
@@ -355,5 +356,71 @@ describe('HnsGame round flow', () => {
 		expect(v.timeLeft).toBe(HNS_HIDE_SECS);
 		expect(v.seekers).toHaveLength(1);
 		expect(v.players.find((p) => p.role === 'seeker')!.frozen).toBe(HNS_HIDE_SECS);
+	});
+});
+
+describe('cash bag', () => {
+	const bagMap = { ...map, hns: { ...map.hns!, cashBag: { pos: { x: 0, y: 0, z: 0 }, place: 'here' } } };
+	function bagGame(allowed = true, rng = () => 0) {
+		let now = 1_000_000;
+		const g = new HnsGame({ now, map: bagMap, rng, bagAllowed: () => allowed });
+		const step = (ms = 0) => g.update((now += ms), [1, 2, 3, 4, 5]);
+		step();
+		step(HNS_START_SECS * 1000);
+		step(HNS_HIDE_SECS * 1000);
+		expect(g.phase).toBe('seeking');
+		return { g, step, now: () => now, place: (id: number, p: HnsPos) => g.setPos(id, p, now) };
+	}
+
+	it('appears once, halfway through the seeking phase, with 4 to 10 coins', () => {
+		for (const [r, coins] of [
+			[0, 4],
+			[0.5, 7],
+			[0.9999, 10]
+		] as const) {
+			const s = bagGame(true, () => r);
+			expect(s.g.view(s.now()).bag).toEqual({ phase: 'pending', secs: HNS_SEEK_SECS / 2 });
+			expect(s.step((HNS_SEEK_SECS / 2) * 1000 - 1).some((e) => e.e === 'bag')).toBe(false);
+			expect(s.step(1)).toContainEqual({ e: 'bag', pos: { x: 0, y: 0, z: 0 }, place: 'here' });
+			expect(s.g.bagCoins).toBe(coins);
+			expect(s.g.view(s.now()).bag).toEqual({ phase: 'out', pos: { x: 0, y: 0, z: 0 }, place: 'here' });
+			expect(s.step(5000).some((e) => e.e === 'bag')).toBe(false);
+		}
+	});
+
+	it('does not appear without enough players, and not on maps without a spot', () => {
+		const s = bagGame(false);
+		expect(s.g.view(s.now()).bag).toBeNull();
+		expect(s.step((HNS_SEEK_SECS / 2) * 1000).some((e) => e.e === 'bag')).toBe(false);
+		expect(s.g.bagCoins).toBeNull();
+		const t = setup(5);
+		toSeeking(t);
+		expect(t.step((HNS_SEEK_SECS / 2) * 1000).some((e) => e.e === 'bag')).toBe(false);
+	});
+
+	it('is reached by touch, by living hiders only, and taken once', () => {
+		const s = bagGame();
+		s.step((HNS_SEEK_SECS / 2) * 1000);
+		const seeker = s.g.seekers[0]!;
+		const hider = s.g.hiders[0]!;
+		s.place(seeker, at(0));
+		expect(s.g.reachesBag(seeker)).toBe(false);
+		expect(s.g.takeBag(seeker, 0)).toEqual([]);
+		s.place(hider, at(300));
+		expect(s.g.reachesBag(hider, true)).toBe(false);
+		s.place(hider, at(30));
+		expect(s.g.reachesBag(hider)).toBe(true);
+		expect(s.g.takeBag(hider, 56)).toEqual([{ e: 'bagTaken', by: hider, coins: 4, paid: 56 }]);
+		expect(s.g.reachesBag(hider)).toBe(false);
+		expect(s.g.view(s.now()).bag).toEqual({ phase: 'taken', by: hider, coins: 4 });
+	});
+
+	it('sweeps the way between two packets, but never a teleport', () => {
+		const bag = { x: 0, y: 0, z: 0 };
+		expect(touchesBag(at(60, 20), bag)).toBe(false);
+		expect(touchesBag(at(60, 20), bag, at(-60, 20))).toBe(true);
+		expect(touchesBag(at(100, 0), bag, at(-100, 0))).toBe(false);
+		expect(touchesBag(at(10, 0, 40), bag)).toBe(true);
+		expect(touchesBag(at(10, 0, 120), bag)).toBe(false);
 	});
 });

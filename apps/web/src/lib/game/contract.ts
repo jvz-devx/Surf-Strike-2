@@ -165,11 +165,20 @@ export interface HnsView {
 	frozenUntil: number;
 	finds: number;
 	/** Short banner ("You were found by Alice", "Last hider!"). */
-	flash: { text: string; at: number; tone: 'seeker' | 'hider' | 'info' } | null;
+	flash: { text: string; at: number; tone: 'seeker' | 'hider' | 'info' | 'cash' } | null;
 	killFeed: KillFeedLine[];
 	/** Round result while the summary shows. */
 	summary: { winner: HnsWinner; survivors: string[]; top: string | null } | null;
+	/** Cash bag note; null when this round has none (or it cannot pay right now). */
+	bag: HnsBagNote | null;
 }
+
+/** Cash bag on the HUD: still to come (`at`: performance.now()), out (where it is from here), or taken. */
+export type HnsBagNote =
+	| { phase: 'pending'; at: number }
+	/** `turn`: degrees clockwise from the view direction to the spot, in steps; null close by. */
+	| { phase: 'out'; place: string; meters: number; turn: number | null; canTake: boolean }
+	| { phase: 'taken'; by: string; mine: boolean };
 
 export interface TagView {
 	/** 'solo' = offline free roam (tag needs a server and 2+ players). */

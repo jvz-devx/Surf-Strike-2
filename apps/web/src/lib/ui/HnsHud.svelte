@@ -10,6 +10,7 @@
 	const seeker = $derived(h.role === 'seeker');
 	const frozenLeft = $derived(h.frozenUntil > now ? (h.frozenUntil - now) / 1000 : 0);
 	const flashOpacity = $derived(h.flash ? fadeOpacity(now - h.flash.at, 2200, 900) : 0);
+	const bag = $derived(h.phase === 'seeking' ? h.bag : null);
 	const seekLine = $derived(
 		h.seekerNames.length === 0 ? '' : `${h.seekerNames.length} seeker${h.seekerNames.length === 1 ? '' : 's'}: ${h.seekerNames.join(', ')}`
 	);
@@ -33,6 +34,25 @@
 			{#if seeker && h.finds > 0}<span class="left"><span class="ss-label">Found</span> <span class="ss-num">{h.finds}</span></span>{/if}
 		</div>
 		{#if seekLine && h.phase !== 'ended'}<div class="who">{seekLine}</div>{/if}
+		{#if bag}
+			<div class="bag ss-panel ss-shadow" class:out={bag.phase === 'out'}>
+				<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 1h4l1.6 2L10 5H6L4.4 3z" /><path d="M5.8 6h4.4c2.2 1.8 3.6 4 3.6 6.2 0 1.8-1.2 2.8-3 2.8H5.2c-1.8 0-3-1-3-2.8C2.2 10 3.6 7.8 5.8 6z" /></svg>
+				{#if bag.phase === 'pending'}
+					<span>Cash bag in <span class="ss-num">{formatClock(Math.max(0, (bag.at - now) / 1000))}</span></span>
+				{:else if bag.phase === 'out'}
+					<span class="where">
+						<b>Cash bag</b> {bag.place}
+						<span class="dim">{bag.canTake ? 'Touch it to take it' : 'Only hiders can take it'}</span>
+					</span>
+					{#if bag.turn !== null}
+						<svg class="arrow" viewBox="0 0 16 16" style:transform="rotate({bag.turn}deg)" aria-hidden="true"><path d="M8 1l5 13-5-3-5 3z" /></svg>
+					{/if}
+					<span class="ss-num">{bag.meters} m</span>
+				{:else}
+					<span class="dim">{bag.mine ? 'You took the cash bag' : `${bag.by} took the cash bag`}</span>
+				{/if}
+			</div>
+		{/if}
 		{#if h.summary}
 			<div class="summary ss-panel ss-shadow" class:seekers={h.summary.winner === 'seekers'}>
 				<div class="win">{h.summary.winner === 'hiders' ? 'Hiders win!' : 'Seekers win!'}</div>
@@ -143,6 +163,43 @@
 		text-shadow:
 			0 0 12px rgba(255, 40, 40, 0.8),
 			0 2px 4px rgba(0, 0, 0, 0.9);
+	}
+	.flash.cash {
+		color: #ffd978;
+		text-shadow:
+			0 0 12px rgba(255, 170, 20, 0.8),
+			0 2px 4px rgba(0, 0, 0, 0.9);
+	}
+	.bag {
+		display: inline-flex;
+		align-items: center;
+		gap: 10px;
+		padding: 3px 12px;
+		font-size: 0.95em;
+	}
+	.bag.out {
+		border-color: rgba(255, 196, 70, 0.8);
+		background: rgba(66, 44, 6, 0.8);
+	}
+	.bag svg {
+		flex: none;
+		width: 1.2em;
+		height: 1.2em;
+		fill: #ffc94a;
+	}
+	.bag .where b {
+		color: #ffd978;
+	}
+	.bag .dim {
+		color: var(--text-dim);
+	}
+	.bag .where .dim {
+		display: block;
+		font-size: 0.85em;
+	}
+	.bag .ss-num {
+		font-weight: 600;
+		white-space: nowrap;
 	}
 	.frozen {
 		font-weight: 700;

@@ -4,6 +4,7 @@
  */
 import type { MapDef, Vec3 } from '@surf/shared';
 import * as THREE from 'three';
+import { CashBagRenderer } from './cashbag.js';
 import { CrowdView } from './character/crowd.js';
 import { HeldAssets } from './character/held.js';
 import { applyViewAngles, setThree, toThree } from './coords.js';
@@ -31,6 +32,8 @@ export class GameRenderer {
 	readonly zombies = new ZombieRenderer(this.held);
 	/** Infected mode: throwing knives and the last-survivor UAV pulse (docs/modes.md#infected). */
 	readonly infected = new InfectedRenderer();
+	/** Hide and seek: the cash bag (docs/economy.md#hide-and-seek). */
+	readonly cashBag = new CashBagRenderer();
 	private shared: SharedUniforms = createSharedUniforms();
 	private sky = new Sky();
 	private hemi = new THREE.HemisphereLight(0xffffff, 0x222222, 1);
@@ -48,7 +51,7 @@ export class GameRenderer {
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 		this.camera = new THREE.PerspectiveCamera(verticalFovFromHorizontal43(90), 16 / 9, 2, 250000);
 		this.scene.fog = this.fog;
-		this.scene.add(this.sky.mesh, this.hemi, this.sun, this.sun.target, this.players.group, this.ghost.group, this.zombies.group, this.infected.group);
+		this.scene.add(this.sky.mesh, this.hemi, this.sun, this.sun.target, this.players.group, this.ghost.group, this.zombies.group, this.infected.group, this.cashBag.group);
 		this.observer = new ResizeObserver(() => this.resize());
 		this.observer.observe(canvas);
 		this.resize();
@@ -104,6 +107,7 @@ export class GameRenderer {
 		this.players.clear();
 		this.zombies.reset();
 		this.infected.clear();
+		this.cashBag.clear();
 	}
 
 	/** Eye position in Source coordinates; Source view angles in degrees. */
@@ -117,6 +121,7 @@ export class GameRenderer {
 		this.effects?.update(timeSec);
 		this.sky.follow(this.camera);
 		this.infected.update(timeSec * 1000);
+		this.cashBag.update(timeSec * 1000);
 		this.crowd.begin(timeSec, this.camera);
 		this.players.update(this.crowd);
 		this.ghost.update(this.crowd);
@@ -139,6 +144,7 @@ export class GameRenderer {
 		this.ghost.dispose();
 		this.zombies.dispose();
 		this.infected.dispose();
+		this.cashBag.dispose();
 		this.held.dispose();
 		this.sky.dispose();
 		this.renderer.dispose();

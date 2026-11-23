@@ -67,8 +67,10 @@ Shown on Zombie Run maps (`ZombiesHud.svelte`, [modes.md](modes.md#zombies)): a 
 
 Shown on hide and seek maps (`HnsHud.svelte`, [modes.md](modes.md#hide-and-seek)), in two parts:
 
-- **Top** (under the map name): a role banner (blue HIDER / red SEEKER) with the phase text ("Hide! Seekers released in", "Find them", "Stay hidden", "Next round in"), the phase countdown (mm:ss while seeking, red at 30 s or less), hiders left and your finds as a seeker; the seeker names; the round summary while ended ("Hiders win! Survived: …" / "Seekers win!", top seeker); short flash banners ("You were found by Alice — you are now a seeker", "You found Bob!", "Bob is the last hider", "30 seconds left"); a "Frozen 3" line during the post-find freeze. Waiting / offline: "Waiting for players — needs 2+".
+- **Top** (under the map name): a role banner (blue HIDER / red SEEKER) with the phase text ("Hide! Seekers released in", "Find them", "Stay hidden", "Next round in"), the phase countdown (mm:ss while seeking, red at 30 s or less), hiders left and your finds as a seeker; the seeker names; the round summary while ended ("Hiders win! Survived: …" / "Seekers win!", top seeker); short flash banners ("You were found by Alice — you are now a seeker", "You found Bob!", "Bob is the last hider", "30 seconds left"); a "Frozen 3" line during the post-find freeze; the cash bag note ("Cash bag in 1:20", then its place, an arrow and the distance from where you are, then who took it). Waiting / offline: "Waiting for players — needs 2+".
 - **Screen**: the blindfold for seekers during the hiding phase (opaque black over the game with "You are a seeker", "Blindfolded while the hiders hide" and a large countdown; chat, the banner and the scoreboard stay on top; the crosshair is hidden), and the kill feed top right ("Alice found Bob", your own finds outlined).
+
+The cash bag itself (`render/cashbag.ts`) is a canvas sack with banknotes and coins that bobs and spins in a light shaft over a ground ring. It is depth tested: never seen through walls. Taking it throws a burst of coins.
 
 Seekers hold a knife viewmodel (the Zombie Run knife, swing on Mouse1); hiders have none. Remote seekers are drawn red with a `SEEKER · name` tag. Name tags show only within 600 units and in line of sight, and never hiders' tags to a seeker. `!r` is refused during a round.
 
@@ -174,7 +176,7 @@ All sounds are real recordings released under CC0, sourced from Freesound and li
 | Land | Hitting the ground; louder with fall speed (level only) | Boot landing on rock (same session as jump), pool of 4 |
 | Wind | Continuous loop; gain and a low-pass (400 Hz to 9 kHz) rise with speed, no pitch change | Mountain wind with strong gusts, stereo |
 | Ramp slide | Continuous loop while surfing; gain rises with speed | Snowboard sliding on snow |
-| Zone | Entering start, stage, checkpoint, end | Antique clock bell, one strike |
+| Zone | Entering start, stage, checkpoint, end; hide and seek cash bag appears | Antique clock bell, one strike |
 | Record | New PB or map record | Large church bell, one strike |
 | Vote | Vote opens; hide and seek seeker release | Two gavel knocks on a wooden desk |
 | Click | New chat message (the only click voice) | Computer mouse button |
