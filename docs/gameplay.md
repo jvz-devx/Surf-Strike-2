@@ -47,7 +47,7 @@ Migration: tables are created with `CREATE TABLE IF NOT EXISTS`, so an existing 
 Two totals per account, shown to everyone in the Tab scoreboard of every mode. Guests have no account and offline play has no server, so both show `–` there.
 
 - **Total playtime** is the time connected to the server while logged in, in any mode, spectating and idling included, added up across sessions (`12h 34m`). An account connected twice counts once. The server writes it every 60 s, on disconnect or logout and at shutdown, so a crash loses at most a minute.
-- **Total points** is the lifetime number of earned points. What pays is in [economy.md](economy.md). The spendable balance (`points_balance`, coins) is a separate number, shown only to its owner (Esc › Coins).
+- **Coins** (`points_balance`) is what the account has now: it rises with earnings and winnings and falls with purchases and bets ([economy.md](economy.md)). The lifetime sum of earned points is a separate number, shown to its owner (Esc › Coins).
 
 ## Ghosts
 
@@ -82,7 +82,7 @@ Chat commands:
 
 ## Tab scoreboard
 
-Hold `Tab`. Every mode shows its own columns ([modes.md](modes.md#score-display)) and then **Total points** and **Total playtime** ([Points and playtime](#points-and-playtime)). Your own row is highlighted. Header shows map name, mode, time left and player count (`12 / 32`).
+Hold `Tab`. Every mode shows its own columns ([modes.md](modes.md#score-display)) and then **Coins** and **Total playtime** ([Points and playtime](#points-and-playtime)). Your own row is highlighted. Header shows map name, mode, time left and player count (`12 / 32`). At the bottom of the screen: the five richest accounts of the server, online (green dot) or not, with their coins; your own is highlighted.
 
 Race columns: name, map rank, PB, status (`Start zone`, `Stage 3`, `Running`, `Spectating`), ping. Sorted by PB, players without a PB last. On tag maps the columns are name (with an `IT` marker), time not IT, status (`IT`, `Runner`, `Spectating`) and ping, sorted by score. On hide and seek maps they are name, role (`Hider`, `Seeker`, `Spectating`), finds, survived (mm:ss as a hider this round) and ping, sorted by survived time, then finds.
 

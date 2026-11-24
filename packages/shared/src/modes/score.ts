@@ -47,7 +47,7 @@ export function formatPlaytime(secs: number | null | undefined): string {
 	return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
 }
 
-/** Total points with thousands separators; missing → `–`. */
+/** Whole points or coins with thousands separators; missing → `–`. */
 export function formatPoints(points: number | null | undefined): string {
 	if (typeof points !== 'number' || !Number.isFinite(points)) return NO_VALUE;
 	return String(Math.round(points)).replace(/\B(?=(\d{3})+$)/g, ',');
@@ -170,7 +170,7 @@ const KILLS: ScoreMetric = { id: 'kills', label: 'Kills', num: true, width: 4.8,
 
 /** The extra columns every mode's Tab scoreboard ends with. */
 export const TOTAL_COLUMNS: readonly ScoreMetric[] = [
-	{ id: 'totalPoints', label: 'Total points', num: true, width: 6.8, text: (r) => formatPoints(r.pointsTotal) },
+	{ id: 'coins', label: 'Coins', num: true, width: 6.8, text: (r) => formatPoints(r.coins) },
 	{ id: 'totalPlaytime', label: 'Total playtime', num: true, width: 7.6, text: (r) => formatPlaytime(r.playtimeSecs) }
 ];
 

@@ -2349,6 +2349,7 @@ export class Game implements CommandContext {
 				break;
 			case 'scoreboard':
 				this.hud.scoreboard = m.rows;
+				this.hud.richest = Array.isArray(m.richest) ? m.richest : [];
 				break;
 			case 'modeState':
 				if (m.mode === this.gameMode.id) this.hud.modeState = m;
@@ -2534,6 +2535,7 @@ export class Game implements CommandContext {
 		this.hud.rtvRequest = null;
 		this.hud.rtvCooldown = null;
 		this.hud.scoreboard = [];
+		this.hud.richest = [];
 		this.hud.modeState = null;
 		this.remotes.clear();
 		this.renderer?.players.clear();

@@ -76,10 +76,10 @@ describe('formats', () => {
 });
 
 describe('Tab scoreboard', () => {
-	it('every mode ends with total points and total playtime', () => {
+	it('every mode ends with coins and total playtime', () => {
 		for (const id of GAME_MODE_IDS) {
 			const cols = scoreboardColumns(GAME_MODES[id].score);
-			expect(cols.slice(-2).map((c) => c.label)).toEqual(['Total points', 'Total playtime']);
+			expect(cols.slice(-2).map((c) => c.label)).toEqual(['Coins', 'Total playtime']);
 			expect(new Set(cols.map((c) => c.id)).size).toBe(cols.length);
 		}
 	});
@@ -87,12 +87,12 @@ describe('Tab scoreboard', () => {
 		for (const id of GAME_MODE_IDS) {
 			const c = cells(id, row({}));
 			expect(Object.values(c).every((t) => typeof t === 'string' && !/NaN|undefined|null/.test(t)), id).toBe(true);
-			expect([c.totalPoints, c.totalPlaytime]).toEqual(['–', '–']);
+			expect([c.coins, c.totalPlaytime]).toEqual(['–', '–']);
 		}
 	});
 	it('account totals and guests', () => {
-		expect(cells('tag', row({ pointsTotal: 0, playtimeSecs: 45_296 }))).toMatchObject({ totalPoints: '0', totalPlaytime: '12h 34m' });
-		expect(cells('tag', row({ pointsTotal: null, playtimeSecs: null }))).toMatchObject({ totalPoints: '–', totalPlaytime: '–' });
+		expect(cells('tag', row({ coins: 1234, playtimeSecs: 45_296 }))).toMatchObject({ coins: '1,234', totalPlaytime: '12h 34m' });
+		expect(cells('tag', row({ coins: null, playtimeSecs: null }))).toMatchObject({ coins: '–', totalPlaytime: '–' });
 	});
 	it('mode values', () => {
 		expect(cells('surf', row({ rank: 2, pbTicks: TICK_RATE * 72.402, status: Status.Running, stage: 3 }))).toMatchObject({ rank: '#2', pb: '01:12.402', status: 'Stage 3' });

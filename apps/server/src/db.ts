@@ -369,6 +369,10 @@ export class Db {
 			),
 
 			accountStats: d.prepare(`SELECT playtime_secs, points_total, points_balance FROM account_stats WHERE account_id = ?`),
+			richest: d.prepare(
+				`SELECT a.id, a.username, s.points_balance AS balance FROM account_stats s JOIN accounts a ON a.id = s.account_id
+				 WHERE s.points_balance > 0 ORDER BY s.points_balance DESC, a.id LIMIT ?`
+			),
 			// From `accounts`, so an account deleted meanwhile is skipped instead of failing the batch.
 			addPlaytime: d.prepare(
 				`INSERT INTO account_stats (account_id, playtime_secs) SELECT id, ? FROM accounts WHERE id = ?
@@ -551,6 +555,11 @@ export class Db {
 
 	// -----------------------------------------------------------------------
 	// Account totals (account-stats.ts)
+
+	/** Accounts with the most coins (tenths), richest first; none without coins. */
+	richest(limit: number): { id: number; username: string; balance: number }[] {
+		return this.st.richest.all(limit) as { id: number; username: string; balance: number }[];
+	}
 
 	/** Zeros for an account without a row yet. */
 	accountStats(accountId: number): AccountStatsRow {

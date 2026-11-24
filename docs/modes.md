@@ -32,7 +32,7 @@ apps/server/src/modes/
 - **Registry.** `GAME_MODES[id]` gives a mode's `label`, `family` (`race` or its own), `cvars` profile, `minPlayers` and `score` (see [Score display](#score-display)). `mapCvars(map)` is the mode profile plus the map's `cvars` overrides; the server sends it in `welcome` and `mapChange`.
 - **Server.** The lobby has no mode logic. It owns one `ServerMode` per map and replaces it on map change. It forwards these calls: `join` (after `welcome`/`mapChange`), `leave`, `spectate`, `state` (each state packet), `zone`, `command` (`!top`, `!pb`), `scoreRows`, `records` and `tick`. `tick` runs at `MODE_TICK_HZ` (32 Hz).
 - **Client.** `game.ts` reads `modeOf(map)`. In race modes `RunTracker` runs every tick, as before. In other modes the tracker is skipped: teleport zones respawn the player at a random map spawn, and the race HUD (timer, splits) is hidden. `hud.gameMode`, `hud.modeFamily` and `hud.tag` drive the UI. The scoreboard and the score panel render `GAME_MODES[mode].score`.
-- **Protocol.** These changes are additive. `welcome` and `mapChange` carry `mode`. Non-race modes send `modeState` messages; race modes never do. `ScoreRow` has optional mode fields (`score`, `it`, `kills`, `deaths`) and optional account totals (`pointsTotal`, `playtimeSecs`), which the lobby adds to every mode's rows. `Status` has new `Tagger` and `Runner` values.
+- **Protocol.** These changes are additive. `welcome` and `mapChange` carry `mode`. Non-race modes send `modeState` messages; race modes never do. `ScoreRow` has optional mode fields (`score`, `it`, `kills`, `deaths`) and optional account totals (`pointsTotal`, `playtimeSecs`, `coins`), which the lobby adds to every mode's rows. `Status` has new `Tagger` and `Runner` values.
 
 ### Score display
 
@@ -40,7 +40,7 @@ apps/server/src/modes/
 
 | Field | Meaning |
 | --- | --- |
-| `columns` | Ordered `ScoreMetric`s: `id`, `label`, `short` (panel header), `num`, `width` (em, scoreboard), `text(row, ctx)`. `panel: true` also makes it a column of the panel's standing; `minor: true` drops it first in narrow windows. `scoreboardColumns(def)` appends Total points and Total playtime (`TOTAL_COLUMNS`) in every mode |
+| `columns` | Ordered `ScoreMetric`s: `id`, `label`, `short` (panel header), `num`, `width` (em, scoreboard), `text(row, ctx)`. `panel: true` also makes it a column of the panel's standing; `minor: true` drops it first in narrow windows. `scoreboardColumns(def)` appends Coins and Total playtime (`TOTAL_COLUMNS`) in every mode |
 | `compare(a, b)` | Row order, best first (scoreboard and standing) |
 | `mark(row)` | Optional role marker: `text` (scoreboard chip), `short` (panel chip), `tone` (row colour) |
 | `panel.list` | `records` (the map's leaderboard: surf, bhop) or `standing` (the players in the current game) |

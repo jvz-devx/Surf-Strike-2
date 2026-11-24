@@ -17,6 +17,7 @@ import type {
 	RotationEvent,
 	ScoreRow,
 	ServerMessage,
+	RichEntry,
 	SnapshotEntry,
 	VoteOption
 } from '@surf/shared';
@@ -33,7 +34,9 @@ import {
 	MAX_NAME,
 	MAX_PLAYERS,
 	modeOf,
+	POINTS_SCALE,
 	PROTOCOL_VERSION,
+	RICHEST,
 	sanitizeText,
 	TAG_TICK_HZ,
 	usernameKey
@@ -1093,14 +1096,23 @@ export class Lobby {
 				...r,
 				pointsTotal: totals?.pointsTotal ?? null,
 				playtimeSecs: totals?.playtimeSecs ?? null,
+				// Read fresh: awards, purchases, loot boxes, casino and admins all change it.
+				coins: c && c.accountId !== null ? Math.floor(this.db.accountStats(c.accountId).pointsBalance / POINTS_SCALE) : null,
 				...(c?.admin ? { admin: true } : {})
 			};
 		});
 	}
 
+	/** The accounts with the most coins, online or not (docs/gameplay.md#tab-scoreboard). */
+	richest(): RichEntry[] {
+		const online = new Set<number>();
+		for (const c of this.clients) if (c.helloed && c.accountId !== null) online.add(c.accountId);
+		return this.db.richest(RICHEST).map((r) => ({ name: r.username, coins: Math.floor(r.balance / POINTS_SCALE), online: online.has(r.id) }));
+	}
+
 	sendScoreboard(): void {
 		if (this.playerCount === 0) return;
-		this.broadcast({ type: 'scoreboard', rows: this.scoreRows() });
+		this.broadcast({ type: 'scoreboard', rows: this.scoreRows(), richest: this.richest() });
 	}
 
 	sendPings(): void {

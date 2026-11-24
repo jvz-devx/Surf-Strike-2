@@ -89,7 +89,21 @@ export interface ScoreRow {
 	 */
 	pointsTotal?: number | null;
 	playtimeSecs?: number | null;
+	/** Whole coins the account has now, rounded down; null and absent as above. */
+	coins?: number | null;
 }
+
+/** One of the richest accounts of the server (Tab scoreboard). */
+export interface RichEntry {
+	name: string;
+	/** Whole coins, rounded down. */
+	coins: number;
+	/** Connected now. */
+	online: boolean;
+}
+
+/** Entries in `scoreboard.richest`. */
+export const RICHEST = 5;
 
 /**
  * Mode-specific state for non-race gamemodes (docs/modes.md). Sent on every
@@ -390,7 +404,8 @@ export type ServerMessage =
 	/** Hide and seek event (spawn/teleport to that player; swing, found, round flow to everyone). */
 	| { type: 'hns'; ev: HnsEvent }
 	| { type: 'timeLeft'; mapTimeLeft: number }
-	| { type: 'scoreboard'; rows: ScoreRow[] }
+	/** `richest`: the accounts with the most coins, richest first, online or not (absent on older servers). */
+	| { type: 'scoreboard'; rows: ScoreRow[]; richest?: RichEntry[] }
 	| { type: 'ping'; t: number }
 	/**
 	 * Reply to register/login/logout, or to a rejected hello token.

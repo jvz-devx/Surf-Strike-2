@@ -151,6 +151,16 @@ describe('account totals on the scoreboard', () => {
 		const reg = await ana.auth('register', 'Ana', 'secret1');
 		assert.ok(reg.ok);
 		assert.deepEqual([row('Ana').playtimeSecs, row('Ana').pointsTotal], [0, 0]);
+		assert.deepEqual([row('Ana').coins, row('Guesty').coins], [100, null], 'the welcome coins');
+		server.lobby.economy.adjust(server.db.accountByName('Ana')!.id, -305);
+		assert.equal(row('Ana').coins, 69, 'falls at once, rounded down');
+		assert.deepEqual(server.lobby.richest(), [{ name: 'Ana', coins: 69, online: true }]);
+		const rich = server.db.createAccount('Rich', 'h')!.id;
+		server.db.adjustBalance({ accountId: rich, at: 1, reason: 'admin', label: 'x' }, 9000);
+		server.db.createAccount('Broke', 'h');
+		for (let i = 0; i < 6; i++) server.db.adjustBalance({ accountId: server.db.createAccount(`Mid${i}`, 'h')!.id, at: 1, reason: 'admin', label: 'x' }, 1000 + i * 10);
+		const top = await ana.waitFor('scoreboard', (m) => m.richest?.length === 5);
+		assert.deepEqual(top.richest!.map((r) => [r.name, r.coins, r.online]), [['Rich', 900, false], ['Mid5', 105, false], ['Mid4', 104, false], ['Mid3', 103, false], ['Mid2', 102, false]]);
 		clock += 90_000;
 		const sb = await ana.waitFor('scoreboard', (m) => m.rows.some((r) => r.name === 'Ana' && r.playtimeSecs === 90));
 		assert.equal(sb.rows.find((r) => r.name === 'Guesty')?.playtimeSecs, null);

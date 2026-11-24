@@ -26,6 +26,7 @@ import type {
 	RecordEntry,
 	ScoreRow,
 	BoxOffer,
+	RichEntry,
 	CasinoEntry,
 	CasinoGame,
 	CasinoOutcome,
@@ -458,6 +459,8 @@ export interface HudStateShape {
 	scoreboardOpen: boolean;
 	/** Rows of the Tab scoreboard and the score panel (solo: one row). */
 	scoreboard: ScoreRow[];
+	/** Accounts with the most coins, richest first; empty offline and on older servers. */
+	richest: readonly RichEntry[];
 	/** Id of the local player's row in `scoreboard`. */
 	selfId: number;
 	/** Name shown for the local player. */

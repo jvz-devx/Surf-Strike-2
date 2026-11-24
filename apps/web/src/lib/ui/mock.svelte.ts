@@ -57,6 +57,7 @@ function mockRows(mode: GameModeId, n: number, self: number, old: boolean): Scor
 		};
 		if (!old) {
 			const guest = i % 3 === 2;
+			base.coins = guest ? null : i === 0 ? 1_234_567 : i === 1 ? 745 : 0;
 			base.pointsTotal = guest ? null : i === 0 ? 1_234_567 : 0;
 			base.playtimeSecs = guest ? null : [987 * 3600 + 34 * 60, 45_260, 59, 2_040][i % 4];
 		}
@@ -291,6 +292,15 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		rtvCooldown: params.get('rtv') === 'cooldown' ? { until: t0 + 45_000, reason: 'declined' } : null,
 		scoreboardOpen: open === 'scoreboard',
 		scoreboard: rows,
+		richest: old
+			? []
+			: [
+					{ name: rows[0]?.name ?? 'glidepath', coins: 1_234_567, online: true },
+					{ name: 'A name of 24 characters!', coins: 98_210, online: false },
+					{ name: 'boreal', coins: 8_020, online: true },
+					{ name: 'you', coins: 745, online: true },
+					{ name: 'cirrus', coins: 12, online: false }
+				],
 		selfId: selfPos,
 		selfName: 'you',
 		modeState: mockState(mode, rows),

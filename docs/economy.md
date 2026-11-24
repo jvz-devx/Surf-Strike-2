@@ -4,8 +4,8 @@ Status: the core is implemented (ledger, activity, playtime points, abuse detect
 
 ## Terms
 
-- **Points** are what you earn. "Total points" on the scoreboard is the lifetime sum and never goes down.
-- **Coins** are the spendable balance. Every point earned adds 1 coin. Buying in the shop lowers the coins only.
+- **Points** are what you earn. The lifetime sum never goes down (Esc › Coins).
+- **Coins** are the spendable balance. Every point earned adds 1 coin. Everyone sees everyone's coins on the Tab scoreboard. Buying in the shop lowers the coins only.
 - Accounts only. Guests play everything but earn nothing.
 - <a id="start-bonus"></a>**Start bonus.** A newly registered account starts with 100 coins (`START_COINS`): balance only, no lifetime points, written in the transaction that creates the account with one log row (`welcome`, "Welcome bonus", not counted towards the backstop). The player gets a notice. Accounts of before are unchanged.
 - Repeating something never drops its award to nothing: the repeat decays end at 10 %, rounded up to whole points. Only missing conditions, caps per round, AFK, the backstop and the abuse rules pay nothing.

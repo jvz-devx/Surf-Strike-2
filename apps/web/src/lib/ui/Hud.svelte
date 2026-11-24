@@ -144,6 +144,8 @@
 				mode={hud.gameMode}
 				selfId={hud.selfId}
 				state={hud.modeState}
+				richest={hud.richest}
+				account={hud.account?.username ?? null}
 			/>
 		{/if}
 	</div>
