@@ -45,6 +45,7 @@ const inertApi: GameApi = {
 	casinoBet: noop,
 	crashCashout: noop,
 	casinoSound: noop,
+	crashBuild: noop,
 	shopEquip: noop,
 	createPreview: () => null,
 	itemPicture: () => Promise.resolve(null),

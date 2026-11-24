@@ -44,7 +44,7 @@ Dev preview: `/?mockhud&novote&mode=<gamemode>&players=<n>&self=<position>`, `&o
 
 <a id="box-news"></a>
 
-## Loot box news
+## Loot box and casino news
 
 `BoxNews.svelte`, pure queue in `game/box-news.ts`. When someone opens a [loot box](economy.md#loot-box), every player sees a card at the top centre once the opener has seen the result: picture, "Ana opened a loot box", item and rarity in its colour, and a small "New" or "Duplicate".
 
@@ -52,8 +52,9 @@ Dev preview: `/?mockhud&novote&mode=<gamemode>&players=<n>&self=<position>`, `&o
 - At most 3 at a time and only as many as fit between the HUD and the crosshair. The stack starts below everything marked `data-top-hud` (map name, spectator bar, round banners, RTV request). While others wait, cards stay shorter, further common ones are merged ("+2 more"), and what waited more than 10 s (rare, epic: 20 s) is dropped.
 - It takes no input and stays visible above the Esc menu. It is hidden under the console and the ban screen. The opener does not get their own card while the loot box screen is open.
 - The picture comes from the pictures the shop keeps. Otherwise `itemPicture` (`render/character/preview.ts`) draws that one item in idle time on a small offscreen WebGL context. Creating it costs a long frame, so that happens while joining a server (`warmItemPictures`), and it stays until the game ends. The card shows at once, the picture when it is ready; without WebGL there is only the text.
-- Sound: the zone bell, the record bell for rare and epic, 8 to 10 dB below the opener's own.
-- `cl_boxnews 0` (Settings › HUD › "Show loot box news") turns cards and sound off. The chat line for rare and epic items stays.
+- **Casino wins** of 5× the bet and more use the same queue: multiplier, "Ana won big at Crash" and the payout. The card grows with the tier reached (5×, 10×, 20×, 50×, 100×; `CASINO_LOOK`: 50 to 120 px, 4 to 9 s), each in its own colour; from 20× it glows, from 50× it pulses. They are never merged. Everyone gets them, the winner too. Dev preview: `&casinonews` (`=<multiplier>`).
+- Sound: the zone bell, the record bell for rare and epic and wins from 20×, 8 to 10 dB below the opener's own.
+- `cl_boxnews 0` (Settings › HUD › "Show loot box and casino news") turns cards and sound off. The chat lines for rare and epic items and for wins from 20× stay.
 
 Dev preview: `/?mockhud&novote&boxnews` (one of each rarity in turn, `=<rarity or item id>` only that, `=all` a flood).
 
@@ -117,7 +118,7 @@ Opened with `` ` `` or `~`. A CS-style panel in the top half of the screen: scro
 | `cl_showkeys` | 0 | Pressed-keys display |
 | `cl_hideplayers` | 0 | Hide other players |
 | `cl_scorepanel` | 1 | Show the score panel ([Score panel](#score-panel)) |
-| `cl_boxnews` | 1 | Show what other players get from loot boxes ([Loot box news](#box-news)) |
+| `cl_boxnews` | 1 | Show what other players get from loot boxes and win in the casino ([Loot box and casino news](#box-news)) |
 | `cl_ghost` | 1 | Show the race ghost on surf and bhop maps ([Ghost](#ghost)) |
 | `cl_crosshairsize`, `cl_crosshairgap`, `cl_crosshairthickness`, `cl_crosshaircolor_r/g/b`, `cl_crosshairdot` | CS-like | Crosshair |
 | `name <name>` | | Change guest name (logged-in players always show their username) |
@@ -161,13 +162,13 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
 - <a id="casino"></a>**Casino** (`menu/casino/`; pure helpers in `game/casino.ts`; rules and odds in [economy.md](economy.md#casino)): tabs Coinflip, Crash and Slots. The header shows the net result of this session and of all time, and the coins. `CasinoTable.svelte` frames every game: the game, the bet box (Min, ½, 2×, Max; `Enter` plays), the last 12 results and "How it works" with the true odds and payback.
   - The server has decided before anything moves: the animation only shows it, and balance, net and results stay hidden until it ends. Closing the menu early loses nothing.
   - **Coinflip** (`CoinflipGame.svelte`): pick a side (arrow keys), a 3D coin is tossed and lands on the result.
-  - **Crash** (`CrashGame.svelte`): a rising curve with the multiplier; the main button becomes **Cash out · n**. Optional auto cash-out with its chance. A running round is picked up again when the menu is reopened or after a reconnect; one that ends while the menu is closed shows a notice. After a cash-out (also an automatic one) the curve climbs on to the real crash and shows how much more there was; the next bet cuts it short. The bet is settled at the cash-out, the rest is only shown. A click on Cash out just after the crash does not place a bet (1 s).
+  - **Crash** (`CrashGame.svelte`): a rising curve with the multiplier; the main button becomes **Cash out · n**. Optional auto cash-out with its chance. A running round is picked up again when the menu is reopened or after a reconnect; one that ends while the menu is closed shows a notice. After a cash-out (also an automatic one) the curve climbs on to the real crash and shows how much more there was; the next bet cuts it short. The bet is settled at the cash-out, the rest is only shown. A click on Cash out just after the crash does not place a bet (1 s). A drum roll builds up with the multiplier (`crashBuild` in `audio/mix.ts`): a snare roll and, from 1.3×, timpani, louder, brighter and faster the higher it climbs; 9 dB softer after a cash-out; a cymbal at the crash.
   - **Slots** (`SlotsGame.svelte`, symbols in `SlotSymbol.svelte`): three reels stop one after another, the last one later when the first two match; the pay table is below.
   - With reduced motion there is no spin, toss, shake or count-up. Guests see the games and a login button; offline or on a server without a casino one line says so. Dev preview: `/?mockhud&novote&open=settings&view=casino` (`&tab=coinflip|crash|slots`, `&nocasino`, `&roll=<0..1>` a fixed roll).
 - **Account**: "Logged in as X" with **Log out**, or guest with **Log in / Register** (opens the account panel).
 - <a id="admin"></a>**Admin** (only when the server says the account is admin, [gameplay.md](gameplay.md#admin); `AdminMenu.svelte`): **Extend +10 min** in the header, then tabs
   - Maps: every map grouped by gamemode with an on/off switch (the last enabled map cannot be switched off) and **Force change** with an inline "Change now? Yes / Cancel"; the current map is marked.
-  - Players: connected players with an Admin / Account / Guest badge and the coin balance of accounts, **Coins** (accounts; inline amount with Add, Subtract, and Reset with a confirm), **Item** (accounts; pick an item and Give) and **Ban** (inline confirm with an optional reason; not for admins), plus both for an account by username, also offline.
+  - Players: connected players with an Admin / Account / Guest badge and the coin balance of accounts, **Coins** (accounts; inline amount with Add, Subtract, and Reset with a confirm), **Item** (accounts; pick an item and Give, or Remove one they own) and **Ban** (inline confirm with an optional reason; not for admins), plus both for an account by username, also offline.
   - Bans: username, kind, reason, date, who banned, when it lifts, and **Unban**.
   - Abuse log: the latest 50 automatic warnings and bans with their evidence.
 
@@ -202,7 +203,7 @@ Binds added after a player first saved their table (`E` → `beacon`, `N` → `m
 
 ## Audio
 
-All sounds are real recordings released under CC0, sourced from Freesound and listed with their trims in [CREDITS.md](../CREDITS.md). Nothing is synthesised: code only selects, places, levels, filters and convolves the recordings. Files live in `apps/web/static/sfx/` (AAC `.m4a`, 48 kHz, mono events, about 0.65 MB in total) and are fetched after the first user gesture. A file that fails to load only silences that sound.
+All sounds are real recordings released under CC0, sourced from Freesound and listed with their trims in [CREDITS.md](../CREDITS.md). Nothing is synthesised: code only selects, places, levels, filters and convolves the recordings. Files live in `apps/web/static/sfx/` (AAC `.m4a`, 48 kHz, mono events, about 0.85 MB in total) and are fetched after the first user gesture. A file that fails to load only silences that sound.
 
 | Sound | Trigger | Recording |
 | --- | --- | --- |
@@ -213,6 +214,8 @@ All sounds are real recordings released under CC0, sourced from Freesound and li
 | Ramp slide | Continuous loop while surfing; gain rises with speed | Snowboard sliding on snow |
 | Zone | Entering start, stage, checkpoint, end; hide and seek cash bag appears; casino win | Antique clock bell, one strike |
 | Record | New PB or map record; casino win of 10× or more | Large church bell, one strike |
+| Crash roll | Crash, while a round climbs | Snare drum roll and orchestral timpani roll, loops |
+| Crash end | Crash, at the crash | 16" studio crash cymbal |
 | Vote | Vote opens; hide and seek seeker release | Two gavel knocks on a wooden desk |
 | Click | New chat message (the only click voice); casino: bet, coin lands, reel stops | Computer mouse button |
 | Knife swing | Hide and seek: your knife swing; another seeker's swing within 1024 units (−6 dB per doubling of distance beyond 128) | Bamboo stick whooshes, pool of 4 |
@@ -221,7 +224,7 @@ All sounds are real recordings released under CC0, sourced from Freesound and li
 Rules:
 
 - **One space.** Every event and the slide bed also feed one shared ConvolverNode with a measured impulse response (Liverpool Philharmonic Hall), with the send 14 dB below the dry signal. The wind is already an outdoor recording and stays dry.
-- **Variation.** Pooled takes play in order (1, 2, …, n, 1, …) with a random ±1.5 dB level change per play. No playback-rate or pitch variation.
+- **Variation.** Pooled takes play in order (1, 2, …, n, 1, …) with a random ±1.5 dB level change per play. No playback-rate or pitch variation; only the Crash drum rolls play faster as the multiplier climbs.
 - **Levels.** Takes in a pool are matched in loudness offline. The wind bed at full speed is the reference (−20 LUFS before the master volume). Events are placed relative to it in `apps/web/src/lib/audio/mix.ts`. Every file has a true peak of −1.5 dBTP or lower. The master volume (`volume` cvar) feeds a safety limiter.
 - **Loops.** Loop points are prepared offline with an equal-power crossfade, so the loops are seamless.
 - **Pipeline.** `tools/audio/process.py` rebuilds the files from the downloaded originals using `tools/audio/manifest.json`. `tools/audio/demo.py` renders a demo mix mastered to −14 LUFS for listening checks. Both scripts use Python 3 and ffmpeg.

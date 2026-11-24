@@ -12,8 +12,8 @@
  * pistol (INF_SECONDARY, its own magazine and reserve) and [3] the knife, with
  * limited ammo (INF_AMMO), and never die: any claw swipe or throwing knife
  * infects them on the spot.
- * Patient Zero (alpha) keeps the three slots until the first infection; its
- * bullets deal normal damage to survivors (INF_SURVIVOR_HP). Infected die to
+ * Every infected has claws and a throwing knife only, Patient Zero (alpha)
+ * too, who is called that until the first infection. Infected die to
  * survivor fire (INF_INFECTED_HP, headshots kill) and respawn after
  * INF_RESPAWN_SECS at the spawn farthest from the survivors.
  *
@@ -29,12 +29,12 @@
  * - An infected survivor turns in place (no teleport): the `infect` event
  *   plus an `ammo` event for 'claws' tell the client.
  * - An infection counts as a kill for the infector and a death for the victim.
- * - Melee by the Alpha (knife) or infected (claws) reports method 'claws'.
+ * - Melee by an infected reports method 'claws'.
  * - When every infected leaves mid-round, a random survivor becomes infected:
  *   as the Alpha (`alpha` event) before the first infection, else an
  *   `infect` event with `by: null`, method 'claws', timeAdded 0 (not counted
  *   as an infection, no bonus time).
- * - `alphaId` stays set for the round after the Alpha loses the gun; it goes
+ * - `alphaId` stays set for the round after the first infection; it goes
  *   null only if Patient Zero leaves.
  * - A player who leaves loses all their knives, flying ones included.
  * - Leaving (or spectating) mid-round and coming back restores score, kills
@@ -66,10 +66,10 @@
  * its caller has turned or left (no credit then if they left). The perks of
  * infected players are reported as [] (they have no streak).
  *
- * Respawn beacons: a living infected standing on
- * walkable ground may place one beacon (INF_BEACON_COOLDOWN_MS between
- * placements; a new one replaces the old). Their next respawn uses it up and
- * puts them on it (reason 'beacon') instead of the far map spawn. Survivors
+ * Respawn beacons: a living infected may place one beacon on the walkable
+ * ground below them, also in a jump (INF_BEACON_COOLDOWN_MS between
+ * placements; a new one replaces the old). Their next respawn or fall out of
+ * the map uses it up and puts them on it (reason 'beacon') instead of the far map spawn. Survivors
  * destroy a beacon with one bullet or knife swing (+INF_SCORE_BEACON_DESTROY,
  * a `hit` with targetId 0 for the hitmarker); infected cannot. Beacons go
  * when their owner leaves or spectates and at every round end / grace /
@@ -96,7 +96,7 @@ export const INF_ROUND_SECS = 120;
 export const INF_INFECTION_BONUS_SECS = 20;
 export const INF_END_SECS = 7;
 export const INF_INFECTED_HP = 5;
-/** Survivor HP against the Alpha's gun (claws and knives infect outright). */
+/** Survivor HP (claws and knives infect outright, so nothing lowers it). */
 export const INF_SURVIVOR_HP = 5;
 export const INF_RESPAWN_SECS = 3;
 /** Infected speed with claws; holding a gun uses WEAPONS[weapon].moveSpeed. */
@@ -185,8 +185,8 @@ export const INF_BEACON_COOLDOWN_MS = 1500;
 /** Beacon hit sphere radius, centred INF_BEACON_HIT_Z above its floor point. */
 export const INF_BEACON_HIT_RADIUS = 16;
 export const INF_BEACON_HIT_Z = 10;
-/** Placement: the floor must be within this far below the feet. */
-const BEACON_GROUND_DIST = 8;
+/** Placement: the floor must be within this far below the feet (a bhopper is in the air most of the time). */
+const BEACON_DROP_DIST = 256;
 /** The ground trace starts this far above the reported feet. */
 const BEACON_TRACE_LIFT = 2;
 /** Respawning on a beacon puts the feet this far above its floor point (like map spawns). */
@@ -392,11 +392,11 @@ interface InfPlayer {
 	deaths: number;
 	/** Held weapon: `primaryWs`, `secondaryWs` or `meleeWs`. */
 	ws: WeaponState;
-	/** Round preset gun (survivors and the Alpha); kept across weapon swaps. */
+	/** Round preset gun (survivors); kept across weapon swaps. */
 	primaryWs: WeaponState;
-	/** Pistol (survivors and the Alpha); its own magazine and reserve. */
+	/** Pistol (survivors); its own magazine and reserve. */
 	secondaryWs: WeaponState;
-	/** Knife (survivors, Alpha) or claws (infected). */
+	/** Knife (survivors) or claws (infected). */
 	meleeWs: WeaponState;
 	hasKnife: boolean;
 	pos: InfPlayerPos | null;
@@ -738,7 +738,7 @@ export class InfectedGame {
 		p.ws = p.primaryWs;
 	}
 
-	/** Infected (claws), or the Alpha (preset gun with fresh ammo + knife melee). */
+	/** Infected: claws and the throwing knife; `alpha`: Patient Zero. */
 	private makeInfected(p: InfPlayer, alpha: boolean): void {
 		p.team = 'infected';
 		p.alpha = alpha;
@@ -751,16 +751,10 @@ export class InfectedGame {
 		p.slowStacks = 0;
 		p.streak = 0;
 		p.moabReady = false;
-		if (alpha) {
-			this.freshGuns(p);
-			if (p.meleeWs.weapon !== 'knife') p.meleeWs.equip('knife');
-			p.ws = p.primaryWs;
-		} else {
-			p.primaryWs.reloadEndsAt = 0;
-			p.secondaryWs.reloadEndsAt = 0;
-			if (p.meleeWs.weapon !== 'claws') p.meleeWs.equip('claws');
-			p.ws = p.meleeWs;
-		}
+		p.primaryWs.reloadEndsAt = 0;
+		p.secondaryWs.reloadEndsAt = 0;
+		if (p.meleeWs.weapon !== 'claws') p.meleeWs.equip('claws');
+		p.ws = p.meleeWs;
 	}
 
 	private spawnEvent(p: InfPlayer, s: Spawn, now: number, reason: InfSpawnReason): void {
@@ -843,11 +837,11 @@ export class InfectedGame {
 	// ---------------------------------------------------------------------
 	// Player actions
 
-	/** Survivors (and the Alpha) swap between the round preset [1], the pistol [2] and the knife [3]. */
+	/** Survivors swap between the round preset [1], the pistol [2] and the knife [3]. */
 	selectWeapon(id: number, weapon: unknown, now: number): InfEvent[] {
 		const p = this.players.get(id);
 		if (!p || !p.alive || !isWeaponId(weapon)) return [];
-		if (p.team !== 'survivor' && !p.alpha) return [];
+		if (p.team !== 'survivor') return [];
 		const next =
 			weapon === 'knife' ? p.meleeWs : weapon === this.roundLoadout ? p.primaryWs : weapon === INF_SECONDARY ? p.secondaryWs : null;
 		if (!next || next.weapon !== weapon) return [];
@@ -945,7 +939,7 @@ export class InfectedGame {
 		return { ok: true, events: this.flush() };
 	}
 
-	/** Place a respawn beacon at the feet (living infected on walkable ground, while playing). */
+	/** Place a respawn beacon on the walkable ground below (living infected, while playing). */
 	placeBeacon(id: number, now: number): InfActionResult {
 		const p = this.players.get(id);
 		if (!p) return { ok: false, reason: 'not playing', events: [] };
@@ -955,14 +949,14 @@ export class InfectedGame {
 		const pos = p.pos;
 		if (!pos) return { ok: false, reason: 'no position', events: [] };
 		if (now < p.nextBeaconAt) return { ok: false, reason: 'cooldown', events: [] };
-		const below = { x: pos.x, y: pos.y, z: pos.z - BEACON_GROUND_DIST };
+		const below = { x: pos.x, y: pos.y, z: pos.z - BEACON_DROP_DIST };
 		let down = this.world.trace(pos, below, HULL_MIN, HULL_MAX);
 		// A position reported flush on the floor starts in solid: retry from a little above the feet.
 		if (down.startsolid) down = this.world.trace({ x: pos.x, y: pos.y, z: pos.z + BEACON_TRACE_LIFT }, below, HULL_MIN, HULL_MAX);
 		if (down.startsolid) return { ok: false, reason: 'blocked', events: [] };
-		if (down.fraction >= 1 || down.plane.normal.z < FLOOR_NZ) return { ok: false, reason: 'not grounded', events: [] };
+		if (down.fraction >= 1 || down.plane.normal.z < FLOOR_NZ) return { ok: false, reason: 'no ground', events: [] };
 		const floor = { x: pos.x, y: pos.y, z: down.endpos.z };
-		if (this.teleports.some((t) => hullInBox(floor, false, t))) return { ok: false, reason: 'blocked', events: [] };
+		if (floor.z < this.killZ || this.teleports.some((t) => hullInBox(floor, false, t))) return { ok: false, reason: 'blocked', events: [] };
 		if (this.world.trace(floor, floor, HULL_MIN, HULL_MAX).startsolid) return { ok: false, reason: 'blocked', events: [] };
 		this.removeBeacon(id, null);
 		const b: Beacon = { id: this.nextBeaconId, ownerId: id, ...floor, yaw: pos.yaw ?? 0 };
@@ -1108,7 +1102,7 @@ export class InfectedGame {
 		const kbFactor = this.hasPerk(p, 'specialist') ? INF_SPECIALIST_KNOCKBACK_FACTOR : 1;
 		for (const [t, a] of agg) {
 			if (p.team === 'survivor') this.damageInfected(t, p, def.id, a.head, a.pose, d, a.dmg, a.kb * kbFactor);
-			else this.damageSurvivor(t, p, def.id, a.head, d, a.dmg, a.kb);
+			else this.damageSurvivor(t, p, a.head);
 		}
 	}
 
@@ -1202,20 +1196,11 @@ export class InfectedGame {
 		}
 	}
 
-	/** Infected attack on a survivor: melee infects outright; the Alpha's bullets deal damage. */
-	private damageSurvivor(t: InfPlayer, by: InfPlayer, weapon: WeaponId, head: boolean, d: Vec3, dmg: number, kb: number): void {
+	/** Infected attack on a survivor: claws infect outright. */
+	private damageSurvivor(t: InfPlayer, by: InfPlayer, head: boolean): void {
 		if (t.team !== 'survivor' || !t.alive) return;
-		const melee = WEAPONS[weapon].magazine === 0;
-		if (melee) {
-			this.pending.push({ e: 'hit', by: by.id, targetId: t.id, head, kill: true });
-			this.infect(t, by, 'claws');
-			return;
-		}
-		t.hp = Math.max(0, t.hp - dmg);
-		const kill = t.hp <= 0;
-		this.pending.push({ e: 'hit', by: by.id, targetId: t.id, head, kill });
-		if (kill) this.infect(t, by, 'gun');
-		else this.slowAndPush(t, kb, d);
+		this.pending.push({ e: 'hit', by: by.id, targetId: t.id, head, kill: true });
+		this.infect(t, by, 'claws');
 	}
 
 	/** Turn a survivor into an infected (in place). `by` may be gone (null) or dead (post-mortem knife). */
@@ -1236,14 +1221,10 @@ export class InfectedGame {
 		this.pending.push({ e: 'infect', id: t.id, by: by?.id ?? null, method, timeAdded: INF_INFECTION_BONUS_SECS });
 		this.ammoEvent(t);
 		if (first) {
-			// Patient Zero loses the gun (even while waiting to respawn).
+			// Patient Zero is one of many from now on (even while waiting to respawn).
 			for (const p of this.players.values()) {
 				if (!p.alpha) continue;
 				p.alpha = false;
-				p.primaryWs.reloadEndsAt = 0;
-				p.secondaryWs.reloadEndsAt = 0;
-				if (p.meleeWs.weapon !== 'claws') p.meleeWs.equip('claws');
-				p.ws = p.meleeWs;
 				this.ammoEvent(p);
 			}
 		}
@@ -1421,17 +1402,19 @@ export class InfectedGame {
 		// Stuck knives of the old life go; flying ones fly on and go when they land.
 		for (const k of [...this.knives.values()]) if (k.ownerId === p.id && k.stuck) this.removeKnife(k);
 		this.makeInfected(p, p.alpha && this.infections === 0);
+		if (!this.useBeacon(p, now)) this.spawnEvent(p, this.spawnAwayFrom('survivor'), now, 'respawn');
+	}
+
+	/** Spawn on the player's beacon, which is used up. False without one. */
+	private useBeacon(p: InfPlayer, now: number): boolean {
 		const b = this.beacons.get(p.id);
-		if (b) {
-			const at = { x: b.x, y: b.y, z: b.z + BEACON_SPAWN_LIFT };
-			if (!this.world.trace(at, at, HULL_MIN, HULL_MAX).startsolid) {
-				this.beacons.delete(p.id);
-				this.pending.push({ e: 'beaconUse', id: b.id, ownerId: p.id, x: b.x, y: b.y, z: b.z });
-				this.spawnEvent(p, { pos: at, yaw: b.yaw }, now, 'beacon');
-				return;
-			}
-		}
-		this.spawnEvent(p, this.spawnAwayFrom('survivor'), now, 'respawn');
+		if (!b) return false;
+		const at = { x: b.x, y: b.y, z: b.z + BEACON_SPAWN_LIFT };
+		if (this.world.trace(at, at, HULL_MIN, HULL_MAX).startsolid) return false;
+		this.beacons.delete(p.id);
+		this.pending.push({ e: 'beaconUse', id: b.id, ownerId: p.id, x: b.x, y: b.y, z: b.z });
+		this.spawnEvent(p, { pos: at, yaw: b.yaw }, now, 'beacon');
+		return true;
 	}
 
 	private fallOuts(now: number): void {
@@ -1439,6 +1422,7 @@ export class InfectedGame {
 			const pos = p.pos;
 			if (!p.alive || !pos || now < p.graceUntil) continue;
 			if (!this.teleports.some((t) => hullInBox(pos, pos.ducked, t))) continue;
+			if (this.phase === 'playing' && p.team === 'infected' && this.useBeacon(p, now)) continue;
 			const s = this.phase === 'playing' ? this.spawnAwayFrom(p.team === 'survivor' ? 'infected' : 'survivor') : this.randomSpawn();
 			this.spawnEvent(p, s, now, 'fall');
 		}

@@ -147,8 +147,15 @@ function newGame(ids: number[], opts: Opts = {}, map: MapDef = testMap()) {
 		return r;
 	};
 	const of = <K extends InfEvent['e']>(e: K, list: InfEvent[] = events): Ev<K>[] => list.filter((ev): ev is Ev<K> => ev.e === e);
+	/** Infected `id` steps up to survivor `targetId` (40 units west of them) and claws them. */
+	const claw = (id: number, targetId: number) => {
+		const t = posOf(targetId);
+		put(id, t.x - 40, t.y, t.z);
+		expect(game.weaponOf(id)!.weapon).toBe('claws');
+		return shoot(id, t, false);
+	};
 	game.syncPlayers(ids, clock.now);
-	return { game, clock, events, advance, advanceUntil, put, eye, shoot, of };
+	return { game, clock, events, advance, advanceUntil, put, eye, shoot, claw, of };
 }
 
 /** A game in 'playing' with player 1 as Patient Zero (rng 0 picks the first id). */
@@ -202,7 +209,7 @@ describe('round flow (fake clock)', () => {
 		}
 	});
 
-	it('picks Patient Zero at the end of grace: gun with fresh ammo, knife, 2:00 clock', () => {
+	it('picks Patient Zero at the end of grace: claws and the throwing knife, no gun, 2:00 clock', () => {
 		const g = newGame([1, 2, 3]);
 		g.advance(500);
 		g.shoot(1, { x: 0, y: 0, z: 0 }, false); // spend a round during grace
@@ -213,9 +220,8 @@ describe('round flow (fake clock)', () => {
 		g.advance(600);
 		expect(g.game.phase).toBe('playing');
 		expect(g.of('alpha')).toEqual([{ e: 'alpha', id: 1 }]);
-		expect(g.game.playerView(1)).toMatchObject({ team: 'infected', alpha: true, hp: INF_INFECTED_HP, weapon: 'barrett', hasKnife: true });
-		expect(g.game.primaryOf(1)!.mag).toBe(10);
-		expect(g.game.secondaryOf(1)!.mag).toBe(12);
+		expect(g.game.playerView(1)).toMatchObject({ team: 'infected', alpha: true, hp: INF_INFECTED_HP, weapon: 'claws', hasKnife: true });
+		expect(g.game.moveSpeed(1)).toBe(INF_INFECTED_SPEED);
 		expect(g.game.view(g.clock.now).timeLeft).toBeCloseTo(120, 0);
 		expect(g.game.view(g.clock.now)).toMatchObject({ survivors: 2, infected: 1, alphaId: 1, loadout: 'barrett', secondary: 'pistol', moab: null });
 	});
@@ -250,9 +256,8 @@ describe('round flow (fake clock)', () => {
 
 	it('infected win when the last survivor is infected', () => {
 		const g = playing([1, 2]);
-		g.put(1, -600, 0);
 		g.put(2, -300, 0);
-		const r = g.shoot(1, { x: -300, y: 0, z: 0 }, true);
+		const r = g.claw(1, 2);
 		expect(r.ok).toBe(true);
 		g.advance(50);
 		expect(g.of('end')[0]).toMatchObject({ winner: 'infected', survivorsLeft: 0, topId: 1, topScore: INF_SCORE_INFECT });
@@ -299,43 +304,71 @@ describe('round flow (fake clock)', () => {
 });
 
 describe('Patient Zero', () => {
-	it('body hits hurt survivors (slow + knockback); the fifth infects (gun) and costs the gun', () => {
+	it('has claws and the throwing knife only: no gun to fire, no weapon to switch to', () => {
 		const g = playing([1, 2, 3], LMG);
 		g.put(1, -600, 0);
 		g.put(2, -300, 0);
 		g.put(3, 1000, 1000);
-		const endsAt = g.game.endsAt;
-		const r = g.shoot(1, { x: -300, y: 0, z: 0 }, false);
-		expect(r.ok).toBe(true);
-		expect(r.events.find((e) => e.e === 'hurt')).toMatchObject({ id: 2, hp: 4, stacks: 1, kx: WEAPONS.lmg.knockback });
-		for (let i = 0; i < 4; i++) {
-			g.advance(100);
-			g.shoot(1, { x: -300, y: 0, z: 0 }, false);
+		expect(g.game.playerView(1)).toMatchObject({ team: 'infected', alpha: true, weapon: 'claws', hasKnife: true });
+		const n = g.events.length;
+		for (const w of ['lmg', 'pistol', 'knife', 'claws', 'sniper', 'barrett', 'striker', 'smg'] as const) {
+			expect(g.game.selectWeapon(1, w, g.clock.now)).toEqual([]);
 		}
-		const inf = g.of('infect');
-		expect(g.events.filter((e) => e.e === 'hurt' && e.id === 2)).toHaveLength(4);
-		expect(inf).toEqual([{ e: 'infect', id: 2, by: 1, method: 'gun', timeAdded: INF_INFECTION_BONUS_SECS }]);
+		expect(g.game.reload(1, g.clock.now)).toBe(false);
+		const o = g.eye(1);
+		for (const weapon of ['lmg', 'pistol', 'knife'] as const) {
+			const r = g.game.fire(1, { weapon, origin: o, dir: unit(1, 0, 0), tick: g.game.tick }, g.clock.now);
+			expect(r).toMatchObject({ ok: false, reason: 'wrong weapon' });
+			expect(r.events).toEqual([{ e: 'ammo', id: 1, weapon: 'claws', mag: 0, reserve: 0 }]);
+		}
+		// Claws do not reach 300 units, and no gunshot came out of it.
+		expect(g.shoot(1, { x: -300, y: 0, z: 0 }, true).ok).toBe(true);
+		expect(g.events.slice(n).filter((e) => e.e === 'hit' || e.e === 'hurt' || e.e === 'infect')).toEqual([]);
+		expect(g.game.playerView(2)).toMatchObject({ team: 'survivor', hp: 5 });
+		expect(g.game.playerView(1)).toMatchObject({ alpha: true, weapon: 'claws' });
+	});
+
+	it('one swipe infects (no damage first): +20 s, scores, and the role ends with an ammo claws event', () => {
+		const g = playing([1, 2, 3], LMG);
+		g.put(2, -300, 0);
+		g.put(3, 1000, 1000);
+		const endsAt = g.game.endsAt;
+		const r = g.claw(1, 2);
+		expect(r.ok).toBe(true);
+		expect(r.events.filter((e) => e.e === 'hit')).toEqual([{ e: 'hit', by: 1, targetId: 2, head: false, kill: true }]);
+		expect(g.of('infect')).toEqual([{ e: 'infect', id: 2, by: 1, method: 'claws', timeAdded: INF_INFECTION_BONUS_SECS }]);
+		expect(g.of('hurt')).toEqual([]);
+		expect(r.events.filter((e) => e.e === 'ammo')).toEqual([
+			{ e: 'ammo', id: 2, weapon: 'claws', mag: 0, reserve: 0 },
+			{ e: 'ammo', id: 1, weapon: 'claws', mag: 0, reserve: 0 }
+		]);
 		expect(g.game.endsAt).toBe(endsAt + INF_INFECTION_BONUS_SECS * 1000);
 		expect(g.game.playerView(2)).toMatchObject({ team: 'infected', hp: INF_INFECTED_HP, weapon: 'claws', hasKnife: true, deaths: 1 });
 		expect(g.game.playerView(1)).toMatchObject({ alpha: false, weapon: 'claws', score: INF_SCORE_INFECT, kills: 1, hasKnife: true });
+		expect(g.game.alphaId).toBe(1);
 		expect(g.game.playerView(3)!.score).toBe(INF_SCORE_SURVIVE_TICK);
 		expect(g.game.selectWeapon(1, 'lmg', g.clock.now)).toEqual([]);
 		const gun = g.game.fire(1, { weapon: 'lmg', origin: g.eye(1), dir: unit(1, 0, 0), tick: g.game.tick }, g.clock.now);
 		expect(gun).toMatchObject({ ok: false, reason: 'wrong weapon' });
 	});
 
-	it('a headshot infects at once', () => {
-		const g = playing([1, 2, 3]);
-		g.put(1, -600, 0);
-		g.put(2, -300, 0);
+	it('a specialist survivor (6 HP) is infected by one swipe too', () => {
+		const g = playing([1, 2, 3], LMG);
 		g.put(3, 1000, 1000);
-		g.shoot(1, { x: -300, y: 0, z: 0 }, true);
-		expect(g.of('infect')).toEqual([{ e: 'infect', id: 2, by: 1, method: 'gun', timeAdded: INF_INFECTION_BONUS_SECS }]);
-		expect(g.of('hurt')).toEqual([]);
-		expect(g.game.playerView(2)!.team).toBe('infected');
+		g.put(2, -600, 600);
+		for (let i = 0; i < INF_PERK_KILLS.specialist; i++) {
+			while (!g.game.playerView(1)!.alive) g.advance(INF_STEP_MS);
+			g.put(1, -600, 300);
+			g.advance(200);
+			g.shoot(2, { x: -600, y: 300, z: 0 }, true);
+		}
+		expect(g.game.playerView(2)).toMatchObject({ hp: INF_SPECIALIST_HP, team: 'survivor' });
+		while (!g.game.playerView(1)!.alive) g.advance(INF_STEP_MS);
+		g.claw(1, 2);
+		expect(g.of('infect')).toEqual([{ e: 'infect', id: 2, by: 1, method: 'claws', timeAdded: INF_INFECTION_BONUS_SECS }]);
 	});
 
-	it('killed before the first infection: respawns in 3 s still as the Alpha with gun and knife', () => {
+	it('killed before the first infection: respawns in 3 s still as the Alpha with claws and knife', () => {
 		const g = playing([1, 2, 3]);
 		g.put(1, -600, 0);
 		g.put(2, -300, 0);
@@ -345,18 +378,8 @@ describe('Patient Zero', () => {
 		g.advance(2900);
 		expect(g.game.playerView(1)!.alive).toBe(false);
 		g.advance(200);
-		expect(g.game.playerView(1)).toMatchObject({ alive: true, alpha: true, weapon: 'barrett', hasKnife: true });
-		expect(g.of('spawn').find((s) => s.id === 1 && s.reason === 'respawn')).toMatchObject({ alpha: true, weapon: 'barrett', mag: 10 });
-	});
-
-	it('the Alpha may swap to the knife; a knife swipe infects outright', () => {
-		const g = playing([1, 2, 3]);
-		g.put(1, -340, 0);
-		g.put(2, -300, 0);
-		g.put(3, 1000, 1000);
-		expect(g.game.selectWeapon(1, 'knife', g.clock.now)).toEqual([{ e: 'ammo', id: 1, weapon: 'knife', mag: 0, reserve: 0 }]);
-		g.shoot(1, { x: -300, y: 0, z: 0 }, false);
-		expect(g.of('infect')[0]).toMatchObject({ id: 2, by: 1, method: 'claws' });
+		expect(g.game.playerView(1)).toMatchObject({ alive: true, alpha: true, weapon: 'claws', hasKnife: true });
+		expect(g.of('spawn').find((s) => s.id === 1 && s.reason === 'respawn')).toMatchObject({ alpha: true, weapon: 'claws', mag: 0, hasKnife: true });
 	});
 
 	it('every infected leaving: a survivor takes over (Alpha before the first infection, else plain infected)', () => {
@@ -364,15 +387,14 @@ describe('Patient Zero', () => {
 		a.game.syncPlayers([2, 3], a.clock.now);
 		a.advance(20);
 		expect(a.of('alpha').at(-1)).toEqual({ e: 'alpha', id: 2 });
-		expect(a.game.playerView(2)).toMatchObject({ team: 'infected', alpha: true, weapon: 'barrett', hasKnife: true });
+		expect(a.game.playerView(2)).toMatchObject({ team: 'infected', alpha: true, weapon: 'claws', hasKnife: true });
 		expect(a.game.alphaId).toBe(2);
 
 		const b = playing([1, 2, 3, 4]);
-		b.put(1, -600, 0);
 		b.put(2, -300, 0);
 		b.put(3, 1000, 1000);
 		b.put(4, 1000, -1000);
-		b.shoot(1, { x: -300, y: 0, z: 0 }, true);
+		b.claw(1, 2);
 		b.game.syncPlayers([3, 4], b.clock.now);
 		b.advance(20);
 		expect(b.of('infect').at(-1)).toEqual({ e: 'infect', id: 3, by: null, method: 'claws', timeAdded: 0 });
@@ -383,13 +405,13 @@ describe('Patient Zero', () => {
 
 describe('infected and survivors', () => {
 	function withInfected(opts: Opts = LMG) {
-		// 1 infects 2 (headshot): 1 and 2 are plain infected, 3 and 4 survive.
+		// 1 claws 2: 1 and 2 are plain infected, 3 and 4 survive.
 		const g = playing([1, 2, 3, 4], opts);
-		g.put(1, -600, 0);
 		g.put(2, -300, 0);
 		g.put(3, 1000, 1000);
 		g.put(4, 1000, -1000);
-		g.shoot(1, { x: -300, y: 0, z: 0 }, true);
+		g.claw(1, 2);
+		g.put(1, -600, 0);
 		g.advance(20);
 		expect(g.game.playerView(2)!.team).toBe('infected');
 		return g;
@@ -490,7 +512,7 @@ describe('infected and survivors', () => {
 		g.put(3, 1000, 1000);
 		g.advance(1000);
 		expect(g.of('uav')).toEqual([]);
-		g.shoot(1, { x: -300, y: 0, z: 0 }, true);
+		g.claw(1, 2);
 		g.advance(20);
 		expect(g.of('uav')).toEqual([{ e: 'uav', targetId: 3, x: 1000, y: 1000, z: 0 }]);
 		g.advance(4900);
@@ -881,11 +903,10 @@ describe('throwing knife edge cases', () => {
 describe('anti-exploit and robustness', () => {
 	it('spectating and rejoining mid-round: still infected, no free knife, no Alpha, stats kept', () => {
 		const g = playing([1, 2, 3, 4]);
-		g.put(1, -600, 0);
 		g.put(2, -300, 0);
 		g.put(3, 1000, 1000);
 		g.put(4, 1000, -1000);
-		g.shoot(1, { x: -300, y: 0, z: 0 }, true); // 2 is infected; 1 drops the gun
+		g.claw(1, 2); // 2 is infected; 1 is no longer Patient Zero
 		g.put(2, -600, 600);
 		g.game.throwKnife(2, g.eye(2), unit(0, 0, -1), g.clock.now);
 		expect(g.game.playerView(2)!.hasKnife).toBe(false);
@@ -916,7 +937,7 @@ describe('anti-exploit and robustness', () => {
 		g.advance(20);
 		expect(g.game.alphaId).toBe(2);
 		expect(g.game.playerView(1)).toMatchObject({ team: 'infected', alpha: false, weapon: 'claws' });
-		expect(g.game.playerView(2)).toMatchObject({ team: 'infected', alpha: true, weapon: 'barrett', hasKnife: true });
+		expect(g.game.playerView(2)).toMatchObject({ team: 'infected', alpha: true, weapon: 'claws', hasKnife: true });
 	});
 
 	it('a dead infected who rejoins gets the knife they were due; stats follow the key, not the id', () => {
@@ -951,20 +972,22 @@ describe('anti-exploit and robustness', () => {
 		expect(g.game.playerView(4)).toMatchObject({ deaths: 1 });
 	});
 
-	it('friendly fire never hurts: survivor on survivor, infected on infected (gun, claws, knife)', () => {
+	it('friendly fire never hurts: survivor on survivor, infected on infected (claws, knife)', () => {
 		const g = playing([1, 2, 3, 4]);
 		g.put(1, -600, 0);
 		g.put(2, -300, 0);
 		g.put(3, 600, 0);
 		g.put(4, 900, 0);
-		// Survivor 3 shoots survivor 4 in the head; the Alpha shoots nothing infected.
+		// Survivor 3 shoots survivor 4 in the head; the infected claw and knife each other below.
 		const r = g.shoot(3, { x: 900, y: 0, z: 0 }, true);
 		expect(r.ok).toBe(true);
 		expect(r.events.filter((e) => e.e === 'hit' || e.e === 'hurt' || e.e === 'infect')).toEqual([]);
 		expect(g.game.playerView(4)!.hp).toBe(5);
-		g.shoot(1, { x: -300, y: 0, z: 0 }, true); // 2 infected
+		g.claw(1, 2); // 2 infected
+		expect(g.game.playerView(2)!.team).toBe('infected');
+		g.put(1, -600, 0);
 		g.put(2, -560, 0);
-		g.advance(500);
+		g.advance(1000);
 		const claws = g.shoot(1, { x: -560, y: 0, z: 0 }, false);
 		expect(claws.ok).toBe(true);
 		expect(claws.events.filter((e) => e.e === 'hit')).toEqual([]);
@@ -1046,10 +1069,9 @@ describe('anti-exploit and robustness', () => {
 
 	it('infected claws cannot reload or swap to a gun', () => {
 		const g = playing([1, 2, 3]);
-		g.put(1, -600, 0);
 		g.put(2, -300, 0);
 		g.put(3, 1000, 1000);
-		g.shoot(1, { x: -300, y: 0, z: 0 }, true);
+		g.claw(1, 2);
 		expect(g.game.weaponOf(2)!.weapon).toBe('claws');
 		expect(g.game.reload(2, g.clock.now)).toBe(false);
 		expect(g.game.selectWeapon(2, 'lmg', g.clock.now)).toEqual([]);
@@ -1058,11 +1080,10 @@ describe('anti-exploit and robustness', () => {
 
 	it('the last infected leaving after the first infection: a survivor turns (claws + knife), alphaId stays sane', () => {
 		const g = playing([1, 2, 3, 4]);
-		g.put(1, -600, 0);
 		g.put(2, -300, 0);
 		g.put(3, 1000, 1000);
 		g.put(4, 1000, -1000);
-		g.shoot(1, { x: -300, y: 0, z: 0 }, true);
+		g.claw(1, 2);
 		g.game.syncPlayers([2, 3, 4], g.clock.now);
 		expect(g.game.alphaId).toBeNull();
 		g.game.syncPlayers([3, 4], g.clock.now);
@@ -1131,11 +1152,11 @@ describe('multi-round cycle', () => {
 			const a = g.game.alphaId!;
 			const [s1, s2] = [1, 2, 3].filter((i) => i !== a) as [number, number];
 			expect(g.game.view(g.clock.now)).toMatchObject({ survivors: 2, infected: 1, knives: [] });
-			// Infect one survivor with the gun, then leave a stuck knife lying around.
-			g.put(a, -600, 0);
+			// Claw one survivor, then leave a stuck knife lying around.
 			g.put(s1, -300, 0);
 			g.put(s2, 1000, 1000);
-			g.shoot(a, { x: -300, y: 0, z: 0 }, true);
+			g.claw(a, s1);
+			g.put(a, -600, 0);
 			g.game.throwKnife(a, g.eye(a), unit(0, 0, -1), g.clock.now);
 			g.put(a, -900, 0);
 			g.advanceUntil('knifeStick', 3000);
@@ -1220,7 +1241,7 @@ describe('respawn beacon', () => {
 		expect(g.game.playerView(2)!.hasBeacon).toBe(false);
 	});
 
-	it('refuses survivors, mid-air, the grace period, the dead and spam (cooldown); a new one replaces the old', () => {
+	it('refuses survivors, the grace period, the dead and spam (cooldown); a new one replaces the old', () => {
 		const pre = newGame([1, 2, 3]);
 		pre.advance(300);
 		pre.put(1, -600, 600);
@@ -1228,9 +1249,6 @@ describe('respawn beacon', () => {
 
 		const g = setup();
 		expect(g.game.placeBeacon(2, g.clock.now)).toMatchObject({ ok: false, reason: 'not infected', events: [] });
-		g.put(1, -600, 600, 100);
-		expect(g.game.placeBeacon(1, g.clock.now)).toMatchObject({ ok: false, reason: 'not grounded', events: [] });
-		g.put(1, -600, 600);
 		const first = g.game.placeBeacon(1, g.clock.now);
 		expect(first.ok).toBe(true);
 		const firstId = first.events.find((e): e is Ev<'beaconPlace'> => e.e === 'beaconPlace')!.id;
@@ -1329,20 +1347,167 @@ describe('respawn beacon', () => {
 		g.put(2, -1000, -1000);
 		const own = g.game.placeBeacon(1, g.clock.now).events.find((e): e is Ev<'beaconPlace'> => e.e === 'beaconPlace')!;
 		g.put(1, -600, 400);
-		atBeacon(g, 1, own); // the Alpha's gun
+		expect(atBeacon(g, 1, own).ok).toBe(true); // Patient Zero's claws, out of reach
+		g.put(1, -640, 600);
+		g.advance(1000);
+		expect(atBeacon(g, 1, own).ok).toBe(true); // and close by
 		expect(g.game.view(g.clock.now).beacons).toHaveLength(1);
 		// 1 infects 2; 2 places a beacon, 1 claws at it.
-		g.put(1, -1000, -700);
-		g.advance(200);
-		g.shoot(1, { x: -1000, y: -1000, z: 0 }, true);
+		g.advance(1000);
+		g.claw(1, 2);
 		expect(g.game.playerView(2)!.team).toBe('infected');
-		g.advance(200);
+		g.advance(1000);
 		expect(g.game.placeBeacon(2, g.clock.now).ok).toBe(true);
 		g.put(1, -1040, -1000);
 		const mate = g.game.view(g.clock.now).beacons.find((b) => b.ownerId === 2)!;
-		atBeacon(g, 1, mate);
+		expect(atBeacon(g, 1, mate).ok).toBe(true);
 		expect(g.game.view(g.clock.now).beacons).toHaveLength(2);
 		expect(g.of('beaconDestroy')).toEqual([]);
+	});
+
+	it('placed in mid-air it lands on the floor below, and the next respawn is there', () => {
+		const g = setup();
+		g.put(1, -600, 600, 100, 45);
+		const ev = g.game.placeBeacon(1, g.clock.now).events.find((e): e is Ev<'beaconPlace'> => e.e === 'beaconPlace')!;
+		expect(ev).toMatchObject({ ownerId: 1, x: -600, y: 600, yaw: 45 });
+		expect(ev.z).toBeGreaterThanOrEqual(0);
+		expect(ev.z).toBeLessThan(0.25);
+		expect(g.game.view(g.clock.now).beacons).toEqual([{ id: ev.id, ownerId: 1, x: -600, y: 600, z: ev.z, yaw: 45 }]);
+		g.put(1, 600, -600);
+		g.put(2, 600, -900);
+		g.shoot(2, { x: 600, y: -600, z: 0 }, true);
+		const sp = g.advanceUntil('spawn', 3200)!;
+		expect(sp).toMatchObject({ id: 1, reason: 'beacon', x: -600, y: 600, yaw: 45 });
+		expect(sp.z).toBeLessThan(1);
+	});
+
+	it('mid-air over a raised top lands on that top, not on the floor under it', () => {
+		const g = playing([1, 2, 3], LMG, mapWith(box(-664, 536, 0, -536, 664, 96)));
+		g.put(2, -1000, 0);
+		g.put(3, 1000, 1000);
+		g.put(1, -600, 600, 250);
+		const ev = g.game.placeBeacon(1, g.clock.now).events.find((e): e is Ev<'beaconPlace'> => e.e === 'beaconPlace')!;
+		expect(ev.z).toBeGreaterThanOrEqual(96);
+		expect(ev.z).toBeLessThan(96.25);
+	});
+
+	it('reaches 256 units down; higher up is refused (no ground), keeps the old beacon and starts no cooldown', () => {
+		const g = setup();
+		const b = g.game.placeBeacon(1, g.clock.now).events.find((e): e is Ev<'beaconPlace'> => e.e === 'beaconPlace')!;
+		g.advance(INF_BEACON_COOLDOWN_MS);
+		for (const z of [257, 300, 1000]) {
+			g.put(1, 600, 600, z);
+			expect(g.game.placeBeacon(1, g.clock.now)).toEqual({ ok: false, reason: 'no ground', events: [] });
+		}
+		expect(g.game.view(g.clock.now).beacons.map((v) => v.id)).toEqual([b.id]);
+		g.put(1, 600, 600, 255);
+		expect(g.game.placeBeacon(1, g.clock.now).ok).toBe(true);
+		expect(g.game.view(g.clock.now).beacons).toMatchObject([{ ownerId: 1, x: 600, y: 600 }]);
+	});
+
+	it('over the void (no floor at all) and over a slope too steep to walk: no ground', () => {
+		const g = setup();
+		g.put(1, 1500, 0); // past the edge of the floor
+		expect(g.game.placeBeacon(1, g.clock.now)).toEqual({ ok: false, reason: 'no ground', events: [] });
+		// A 60 degree slope falling towards +x.
+		const steep = playing(
+			[1, 2, 3],
+			LMG,
+			mapWith({
+				type: 'convex',
+				planes: [
+					{ normal: unit(1.732, 0, 1), dist: -550 * (1.732 / Math.hypot(1.732, 1)) },
+					{ normal: unit(-1, 0, 0), dist: 700 },
+					{ normal: unit(0, 1, 0), dist: 700 },
+					{ normal: unit(0, -1, 0), dist: -500 },
+					{ normal: unit(0, 0, -1), dist: 0 }
+				],
+				material: 'm'
+			})
+		);
+		steep.put(2, -1000, 0);
+		steep.put(3, 1000, 1000);
+		steep.put(1, -650, 600, 250);
+		expect(steep.game.placeBeacon(1, steep.clock.now)).toEqual({ ok: false, reason: 'no ground', events: [] });
+		expect(steep.game.view(steep.clock.now).beacons).toEqual([]);
+	});
+
+	it('over a fall zone or into one is refused (blocked), also from mid-air above it', () => {
+		// A pit: its floor at z -100 lies inside a fall zone (like the foundry's molten pit).
+		const map = testMap();
+		map.brushes = [box(-1200, -1200, -164, 1200, 1200, -100), box(-1200, -1200, -100, 200, 1200, 0)];
+		map.zones = [...map.zones, { type: 'teleport', min: { x: 200, y: -1200, z: -100 }, max: { x: 1200, y: 1200, z: -40 }, to: 'start' }];
+		const g = playing([1, 2, 3], LMG, map);
+		g.put(2, -1000, 0);
+		g.put(3, -1000, 1000);
+		g.put(1, 600, 600, 0); // jumping over the pit, 100 above its floor
+		expect(g.game.placeBeacon(1, g.clock.now)).toEqual({ ok: false, reason: 'blocked', events: [] });
+		g.put(1, 600, 600, 100);
+		expect(g.game.placeBeacon(1, g.clock.now)).toEqual({ ok: false, reason: 'blocked', events: [] });
+		g.put(1, 600, 600, -100);
+		expect(g.game.placeBeacon(1, g.clock.now)).toEqual({ ok: false, reason: 'blocked', events: [] });
+		// On the ledge beside it: fine, also from a jump.
+		g.put(1, 100, 600, 60);
+		expect(g.game.placeBeacon(1, g.clock.now).ok).toBe(true);
+	});
+
+	it('no hull room (inside a solid) is refused', () => {
+		const g = setup();
+		g.put(1, 402, 0); // in the thin wall
+		expect(g.game.placeBeacon(1, g.clock.now)).toEqual({ ok: false, reason: 'blocked', events: [] });
+	});
+
+	it('falling out of the map puts an infected on their beacon once; the next fall is the far spawn', () => {
+		const g = setup();
+		g.put(2, -1000, -1000);
+		g.put(3, -1000, -900);
+		const b = g.game.placeBeacon(1, g.clock.now).events.find((e): e is Ev<'beaconPlace'> => e.e === 'beaconPlace')!;
+		expect(g.game.throwKnife(1, g.eye(1), unit(0, 0, 1), g.clock.now).ok).toBe(true);
+		const { score, deaths, kills } = g.game.playerView(1)!;
+		g.put(1, 0, 0, -1000);
+		const sp = g.advanceUntil('spawn', 100)!;
+		expect(sp).toMatchObject({ id: 1, reason: 'beacon', x: -600, y: 600, yaw: 90, team: 'infected', alpha: true, weapon: 'claws', hp: INF_INFECTED_HP });
+		expect(sp.z).toBeCloseTo(b.z + 0.25, 5);
+		expect(g.of('beaconUse')).toEqual([{ e: 'beaconUse', id: b.id, ownerId: 1, x: -600, y: 600, z: b.z }]);
+		expect(g.of('beaconDestroy')).toEqual([]);
+		expect(g.game.view(g.clock.now).beacons).toEqual([]);
+		// Not a death, and no free knife: the thrown one is still out.
+		expect(g.game.playerView(1)).toMatchObject({ hasBeacon: false, alive: true, hasKnife: false, score, deaths, kills });
+		// Stale positions from below are ignored for a second, then the next fall is the normal one.
+		g.put(1, 0, 0, -1000);
+		g.advance(500);
+		expect(g.of('spawn').filter((s) => s.id === 1 && s.reason === 'fall')).toEqual([]);
+		g.advance(600);
+		expect(g.of('spawn').filter((s) => s.id === 1 && s.reason === 'beacon')).toHaveLength(1);
+		expect(g.of('spawn').filter((s) => s.id === 1 && s.reason === 'fall')).toMatchObject([{ x: 1000, y: 1000, team: 'infected', weapon: 'claws' }]);
+		expect(g.of('beaconUse')).toHaveLength(1);
+	});
+
+	it('falling out without a beacon, or with only someone else’s, is the far spawn', () => {
+		const g = playing([1, 2, 3, 4], LMG);
+		g.put(2, -300, 0);
+		g.put(3, -1000, -1000);
+		g.put(4, -1000, -900);
+		g.claw(1, 2);
+		g.put(1, -600, 600);
+		const b = g.game.placeBeacon(1, g.clock.now).events.find((e): e is Ev<'beaconPlace'> => e.e === 'beaconPlace')!;
+		g.put(2, 0, 0, -1000); // infected, no beacon of their own
+		expect(g.advanceUntil('spawn', 100)).toMatchObject({ id: 2, reason: 'fall', x: 1000, y: 1000 });
+		g.put(3, 0, 0, -1000); // a survivor never uses one
+		expect(g.advanceUntil('spawn', 100)).toMatchObject({ id: 3, reason: 'fall', team: 'survivor' });
+		expect(g.of('beaconUse')).toEqual([]);
+		expect(g.game.view(g.clock.now).beacons.map((v) => v.id)).toEqual([b.id]);
+	});
+
+	it('a beacon that was shot no longer catches a fall', () => {
+		const g = setup();
+		const b = g.game.placeBeacon(1, g.clock.now).events.find((e): e is Ev<'beaconPlace'> => e.e === 'beaconPlace')!;
+		g.put(1, 600, -600);
+		g.put(2, -600, 200);
+		expect(atBeacon(g, 2, b).events.some((e) => e.e === 'beaconDestroy')).toBe(true);
+		g.put(1, 0, 0, -1000);
+		expect(g.advanceUntil('spawn', 100)).toMatchObject({ id: 1, reason: 'fall' });
+		expect(g.of('beaconUse')).toEqual([]);
 	});
 
 	it('leaving clears the beacon (a rejoin has none); round end and dropping to waiting clear all', () => {
@@ -1395,15 +1560,14 @@ describe('survivor primaries and the three-slot loadout', () => {
 		return r;
 	};
 
-	it('.50 cal rifle: one body shot kills or infects, and a bullet pierces lined-up infected', () => {
+	it('.50 cal rifle: one body shot kills, and a bullet pierces lined-up infected', () => {
 		const g = playing([1, 2, 3, 4]);
 		expect(g.game.roundLoadout).toBe('barrett');
-		g.put(1, -600, 0);
 		g.put(2, -300, 0);
 		g.put(3, 1000, 1000);
 		g.put(4, 1000, -1000);
-		g.shoot(1, { x: -300, y: 0, z: 0 }, false); // Patient Zero's body shot: 8 damage
-		expect(g.of('infect')).toEqual([{ e: 'infect', id: 2, by: 1, method: 'gun', timeAdded: INF_INFECTION_BONUS_SECS }]);
+		g.claw(1, 2);
+		expect(g.of('infect')).toEqual([{ e: 'infect', id: 2, by: 1, method: 'claws', timeAdded: INF_INFECTION_BONUS_SECS }]);
 		g.put(3, -900, 600);
 		g.put(1, -600, 600);
 		g.put(2, -300, 600);
@@ -1520,17 +1684,27 @@ describe('survivor primaries and the three-slot loadout', () => {
 		expect(g.game.selectWeapon(2, 'lmg', g.clock.now)).toEqual([{ e: 'ammo', id: 2, weapon: 'lmg', mag: 97, reserve: 100 }]);
 		// Only this round's primary, the pistol and the knife.
 		for (const w of ['sniper', 'smg', 'barrett', 'striker', 'claws'] as const) expect(g.game.selectWeapon(2, w, g.clock.now)).toEqual([]);
-		// The Alpha carries all three until the first infection.
-		expect(g.game.selectWeapon(1, 'pistol', g.clock.now)).toEqual([{ e: 'ammo', id: 1, weapon: 'pistol', mag: 12, reserve: 36 }]);
+		// The Alpha carries none of them.
+		for (const w of ['lmg', 'pistol', 'knife'] as const) expect(g.game.selectWeapon(1, w, g.clock.now)).toEqual([]);
 	});
 
-	it('the Alpha drops the pistol too at the first infection', () => {
-		const g = playing([1, 2, 3], LMG);
-		g.put(1, -600, 0);
+	it('becoming Patient Zero or infected with the pistol out or a reload running ends on claws', () => {
+		const g = newGame([1, 2, 3], LMG);
+		g.advance(500);
+		for (const id of [1, 2]) {
+			g.game.selectWeapon(id, 'pistol', g.clock.now);
+			g.shoot(id, { x: 0, y: 0, z: 0 }, false);
+			expect(g.game.reload(id, g.clock.now)).toBe(true);
+		}
+		g.advance(600);
+		expect(g.game.alphaId).toBe(1);
+		expect(g.game.playerView(1)).toMatchObject({ alpha: true, weapon: 'claws' });
+		expect(g.game.secondaryOf(1)!.reloadEndsAt).toBe(0);
+		expect(g.game.selectWeapon(1, 'pistol', g.clock.now)).toEqual([]);
 		g.put(2, -300, 0);
 		g.put(3, 1000, 1000);
-		g.game.selectWeapon(1, 'pistol', g.clock.now);
-		g.shoot(1, { x: -300, y: 0, z: 0 }, true);
+		g.claw(1, 2);
+		expect(g.game.secondaryOf(2)!.reloadEndsAt).toBe(0);
 		expect(g.game.playerView(1)).toMatchObject({ alpha: false, weapon: 'claws' });
 		expect(g.game.selectWeapon(1, 'pistol', g.clock.now)).toEqual([]);
 		expect(g.game.selectWeapon(2, 'pistol', g.clock.now)).toEqual([]);
@@ -1541,11 +1715,10 @@ describe('kill streak perks and the M.O.A.B.', () => {
 	/** 1 infects 2: infected 1 and 2; survivor 3 at (-600, 600) does the killing; 4 hides. */
 	function streakGame(opts: Opts = {}) {
 		const g = playing([1, 2, 3, 4], { ...LMG, ...opts });
-		g.put(1, -600, 0);
 		g.put(2, -300, 0);
 		g.put(3, 1000, 1000);
 		g.put(4, 1000, -1000);
-		g.shoot(1, { x: -300, y: 0, z: 0 }, true);
+		g.claw(1, 2);
 		g.advance(20);
 		expect(g.game.playerView(2)!.team).toBe('infected');
 		g.put(3, -600, 600);

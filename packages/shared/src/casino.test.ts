@@ -3,6 +3,7 @@ import {
 	betError,
 	CASINO_MAX_BET,
 	CASINO_MIN,
+	casinoNewsTier,
 	coinflipPayout,
 	CRASH,
 	crashAt,
@@ -139,5 +140,12 @@ describe('slots', () => {
 		}
 		for (const s of SLOT_SYMBOLS) expect(counts.get(s.id)).toBe(s.weight * 100);
 		expect(rollSlots(() => 0.999999999)).toEqual(['pearl', 'pearl', 'pearl']);
+	});
+});
+
+describe('casino news', () => {
+	it('the highest tier reached by payout divided by bet', () => {
+		const cases = [[10, 0, null], [10, 49, null], [10, 50, 5], [10, 99, 5], [10, 100, 10], [50, 1000, 20], [10, 999, 50], [10, 1000, 100], [10, 2500, 100], [0, 10, null]] as const;
+		for (const [bet, payout, tier] of cases) expect(casinoNewsTier(bet, payout)).toBe(tier);
 	});
 });

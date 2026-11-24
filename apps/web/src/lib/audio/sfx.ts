@@ -12,12 +12,15 @@ export const SFX_EVENTS = {
 	tick: ['tick-1.m4a', 'tick-2.m4a', 'tick-3.m4a'],
 	swing: ['swing-1.m4a', 'swing-2.m4a', 'swing-3.m4a', 'swing-4.m4a'],
 	hit: ['hit-1.m4a', 'hit-2.m4a', 'hit-3.m4a', 'hit-4.m4a'],
+	crash: ['crash.m4a'],
 } as const;
 
 /** Seamless loops: loopSeconds is the exact loop length prepared offline. */
 export const SFX_LOOPS = {
 	wind: { file: 'wind.m4a', loopSeconds: 16.5 },
 	slide: { file: 'slide.m4a', loopSeconds: 10.5 },
+	roll: { file: 'roll.m4a', loopSeconds: 8.0 },
+	timpani: { file: 'timpani.m4a', loopSeconds: 6.0 },
 } as const;
 
 /** Measured integrated loudness of each file group (LUFS; event takes padded with 1 s). */
@@ -32,8 +35,11 @@ export const SFX_LUFS = {
 	tick: -29.9,
 	swing: -23.6,
 	hit: -24.4,
+	crash: -18.5,
 	wind: -20.2,
 	slide: -20.0,
+	roll: -20.1,
+	timpani: -20.0,
 } as const;
 
 /** Measured room impulse response; the file was scaled by gainDb from unit energy. */

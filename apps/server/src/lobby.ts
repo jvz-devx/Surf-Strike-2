@@ -219,6 +219,8 @@ export class Lobby {
 					for (const c of lobby.clients) if (c.helloed) yield c;
 				},
 				send: (p, m) => this.send(p, m),
+				broadcast: (m) => this.broadcast(m),
+				system: (text) => this.system(text),
 				balance: (accountId) => this.economy.sendCoinsTo(accountId),
 				log: this.log
 			},
@@ -346,6 +348,7 @@ export class Lobby {
 				},
 				adjustCoins: (accountId, amount) => this.economy.adjust(accountId, amount),
 				giveItem: (c, item) => this.shop.give(c, item, Date.now()),
+				takeItem: (c, item) => this.shop.take(c, item),
 				kickBanned: (c, ban) => this.kickBanned(c, ban)
 			},
 			usernames,

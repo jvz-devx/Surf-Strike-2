@@ -7,6 +7,7 @@ import { MAX_PLAYERS, type AdminState, type GameModeId, type ModeFamily, type Mo
 import type {
 	AwardPopup,
 	BoxNews,
+	CasinoNews,
 	BanView,
 	ChatLine,
 	CoinsView,
@@ -64,7 +65,7 @@ export class HudState implements HudStateShape {
 	casino = $state.raw<CasinoView | null>(null);
 	multiplier = $state.raw<{ mult: number; active: number; need: number } | null>(null);
 	awardPopups = $state.raw<readonly AwardPopup[]>([]);
-	boxNews = $state.raw<readonly BoxNews[]>([]);
+	boxNews = $state.raw<readonly (BoxNews | CasinoNews)[]>([]);
 	ban = $state.raw<BanView | null>(null);
 	adminState = $state.raw<AdminState | null>(null);
 	adminNotice = $state.raw<{ ok: boolean; text: string; at: number } | null>(null);

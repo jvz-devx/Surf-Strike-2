@@ -343,15 +343,41 @@ describe('offline', () => {
 });
 
 describe('online round (real InfectedGame)', () => {
-	it('grace → playing: Patient Zero keeps the gun with fresh ammo, survivors see the role', () => {
+	it('grace → playing: Patient Zero has claws and the knife, no gun; survivors see the role', () => {
 		const h = playing();
 		const v1 = h.view(1);
-		expect(v1).toMatchObject({ phase: 'playing', team: 'infected', alpha: true, weapon: 'lmg', mag: 100, reserve: 100, hasKnife: true, hp: INF_INFECTED_HP });
+		expect(v1).toMatchObject({ phase: 'playing', team: 'infected', alpha: true, weapon: 'claws', mag: 0, reserve: 0, magSize: 0, hasKnife: true, hp: INF_INFECTED_HP });
+		expect(h.game.playerView(1)).toMatchObject({ alpha: true, weapon: 'claws' });
 		expect(h.view(2)).toMatchObject({ phase: 'playing', team: 'survivor', alpha: false, weapon: 'lmg', mag: 100, survivors: 2, infected: 1 });
 		expect(h.peer(2).c.roleOf(1)).toBe('alpha');
 		expect(h.peer(2).c.roleOf(3)).toBe('none');
-		expect(h.peer(1).c.maxSpeed(h.clock.now)).toBe(WEAPONS.lmg.moveSpeed);
+		expect(h.peer(1).c.maxSpeed(h.clock.now)).toBe(INF_INFECTED_SPEED);
+		expect(h.peer(1).vm).toMatchObject({ weapon: 'claws', offhand: true });
+		expect(h.peer(2).c.maxSpeed(h.clock.now)).toBe(WEAPONS.lmg.moveSpeed);
 		expect(h.view(2).endsAt).toBeGreaterThan(h.clock.now + 100_000);
+	});
+
+	it('Patient Zero cannot switch: the slot keys keep the claws and send nothing', () => {
+		const h = playing();
+		const c1 = h.peer(1).c;
+		const sent = h.peer(1).sent.length;
+		for (const n of [1, 2, 3]) {
+			expect(c1.slot(n, h.clock.now)).toBe(true);
+			expect(c1.weapon).toBe('claws');
+		}
+		c1.reload(h.clock.now);
+		expect(h.peer(1).sent).toHaveLength(sent);
+		expect(h.view(1)).toMatchObject({ alpha: true, weapon: 'claws', reloadEndsAt: 0 });
+		// Mouse1 from afar swings the claws: nobody is hurt or infected.
+		h.attack(1, body(h.pos.get(2)!), () => false, 500);
+		expect(h.log.some((e) => e.e === 'shot' && e.by === 1 && e.weapon === 'claws')).toBe(true);
+		expect(h.log.some((e) => e.e === 'hurt' || e.e === 'infect')).toBe(false);
+		expect(h.view(2)).toMatchObject({ team: 'survivor', hp: INF_SURVIVOR_HP });
+		// Mouse2 throws the knife.
+		c1.press('attack2', true, h.clock.now);
+		h.tick(1, { x: 0, y: 500, z: 64 });
+		expect(h.peer(1).sent.at(-1)?.type).toBe('throwKnife');
+		expect(h.log.some((e) => e.e === 'knifeThrow' && e.ownerId === 1)).toBe(true);
 	});
 
 	it('weapon swap keeps primary ammo and cancels a reload', () => {
@@ -405,13 +431,13 @@ describe('online round (real InfectedGame)', () => {
 		expect(h.view(2).hitMarker).not.toBeNull();
 	});
 
-	it('first infection: survivor turns in place, Patient Zero loses the gun, clock +20 s', () => {
+	it('first infection: survivor turns in place, Patient Zero loses the role, clock +20 s', () => {
 		const h = playing();
 		const c1 = h.peer(1).c;
 		const c2 = h.peer(2).c;
 		const endsBefore = h.view(3).endsAt;
-		c1.slot(3, h.clock.now);
-		expect(c1.weapon).toBe('knife');
+		expect(c1.weapon).toBe('claws');
+		expect(c1.isAlpha).toBe(true);
 		h.put(1, 0, 0);
 		h.put(2, 40, 0);
 		const at = { ...h.pos.get(2)! };
@@ -421,7 +447,8 @@ describe('online round (real InfectedGame)', () => {
 		expect(h.pos.get(2)).toEqual(at);
 		expect(h.view(2)).toMatchObject({ team: 'infected', alpha: false, weapon: 'claws', hasKnife: true, hp: INF_INFECTED_HP, magSize: 0 });
 		expect(c2.maxSpeed(h.clock.now)).toBe(INF_INFECTED_SPEED);
-		// Patient Zero's gun goes away through an ammo 'claws' event only.
+		// The role ends through an ammo 'claws' event only.
+		expect(h.log.some((e) => e.e === 'ammo' && e.id === 1 && e.weapon === 'claws')).toBe(true);
 		expect(h.view(1)).toMatchObject({ team: 'infected', alpha: false, weapon: 'claws' });
 		expect(h.game.playerView(1)).toMatchObject({ alpha: false, weapon: 'claws' });
 		expect(c1.slot(1, h.clock.now)).toBe(true);
@@ -439,7 +466,6 @@ describe('online round (real InfectedGame)', () => {
 	it('a rejected throw is reconciled from the state; a real throw flies smoothly and infects', () => {
 		const h = playing();
 		const c2 = h.peer(2).c;
-		h.peer(1).c.slot(3, h.clock.now);
 		h.put(1, 0, 0);
 		h.put(2, 40, 0);
 		h.attack(1, body(h.pos.get(2)!), h.has((e) => e.e === 'infect' && e.id === 2));
@@ -494,7 +520,6 @@ describe('online round (real InfectedGame)', () => {
 	it('UAV: infected see the pulse, the last survivor is flagged', () => {
 		const h = playing([1, 2, 3, 4]);
 		h.put(4, 600, 600);
-		h.peer(1).c.slot(3, h.clock.now);
 		h.put(1, 0, 0);
 		h.put(2, 40, 0);
 		h.attack(1, body(h.pos.get(2)!), h.has((e) => e.e === 'infect' && e.id === 2));
@@ -513,14 +538,13 @@ describe('online round (real InfectedGame)', () => {
 describe('real round: sparks and the off-hand knife', () => {
 	it('a knife thrown into the floor sticks with a spark for everyone; walking over it restores the off-hand knife', () => {
 		const h = playing();
-		h.peer(1).c.slot(3, h.clock.now);
 		h.put(1, 0, 0);
 		h.put(2, 40, 0);
 		h.attack(1, body(h.pos.get(2)!), h.has((e) => e.e === 'infect' && e.id === 2));
 		const c2 = h.peer(2).c;
 		h.view(2);
 		expect(h.peer(2).vm).toMatchObject({ weapon: 'claws', offhand: true });
-		// Patient Zero lost the gun to claws: the knife now shows in its left claw too.
+		// The knife shows in the left claw of the former Patient Zero too.
 		h.view(1);
 		expect(h.peer(1).vm).toMatchObject({ weapon: 'claws', offhand: true });
 
@@ -811,25 +835,58 @@ describe('throwing knife client', () => {
 		expect(u.c.knivesNow().map((k) => k.id)).toEqual([7]);
 	});
 
-	it('Alpha: Mouse2 throws while the knife is held, scopes the sniper once it is gone', () => {
+	it('Alpha: claws from the `alpha` event even with a gun in hand; Mouse2 throws the knife and never scopes', () => {
+		const u = unit();
+		u.c.onModeState(st({ loadout: 'sniper', players: [pv(1, { weapon: 'sniper' }), pv(2)] }), 0);
+		u.c.onEvent(spawnEv(1, { weapon: 'sniper', mag: 5, reserve: 20 }), 0);
+		u.c.press('attack2', true, 1);
+		expect(u.zoom).toEqual([WEAPONS.sniper.zoomFov]);
+		u.c.press('attack2', false, 2);
+		u.c.onEvent({ e: 'alpha', id: 1 }, 5);
+		expect(u.c.isAlpha).toBe(true);
+		expect(u.c.weapon).toBe('claws');
+		expect(u.zoom.at(-1)).toBeNull(); // the swap unscopes
+		expect(u.c.maxSpeed(6)).toBe(INF_INFECTED_SPEED);
+		u.c.onModeState(st({ loadout: 'sniper', players: [pv(1, { team: 'infected', alpha: true, weapon: 'claws', hasKnife: true }), pv(2)] }), 8);
+		expect(u.c.frame(9, true, 0)).toMatchObject({ alpha: true, weapon: 'claws', hasKnife: true });
+		expect(u.vm).toMatchObject({ weapon: 'claws', offhand: true });
+		const zooms = u.zoom.length;
+		u.c.press('attack2', true, 10);
+		u.c.tick(20, ORIGIN, 64, 0, 0, false);
+		expect(u.sentTypes()).toEqual(['throwKnife']);
+		u.c.frame(21, true, 0);
+		expect(u.vm.offhand).toBe(false);
+		u.c.press('attack2', false, 30);
+		u.c.press('attack2', true, 40);
+		expect(u.zoom).toHaveLength(zooms);
+		expect(u.c.frame(50, true, 0)).toMatchObject({ scoped: false, hasKnife: false, alpha: true, weapon: 'claws' });
+		// Respawning as Patient Zero: claws again.
+		u.c.onEvent(spawnEv(1, { team: 'infected', alpha: true, weapon: 'claws', hasKnife: true, mag: 0, reserve: 0, reason: 'respawn' }), 100);
+		expect(u.c.frame(110, true, 0)).toMatchObject({ alpha: true, weapon: 'claws', hasKnife: true });
+	});
+
+	it('Alpha of an older server: a state or spawn with a gun keeps the gun until the ammo claws event', () => {
 		const u = unit();
 		u.c.onModeState(st({ loadout: 'sniper', players: [pv(1, { team: 'infected', alpha: true, weapon: 'sniper', hasKnife: true }), pv(2)] }), 0);
 		u.c.onEvent(spawnEv(1, { team: 'infected', alpha: true, weapon: 'sniper', hasKnife: true, mag: 5, reserve: 20 }), 0);
-		u.c.onEvent({ e: 'alpha', id: 1 }, 0);
 		expect(u.c.isAlpha).toBe(true);
 		expect(u.c.weapon).toBe('sniper');
+		expect(u.c.maxSpeed(1)).toBe(WEAPONS.sniper.moveSpeed);
+		u.c.frame(5, true, 0);
+		expect(u.vm.offhand).toBe(false); // a gun, not claws
 		u.c.press('attack2', true, 10);
 		u.c.tick(20, ORIGIN, 64, 0, 0, false);
 		expect(u.sentTypes()).toEqual(['throwKnife']);
 		expect(u.zoom).toEqual([]);
-		u.c.frame(21, true, 0);
-		expect(u.vm.offhand).toBe(false); // the Alpha holds a gun, not claws
 		u.c.press('attack2', false, 30);
 		u.c.press('attack2', true, 40);
 		expect(u.zoom).toEqual([WEAPONS.sniper.zoomFov]);
 		expect(u.c.frame(50, true, 0)).toMatchObject({ scoped: true, hasKnife: false, alpha: true });
 		u.c.press('attack2', true, 60);
 		expect(u.zoom.at(-1)).toBeNull();
+		u.c.onEvent({ e: 'ammo', id: 1, weapon: 'claws', mag: 0, reserve: 0 }, 70);
+		expect(u.c.weapon).toBe('claws');
+		expect(u.c.isAlpha).toBe(false);
 	});
 });
 
@@ -947,7 +1004,7 @@ describe('respawn beacon client (real InfectedGame)', () => {
 	it('E plants at the feet, a survivor smashes it: spark, +50 flash, killfeed, owner alert', () => {
 		const h = playing();
 		const p1 = h.peer(1);
-		// Patient Zero (infected, still armed) plants; the client throttles a second press.
+		// Patient Zero plants; the client throttles a second press.
 		expect(p1.c.placeBeacon(h.clock.now)).toBe(true);
 		expect(p1.c.placeBeacon(h.clock.now + 10)).toBe(false);
 		expect(p1.sent.filter((m) => m.type === 'placeBeacon')).toHaveLength(1);

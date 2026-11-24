@@ -42,7 +42,7 @@ Owner's rule. In Zombie Run, Infected, Hide and seek and Tag every award, includ
 
 **Active player:** connected, not spectating, and has moved in the last 30 seconds. Anyone still for longer is AFK: not kicked, only not counted. Time in which the game itself holds a player still (frozen or blindfolded seeker, respawn wait, map change) does not run the 30 seconds down. Players in a Hide and seek round also stay active by looking around: hiders sit still, and a seeker may guard the cash bag. An account connected more than once counts once. Guests count as players. A player who just joined, or comes back from spectating, is not active before the first movement. Teleports, respawns and falling straight down are not movement.
 
-The minimum player counts below use the same definition of active.
+The minimum player counts below use the same definition of active. A round that starts with fewer says so in chat.
 
 **Connections:** in production at most 3 clients per IP address (IPv6: per /64) may be connected, so a lobby cannot be filled with one person's bots.
 
@@ -353,6 +353,7 @@ Three games in the Esc menu, for logged-in accounts; guests can look. Coins are 
 | S→C | `casino { min, max, net, recent[{ at, game, bet, payout }], crash?: { bet, auto, elapsed } }`: after `welcome` and `auth`. `min` and `max` in whole coins; the rest in tenths; `crash`: the running round |
 | S→C | `crashStart { bet, auto }`: the bet is taken, the curve starts |
 | S→C | `casinoResult { ok: true, game, bet, payout, net, … }` (`picked`, `side` / `reels` / `at`, `crash`) or `{ ok: false, game, error }` |
+| S→C | `casinoNews { id, name, game, bet, payout }` (tenths): a win of 5× the bet or more, to everyone; slots 3 s later (`SLOTS_NEWS_MS`, when the reels have stopped), not when the winner is offline by then. From 20× also a chat line |
 
 All of it is optional: older clients ignore it, and without `casino` a newer client says the casino is not available on this server. The new balance comes as `coins`.
 

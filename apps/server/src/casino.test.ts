@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { CASINO_RECENT, crashTime, pts, START_COINS, type ServerMessage } from '@surf/shared';
 import { hashPassword } from './auth.ts';
-import { Casino, secureRandom, type CasinoPlayer } from './casino.ts';
+import { Casino, secureRandom, SLOTS_NEWS_MS, type CasinoPlayer } from './casino.ts';
 import { Db } from './db.ts';
 import { world } from './economy-helpers.ts';
 import type { GameServer } from './server.ts';
@@ -18,12 +18,14 @@ function table(coins = 1000, path = ':memory:') {
 	const db = new Db(path);
 	const account = db.accountByName('Ana')?.id ?? db.createAccount('Ana', 'h', 1, { reason: 'x', label: 'x', amount: pts(coins) })!.id;
 	const sent: ServerMessage[] = [];
-	const me: CasinoPlayer = { id: 1, accountId: account };
+	const me: CasinoPlayer = { id: 1, name: 'Ana', accountId: account };
+	const chat: string[] = [];
 	const t = {
 		db,
 		account,
 		me,
 		sent,
+		chat,
 		now: 1_700_000_000_000,
 		clock: 500,
 		rolls: [] as number[],
@@ -59,6 +61,8 @@ function table(coins = 1000, path = ':memory:') {
 			clock: () => t.clock,
 			players: () => (t.online ? [me] : []),
 			send: (_, m) => void sent.push(m),
+			broadcast: (m) => void sent.push(m),
+			system: (text) => void chat.push(text),
 			balance: () => {},
 			log: () => {}
 		},
@@ -181,6 +185,43 @@ describe('casino: crash', () => {
 		assert.equal(t.balance(), pts(120));
 		assert.match(t.error({ type: 'crashCashout' }), /No crash round/);
 		assert.deepEqual(t.run(60_000), []);
+	});
+
+	it('tells everyone about wins of 5× and more: slots when the reels have stopped, crash at once', () => {
+		const t = table(1000);
+		const news = (m: ServerMessage[]) => m.filter((x) => x.type === 'casinoNews');
+		const spin = (rolls: number[]) => {
+			t.rolls = rolls;
+			const r = t.result({ type: 'casinoBet', game: 'slots', bet: 2 });
+			return r.ok ? r.payout : -1;
+		};
+		// 4×: not announced.
+		assert.equal(spin([0, 0, 0]), pts(8));
+		assert.deepEqual(news(t.run(10_000)), []);
+		// 10×, after the reels.
+		const n = t.sent.length;
+		assert.equal(spin([0.99, 0.99, 0]), pts(20));
+		t.run(SLOTS_NEWS_MS - 1);
+		assert.deepEqual(news(t.sent.slice(n)), []);
+		assert.deepEqual(news(t.run(1)), [{ type: 'casinoNews', id: 1, name: 'Ana', game: 'slots', bet: pts(2), payout: pts(20) }]);
+		assert.deepEqual(t.chat, []);
+		// 250×, also said in chat.
+		assert.equal(spin([0.99, 0.99, 0.99]), pts(500));
+		assert.equal(news(t.run(SLOTS_NEWS_MS)).length, 1);
+		assert.deepEqual(t.chat, ['Ana won 500 coins at Slots: 250× the bet!']);
+
+		for (const [auto, said] of [[499, 0], [500, 1]] as const) {
+			t.rolls = [crashRoll(2000)];
+			t.ask({ type: 'casinoBet', game: 'crash', bet: 10, auto });
+			assert.equal(news(t.run(crashTime(auto) + 1)).length, said);
+		}
+		// Lost, and won while offline: nothing.
+		t.rolls = [crashRoll(300), crashRoll(2000)];
+		t.ask({ type: 'casinoBet', game: 'crash', bet: 10, auto: 900 });
+		assert.deepEqual(news(t.run(60_000)), []);
+		t.ask({ type: 'casinoBet', game: 'crash', bet: 10, auto: 900 });
+		t.online = false;
+		assert.deepEqual(news(t.run(60_000)), []);
 	});
 
 	it('a cash-out after the crash is too late, also before the server ticked', () => {

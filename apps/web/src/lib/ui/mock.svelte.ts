@@ -17,7 +17,7 @@
 import { cosmeticPrice, COSMETIC_SLOTS, CASINO_MAX_BET, CASINO_MIN, coinflipPayout, crashPayout, crashState, pts, rollCoin, rollCrash, rollSlots, slotPayout, emptyLoadout, gameMode, getCosmetic, isGameModeId, listCosmetics, LOOTBOX, lootItems, registerCosmetic, rollLoot, shopItems, Status, TICK_RATE, type RarityId, type GameModeId, type LootRarity, type ModeState, type ScoreRow, type CasinoOutcome } from '@surf/shared';
 import { itemMesh, registerItemMesh } from '#lib/render/character/items.js';
 import { CharacterPreview, itemPicture } from '#lib/render/character/preview.js';
-import { parseBoxNews, pushBoxNews } from '#lib/game/box-news.js';
+import { parseBoxNews, parseCasinoNews, pushBoxNews } from '#lib/game/box-news.js';
 import { casinoError, casinoResult, crashStarted, parseCasino } from '#lib/game/casino.js';
 import { awardPopup, noticePopup } from '#lib/game/coins.js';
 import type { GameApi, GameHandle, HudStateShape } from '#lib/game/contract.js';
@@ -239,7 +239,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 					],
 					players: [
 						{ id: 2, name: 'Tim', account: 'Tim', guest: false, admin: true, coins: 87_650 },
-						{ id: 1, name: 'glidepath', account: 'glidepath', guest: false, admin: false, coins: 1234 },
+						{ id: 1, name: 'glidepath', account: 'glidepath', guest: false, admin: false, coins: 1234, items: ['hat_straw', 'glasses_shades', 'hat_joker'] },
 						{ id: 3, name: 'cirrus', guest: true, admin: false },
 						{ id: 4, name: 'boreal', account: 'boreal', guest: false, admin: false, coins: 0 }
 					]
@@ -438,6 +438,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		boxScreen() {},
 		boxSound() {},
 		casinoSound() {},
+		crashBuild() {},
 		casinoBet(b) {
 			const c = hud.casino;
 			if (!c || !hud.coins || c.busy) return;
@@ -511,7 +512,11 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 				});
 				hud.adminState = { ...st, players };
 				done(`${a.username}: coins changed.`);
+			} else if (a.action === 'takeItem') {
+				hud.adminState = { ...st, players: st.players.map((x) => (x.id === a.targetId ? { ...x, items: x.items?.filter((i) => i !== a.item) } : x)) };
+				done(`Removed ${getCosmetic(a.item)?.name} from ${st.players.find((x) => x.id === a.targetId)?.name}.`);
 			} else if (a.action === 'giveItem') {
+				hud.adminState = { ...st, players: st.players.map((x) => (x.id === a.targetId ? { ...x, items: [...(x.items ?? []), a.item] } : x)) };
 				done(`${st.players.find((x) => x.id === a.targetId)?.name} got ${getCosmetic(a.item)?.name}.`);
 			} else if (a.action === 'extend') {
 				done('Extended by 10 minutes.');
@@ -594,6 +599,19 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			for (let i = 0; i < (newsOf === 'all' ? 12 : 1); i++) newsNext();
 		}, 500);
 		newsTimers.push(setInterval(newsNext, newsOf === 'all' ? 700 : 6000));
+	}
+
+	// `&casinonews`: one win of each tier in turn; `&casinonews=<multiplier>` only that one.
+	const winsOf = params.get('casinonews');
+	if (winsOf !== null) {
+		let i = 0;
+		const next = () => {
+			const mult = Number(winsOf) || [5, 12.5, 25, 60, 250][i % 5];
+			const n = parseCasinoNews({ type: 'casinoNews', id: 9, name: MOCK_NAMES[i % MOCK_NAMES.length], game: i++ % 2 ? 'slots' : 'crash', bet: 100, payout: 100 * mult }, performance.now());
+			if (n) hud.boxNews = pushBoxNews(hud.boxNews, n);
+		};
+		setTimeout(next, 500);
+		newsTimers.push(setInterval(next, 4000));
 	}
 
 	const ctx = canvas.getContext('2d');

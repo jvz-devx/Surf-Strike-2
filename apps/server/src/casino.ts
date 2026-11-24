@@ -6,6 +6,7 @@
 import { randomInt } from 'node:crypto';
 import {
 	betError,
+	casinoNewsTier,
 	CASINO_MAX_BET,
 	CASINO_MIN,
 	CASINO_RECENT,
@@ -32,6 +33,7 @@ import type { Db } from './db.ts';
 
 export interface CasinoPlayer {
 	readonly id: number;
+	readonly name: string;
 	readonly accountId: number | null;
 }
 
@@ -43,6 +45,9 @@ export interface CasinoHost<P extends CasinoPlayer> {
 	clock(): number;
 	players(): Iterable<P>;
 	send(p: P, msg: ServerMessage): void;
+	broadcast(msg: ServerMessage): void;
+	/** Chat line to everyone. */
+	system(text: string): void;
 	/** The account's balance changed. */
 	balance(accountId: number): void;
 	log(msg: string): void;
@@ -55,6 +60,13 @@ export const secureRandom: RandomSource = () => randomInt(2 ** 40) / 2 ** 40;
 
 /** A result that could not be written is tried again after this long (ms). */
 const RETRY_MS = 1000;
+
+/** Slots wins are announced when the reels have stopped on the player's screen (ms, SlotsGame.svelte). */
+export const SLOTS_NEWS_MS = 3000;
+/** Wins from this tier on are also said in chat. */
+const CHAT_TIER = 20;
+
+const GAME_NAMES: Readonly<Record<CasinoGame, string>> = { coinflip: 'Coinflip', crash: 'Crash', slots: 'Slots' };
 
 const ERRORS = {
 	guest: 'Log in to play.',
@@ -84,6 +96,9 @@ export class Casino<P extends CasinoPlayer> {
 	private readonly rounds = new Map<number, CrashRound>();
 	/** Bets given back at the start, until the account hears about it. */
 	private readonly refunds: Map<number, number>;
+
+	/** Big wins waiting to be announced, oldest first. */
+	private readonly news: { at: number; msg: Extract<ServerMessage, { type: 'casinoNews' }> }[] = [];
 
 	constructor(
 		private readonly host: CasinoHost<P>,
@@ -155,7 +170,29 @@ export class Casino<P extends CasinoPlayer> {
 		if (!db.casinoPlay(accountId, { at: this.host.now(), game: o.game, bet: o.bet, payout: o.payout })) return ERRORS.poor;
 		this.host.balance(accountId);
 		this.host.send(p, { type: 'casinoResult', ok: true, net: db.casinoNet(accountId), ...o });
+		this.announce(p, o.game, o.bet, o.payout, o.game === 'slots' ? SLOTS_NEWS_MS : 0);
 		return null;
+	}
+
+	/** Tell everyone about a big win, after `delay` ms. */
+	private announce(p: { id: number; name: string }, game: CasinoGame, bet: number, payout: number, delay: number): void {
+		if (casinoNewsTier(bet, payout) === null) return;
+		this.news.push({ at: this.host.clock() + delay, msg: { type: 'casinoNews', id: p.id, name: p.name, game, bet, payout } });
+	}
+
+	private sendNews(): void {
+		const clock = this.host.clock();
+		for (let i = 0; i < this.news.length; ) {
+			const { at, msg } = this.news[i]!;
+			if (clock < at) {
+				i++;
+				continue;
+			}
+			this.news.splice(i, 1);
+			this.host.broadcast(msg);
+			if (msg.payout >= msg.bet * CHAT_TIER)
+				this.host.system(`${msg.name} won ${formatTenths(msg.payout)} coins at ${GAME_NAMES[msg.game]}: ${formatTenths(Math.floor((msg.payout * 10) / msg.bet))}× the bet!`);
+		}
 	}
 
 	// -----------------------------------------------------------------------
@@ -179,9 +216,10 @@ export class Casino<P extends CasinoPlayer> {
 		return null;
 	}
 
-	/** End rounds that crashed or reached their automatic cash-out (call often). */
+	/** End rounds that crashed or reached their automatic cash-out, and announce big wins (call often). */
 	tick(): void {
 		for (const [accountId, round] of this.rounds) this.advance(accountId, round, false);
+		this.sendNews();
 	}
 
 	private advance(accountId: number, round: CrashRound, cashout: boolean): void {
@@ -210,9 +248,13 @@ export class Casino<P extends CasinoPlayer> {
 		this.rounds.delete(accountId);
 		this.host.balance(accountId);
 		const net = this.host.db.casinoNet(accountId);
+		let winner: P | null = null;
 		for (const p of this.host.players()) {
 			if (p.accountId !== accountId) continue;
+			winner ??= p;
 			this.host.send(p, { type: 'casinoResult', ok: true, net, game: 'crash', bet: pts(round.bet), payout, at, crash: round.crash });
 		}
+		// Nobody to name when the account is offline by now.
+		if (winner) this.announce(winner, 'crash', pts(round.bet), payout, 0);
 	}
 }

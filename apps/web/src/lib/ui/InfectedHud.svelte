@@ -14,8 +14,8 @@
 	const team = $derived(spec ? spec.team : inf.team);
 	const alpha = $derived(spec ? spec.alpha : inf.alpha);
 	const infected = $derived(team === 'infected');
-	/** Survivors and patient zero carry guns, health pips and the 1/2 swap. */
-	const armed = $derived(!infected || alpha);
+	/** Survivors carry guns, health pips and the 1/2 swap (patient zero too on older servers). */
+	const armed = $derived(!infected || (alpha && (spec ? spec.weapon : inf.weapon) !== 'claws'));
 	const hp = $derived(spec ? spec.hp : inf.hp);
 	const maxHp = $derived(spec ? spec.maxHp : inf.maxHp);
 	const hasKnife = $derived(spec ? spec.hasKnife : inf.hasKnife);

@@ -100,8 +100,8 @@
 		resetting = false;
 	}
 
-	function giveItem(targetId: number) {
-		if (item) api.admin({ action: 'giveItem', targetId, item });
+	function moveItem(action: 'giveItem' | 'takeItem', targetId: number) {
+		if (item) api.admin({ action, targetId, item });
 		confirming = null;
 	}
 
@@ -190,16 +190,27 @@
 					{#if p.account && confirming === `coins:${p.id}`}
 						{@render coinEditor(p.account)}
 					{:else if p.account && confirming === `item:${p.id}`}
-						<span class="confirm" role="group" aria-label="Give an item to {p.name}">
+						{@const owned = p.items ?? []}
+						{@const has = owned.includes(item)}
+						<span class="confirm" role="group" aria-label="Give {p.name} an item, or remove one">
 							<select class="ss-input item" aria-label="Item" bind:value={item}>
 								<option value="">Pick an item</option>
+								{#if owned.length > 0}
+									<optgroup label="Owned: remove ({owned.length})">
+										{#each itemGroups.flatMap((g) => g.items).filter((i) => owned.includes(i.id)) as i (i.id)}<option value={i.id}>{i.name}</option>{/each}
+									</optgroup>
+								{/if}
 								{#each itemGroups as g (g.name)}
-									<optgroup label={g.name}>
-										{#each g.items as i (i.id)}<option value={i.id}>{i.name}</option>{/each}
+									<optgroup label="Give: {g.name}">
+										{#each g.items.filter((i) => !owned.includes(i.id)) as i (i.id)}<option value={i.id}>{i.name}</option>{/each}
 									</optgroup>
 								{/each}
 							</select>
-							<button type="button" class="ss-button small" disabled={!item} onclick={() => giveItem(p.id)}>Give</button>
+							{#if has}
+								<button type="button" class="ss-button danger small" onclick={() => moveItem('takeItem', p.id)}>Remove</button>
+							{:else}
+								<button type="button" class="ss-button small" disabled={!item} onclick={() => moveItem('giveItem', p.id)}>Give</button>
+							{/if}
 							<button type="button" class="ss-button ghost small" onclick={() => (confirming = null)}>Cancel</button>
 						</span>
 					{:else if confirming === `ban:${p.id}`}

@@ -30,7 +30,12 @@ export const MIX_LUFS = {
 	/** Hide and seek knife swing (own swing, or a seeker right next to you). */
 	swing: -30,
 	/** Hide and seek knife hit (you found someone, or were found). */
-	hit: -24
+	hit: -24,
+	/** Crash: the cymbal at the end, and the roll and timpani at the start and at full tension. */
+	crash: -21,
+	rollMin: -37,
+	rollMax: -21,
+	timpaniMax: -22
 } as const;
 
 /** Reverb send relative to the dry signal (dB), through the measured IR. */
@@ -95,6 +100,28 @@ export function slideGain(speed: number, surfing: boolean): number {
 	return dbToGain(levelDb('slide', MIX_LUFS.slideMin + (MIX_LUFS.slideMax - MIX_LUFS.slideMin) * k));
 }
 
+/** After a cash-out the roll goes on this much softer (dB). */
+const CRASH_DUCK_DB = -9;
+
+/**
+ * Crash build-up at a multiplier (1 = start): a snare roll and, from 1.3×, a
+ * timpani roll, both louder, brighter and faster the higher it climbs. The
+ * tension rises quickly at first, since most rounds end early, and never stops
+ * rising; the speed goes up with every doubling. `out`: already cashed out.
+ */
+export function crashBuild(mult: number, out = false): { roll: number; timpani: number; rate: number; cutoff: number } {
+	const doublings = Math.log2(Math.max(1, mult));
+	const tension = 1 - Math.exp(-doublings / 1.8);
+	const low = clamp01((doublings - 0.38) / 2.5);
+	const duck = out ? CRASH_DUCK_DB : 0;
+	return {
+		roll: dbToGain(levelDb('roll', MIX_LUFS.rollMin + (MIX_LUFS.rollMax - MIX_LUFS.rollMin) * tension) + duck),
+		timpani: low > 0 ? dbToGain(levelDb('timpani', MIX_LUFS.timpaniMax) + duck) * low : 0,
+		rate: Math.min(2, 0.85 + 0.15 * doublings),
+		cutoff: (out ? 0.5 : 1) * 700 * Math.pow(16_000 / 700, tension)
+	};
+}
+
 /** Footstep level (dB, before variation): softer when walking slowly. */
 export function stepDb(speed: number): number {
 	const k = Math.max(0.35, clamp01(speed / 250));
@@ -114,7 +141,7 @@ export function stepAdvance(speed: number, dt: number): number {
 }
 
 /** Single-take event level (dB). */
-export function eventDb(group: 'jump' | 'zone' | 'record' | 'vote' | 'click' | 'tick' | 'swing' | 'hit'): number {
+export function eventDb(group: 'jump' | 'zone' | 'record' | 'vote' | 'click' | 'tick' | 'swing' | 'hit' | 'crash'): number {
 	return levelDb(group, MIX_LUFS[group]);
 }
 

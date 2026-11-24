@@ -29,6 +29,7 @@ import type {
 	RichEntry,
 	CasinoEntry,
 	CasinoGame,
+	CasinoNewsTier,
 	CasinoOutcome,
 	ClientMessage,
 	ShopOffer,
@@ -322,6 +323,19 @@ export interface BoxNews {
 	duplicate: boolean;
 }
 
+/** Someone won big in the casino (docs/ui.md#box-news). */
+export interface CasinoNews {
+	id: number;
+	at: number; // performance.now()
+	name: string;
+	game: CasinoGame;
+	tier: CasinoNewsTier;
+	/** Payout divided by bet, as text: `12.5×`. */
+	mult: string;
+	/** Tenths. */
+	payout: number;
+}
+
 /** The account's coins (docs/economy.md); amounts in tenths. */
 export interface CoinsView {
 	total: number;
@@ -437,8 +451,8 @@ export interface HudStateShape {
 	multiplier: { mult: number; active: number; need: number } | null;
 	/** Award popups, oldest first. */
 	awardPopups: readonly AwardPopup[];
-	/** Latest loot box news, oldest first; the HUD queues and shows them. */
-	boxNews: readonly BoxNews[];
+	/** Latest loot box and casino news, oldest first; the HUD queues and shows them. */
+	boxNews: readonly (BoxNews | CasinoNews)[];
 	/** Banned from the server (docs/ui.md#ban-screen). */
 	ban: BanView | null;
 	/** Admin menu data (docs/ui.md#admin); only sent by the server to admin accounts, null otherwise. */
@@ -543,6 +557,8 @@ export interface GameApi {
 	/** Cash out the running crash round. */
 	crashCashout(): void;
 	casinoSound(name: CasinoSound): void;
+	/** Crash, every frame: the build-up at this multiplier (1 = start), null ends it; `out`: already cashed out. */
+	crashBuild(mult: number | null, out?: boolean): void;
 	/** Wear an owned item, or `null` for the slot's default. */
 	shopEquip(slot: CosmeticSlot, item: string | null): void;
 	/** Turntable of the local player's character; null without WebGL. Dispose it. */

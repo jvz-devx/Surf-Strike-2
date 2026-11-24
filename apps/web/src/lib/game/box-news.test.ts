@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { getCosmetic, lootItems, type LootRarity } from '@surf/shared';
-import { NEWS_LOOK, NEWS_STALE_MS, NEWS_VISIBLE, parseBoxNews, pushBoxNews, queueNews, stepNews, type NewsEntry } from './box-news.js';
+import { CASINO_LOOK, NEWS_LOOK, NEWS_VISIBLE, parseBoxNews, parseCasinoNews, pushBoxNews, queueNews, stepNews, type News, type NewsEntry } from './box-news.js';
 import type { BoxNews } from './contract.js';
 
 const pick = (r: LootRarity) => lootItems().find((i) => i.rarity === r)!;
 const news = (r: LootRarity, at = 0): BoxNews => parseBoxNews({ type: 'boxNews', id: 1, name: 'Ana', item: pick(r).id, duplicate: false }, at)!;
-const add = (q: readonly NewsEntry[], ...n: BoxNews[]) => n.reduce<NewsEntry[]>((a, x) => queueNews(a, x), [...q]);
+const add = (q: readonly NewsEntry[], ...n: News[]) => n.reduce<NewsEntry[]>((a, x) => queueNews(a, x), [...q]);
 const visible = (q: readonly NewsEntry[]) => q.filter((e) => e.shownAt !== null);
 const ROOM = 1000;
 
@@ -15,7 +15,7 @@ describe('box news', () => {
 		expect(parseBoxNews({ type: 'boxNews', id: 3, name: 'Ana', item, duplicate: true }, 7)).toMatchObject({ at: 7, name: 'Ana', item: getCosmetic(item), duplicate: true });
 		for (const bad of [{ item: 'hat_2030' }, { item: 5 }, { item: '__proto__' }, { name: undefined }])
 			expect(parseBoxNews({ type: 'boxNews', id: 3, name: 'Ana', item, duplicate: true, ...bad } as never, 7)).toBeNull();
-		let l: BoxNews[] = [];
+		let l: News[] = [];
 		for (let i = 0; i < 40; i++) l = pushBoxNews(l, news('common', i));
 		expect(l).toHaveLength(16);
 		expect(l.at(-1)!.at).toBe(39);
@@ -44,7 +44,7 @@ describe('box news', () => {
 		q = stepNews(q, NEWS_LOOK.common.minMs, ROOM);
 		expect(visible(q)).toHaveLength(3);
 		q = stepNews(q, NEWS_LOOK.common.minMs * 2 + 1, ROOM);
-		expect(q.some((e) => e.item.rarity === 'epic')).toBe(true);
+		expect(q.some((e) => 'item' in e && e.item.rarity === 'epic')).toBe(true);
 	});
 
 	it('never lags far behind: a flood is over soon', () => {
@@ -52,12 +52,24 @@ describe('box news', () => {
 		let t = 0;
 		for (; t < 30_000; t += 200) q = stepNews(add(q, news(t % 2000 === 0 ? 'uncommon' : 'common', t)), t, ROOM);
 		expect(q.length).toBeLessThan(12);
-		for (const end = t + NEWS_STALE_MS.common; t < end; t += 100) q = stepNews(q, t, ROOM);
+		for (const end = t + NEWS_LOOK.common.staleMs; t < end; t += 100) q = stepNews(q, t, ROOM);
 		expect(q).toEqual([]);
 	});
 
 	it('what waited in a hidden tab is dropped', () => {
 		const q = add([], news('common'), news('epic'));
 		expect(stepNews(q, 60_000, ROOM)).toEqual([]);
+	});
+
+	it('casino wins: size by tier, in the same queue, never merged', () => {
+		const win = (payout: number, o: object = {}) => parseCasinoNews({ type: 'casinoNews', id: 1, name: 'Ana', game: 'crash', bet: 100, payout, ...o } as never, 5);
+		expect(win(1250)).toMatchObject({ at: 5, name: 'Ana', game: 'crash', tier: 10, mult: '12.5×', payout: 1250 });
+		expect(win(25_000)).toMatchObject({ tier: 100, mult: '250×' });
+		for (const bad of [win(499), win(1000, { game: 'poker' }), win(NaN), win(1000, { name: 1 }), win(1000, { bet: 0 })]) expect(bad).toBeNull();
+		const heights = Object.values(CASINO_LOOK).map((l) => l.height);
+		expect(heights).toEqual([...heights].sort((a, b) => a - b));
+		const q = add([], ...Array.from({ length: 8 }, () => win(500)!), news('epic'));
+		expect(q).toHaveLength(9);
+		expect(visible(stepNews(q, 5, ROOM))).toHaveLength(NEWS_VISIBLE);
 	});
 });

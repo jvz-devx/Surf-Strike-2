@@ -85,8 +85,6 @@ export class InfectedMode implements ServerMode {
 	private lastSurvivorSaid: number | null = null;
 	/** Active player ids of the last tick (a roster change re-sends state at once). */
 	private roster = '';
-	/** "Patient Zero drops the gun" already said this round. */
-	private gunDropSaid = false;
 	/** Phase of the last `phase` event (a drop to waiting only says "cancelled" mid-round). */
 	private phaseSaid: InfPhase = 'waiting';
 	/** Coins: normal length of the playing phase (ms) and when the running one started. */
@@ -124,9 +122,9 @@ export class InfectedMode implements ServerMode {
 		this.host.send(p, this.stateMessage());
 		this.host.systemTo(
 			p,
-			'Infected: during the grace period everyone spreads out, then one player becomes Patient Zero and keeps their gun until the first infection. ' +
-				'Survivors hold out until the clock runs out (each infection adds 20 s); infected use claws and a right-click throwing knife that bounces once and can be picked up again. ' +
-				'Infected can press [E] to drop a Respawn Beacon: their next respawn is on it, unless a survivor shoots or knifes it first. ' +
+			'Infected: during the grace period everyone spreads out, then one player becomes Patient Zero. ' +
+				'Survivors hold out until the clock runs out (each infection adds 20 s); infected have no guns, only claws and a right-click throwing knife that bounces once and can be picked up again. ' +
+				'Infected can press [E] to drop a Respawn Beacon on the ground below them: their next respawn is on it, unless a survivor shoots or knifes it first. ' +
 				'Survivors: 1-3 switches primary/pistol/knife, R reloads. Kill streaks unlock perks (1, 3, 5, 7 kills); a long enough streak earns a M.O.A.B., press [N] to call it.'
 		);
 		if (this.game.phase === 'waiting') this.host.systemTo(p, 'Waiting for more players: Infected needs 2+ to start a round.');
@@ -185,6 +183,7 @@ export class InfectedMode implements ServerMode {
 			}
 			case 'placeBeacon': {
 				const res = this.game.placeBeacon(p.id, now);
+				if (!res.ok && (res.reason === 'no ground' || res.reason === 'blocked')) this.host.systemTo(p, 'No room for a Respawn Beacon here: stand or jump over flat, open ground.');
 				this.dispatch(res.events);
 				break;
 			}
@@ -446,7 +445,6 @@ export class InfectedMode implements ServerMode {
 				this.phaseSaid = ev.phase;
 				this.graceSaid = -1;
 				this.lastSurvivorSaid = null;
-				this.gunDropSaid = false;
 				if (ev.phase === 'waiting')
 					h.system(
 						was === 'grace' || was === 'playing'
@@ -461,7 +459,7 @@ export class InfectedMode implements ServerMode {
 				break;
 			}
 			case 'alpha':
-				h.system(`${this.name(ev.id)} is Patient Zero! They keep the ${weaponName(g.roundLoadout)} until the first infection. Survive!`);
+				h.system(`${this.name(ev.id)} is Patient Zero! Survive!`);
 				h.log(`infected round ${g.round} alpha=${ev.id}`);
 				break;
 			case 'infect': {
@@ -471,12 +469,7 @@ export class InfectedMode implements ServerMode {
 				else if (ev.method === 'bank')
 					h.system(`BANK SHOT! ${this.name(ev.by)} infected ${victim} with a throwing knife off the wall!${bonus}`);
 				else if (ev.method === 'knife') h.system(`${this.name(ev.by)} infected ${victim} with a throwing knife!${bonus}`);
-				else if (ev.method === 'gun') h.system(`${this.name(ev.by)} shot ${victim}: infected!${bonus}`);
 				else h.system(`${this.name(ev.by)} infected ${victim}!${bonus}`);
-				if (ev.timeAdded > 0 && !this.gunDropSaid && g.alphaId !== null) {
-					this.gunDropSaid = true;
-					h.system(`${this.name(g.alphaId)} drops the gun and goes for the claws.`);
-				}
 				break;
 			}
 			case 'perk': {

@@ -90,7 +90,7 @@ import { cvarFallback, HOLD_ACTIONS, registerCommands, type CommandContext, type
 import { casinoError, casinoResult, crashStarted, parseCasino } from './casino.js';
 import { parseShop, shopNotice } from './shop.js';
 import { CharacterPreview, disposeItemPictures, itemPicture, warmItemPictures } from '../render/character/preview.js';
-import { parseBoxNews, pushBoxNews } from './box-news.js';
+import { parseBoxNews, parseCasinoNews, pushBoxNews } from './box-news.js';
 import { applyAward, awardPopup, countdown, noticePopup, pushPopup } from './coins.js';
 import { DevConsole, type PrintKind } from './console.js';
 import type { CharacterPreviewHandle, ChatLine, ConsoleLine, GameApi, TagView } from './contract.js';
@@ -422,6 +422,7 @@ export class Game implements CommandContext {
 			casinoBet: (bet) => this.casinoRequest(bet),
 			crashCashout: () => this.casinoRequest({ type: 'crashCashout' }),
 			casinoSound: (name) => this.audio.casino(name),
+			crashBuild: (mult, out) => this.audio.crashBuild(mult, out),
 			shopEquip: (slot, item) => this.shopRequest({ type: 'shopEquip', slot, item }),
 			createPreview: (canvas) => this.createPreview(canvas),
 			itemPicture: (id) => itemPicture(this.selfId, id),
@@ -2438,6 +2439,11 @@ export class Game implements CommandContext {
 				const n = parseBoxNews(m, now);
 				// The opener has the loot box screen in front of them.
 				if (n && !(m.id === this.selfId && this.boxScreen)) this.hud.boxNews = pushBoxNews(this.hud.boxNews, n);
+				break;
+			}
+			case 'casinoNews': {
+				const n = parseCasinoNews(m, now);
+				if (n) this.hud.boxNews = pushBoxNews(this.hud.boxNews, n);
 				break;
 			}
 			case 'casino':

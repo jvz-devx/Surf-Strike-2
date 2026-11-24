@@ -243,6 +243,8 @@ export type AdminAction =
 	| { action: 'coins'; username: string; op: 'add' | 'subtract' | 'reset'; amount?: number }
 	/** Give a cosmetic item to a connected account (`targetId` = lobby id). */
 	| { action: 'giveItem'; targetId: number; item: string }
+	/** Take an owned item away from a connected account (no refund). */
+	| { action: 'takeItem'; targetId: number; item: string }
 	/** Just ask for a fresh `adminState`. */
 	| { action: 'listBans' };
 
@@ -297,6 +299,8 @@ export interface AdminPlayerInfo {
 	admin: boolean;
 	/** Balance of the account in tenths (absent for guests and on older servers). */
 	coins?: number;
+	/** Item ids the account owns (absent for guests and on older servers). */
+	items?: string[];
 }
 
 export interface AdminState {
@@ -453,6 +457,8 @@ export type ServerMessage =
 	| { type: 'boxResult'; ok: false; error: string }
 	/** A player opened a loot box and has seen the result (to everyone, the opener included). Item ids may be unknown. */
 	| { type: 'boxNews'; id: number; name: string; item: string; duplicate: boolean }
+	/** A player won big in the casino (`casinoNewsTier`), to everyone, the winner included. Tenths of a coin. */
+	| { type: 'casinoNews'; id: number; name: string; game: CasinoGame; bet: number; payout: number }
 	/** What the holder of the map's record ghost wears (with the ghost frame). Use `sanitizeLoadout`. */
 	| { type: 'ghostLook'; map: string; loadout: Loadout }
 	/** A player's equipped cosmetics changed (to everyone, the player included). Use `sanitizeLoadout`. */

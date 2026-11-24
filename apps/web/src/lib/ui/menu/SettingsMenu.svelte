@@ -187,7 +187,7 @@
 			onset={flag('cl_scorepanel')}
 		/>
 		<Toggle
-			label="Show loot box news"
+			label="Show loot box and casino news"
 			hint="What other players get from loot boxes, at the top"
 			checked={on('cl_boxnews')}
 			onset={flag('cl_boxnews')}

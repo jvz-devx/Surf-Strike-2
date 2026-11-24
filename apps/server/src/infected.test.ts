@@ -178,7 +178,8 @@ describe('infected mode', () => {
 		const a = await join('Alice');
 		assert.equal(a.c.of('welcome')[0]!.mode, 'infected');
 		assert.equal(lastState(a.c).phase, 'waiting');
-		assert.equal(chats(a.c, /^Infected: during the grace period/).length, 1);
+		assert.equal(chats(a.c, /^Infected: during the grace period.*infected have no guns, only claws/).length, 1);
+		assert.equal(chats(a.c, /keeps? the(ir)? gun/).length, 0);
 		assert.equal(chats(a.c, /^Waiting for more players/).length, 1);
 
 		const b = await join('Bob');
@@ -236,37 +237,61 @@ describe('infected mode', () => {
 		assert.equal(pz.phase, 'playing');
 		assert.equal(pz.alphaId, a!.id); // rng 0: first player
 		assert.deepEqual(events(a!.c, 'alpha', n), [{ e: 'alpha', id: a!.id }]);
-		assert.equal(chats(a!.c, /Alice is Patient Zero! They keep the/, n).length, 1);
+		assert.equal(chats(a!.c, /^Alice is Patient Zero! Survive!$/, n).length, 1);
 		const me = pz.players.find((p) => p.id === a!.id)!;
-		assert.deepEqual([me.team, me.alpha, me.weapon, me.hasKnife], ['infected', true, loadout, true]);
+		assert.deepEqual([me.team, me.alpha, me.weapon, me.hasKnife], ['infected', true, 'claws', true]);
 		assert.equal(mode().scoreRows().find((r) => r.id === a!.id)!.status, Status.Alpha);
 	});
 
-	it("Patient Zero's gun infects a survivor (+20 s), then the Alpha switches to claws", async () => {
+	it('Patient Zero has no gun and cannot switch to one', async () => {
+		const { Alice: a, Bob: b } = ps;
+		await moveTo(a!, -800, 0);
+		await moveTo(b!, -400, 0);
+		const n = a!.c.messages.length;
+		const nb = b!.c.messages.length;
+		for (const weapon of [loadout, 'pistol', 'knife'] as const) {
+			a!.c.send({ type: 'loadout', weapon });
+			await settle();
+			assert.equal(game().weaponOf(a!.id)!.weapon, 'claws');
+			fireAt(a!, headOf(b!), weapon);
+			await settle();
+		}
+		assert.equal(events(b!.c, 'shot', nb).length, 0);
+		assert.equal(events(b!.c, 'hurt', nb).length, 0);
+		assert.equal(events(a!.c, 'hit', n).length, 0);
+		assert.equal(events(a!.c, 'infect', n).length, 0);
+		assert.ok(events(a!.c, 'ammo', n).length > 0);
+		assert.ok(events(a!.c, 'ammo', n).every((x) => x.weapon === 'claws'));
+		const me = game().playerView(a!.id)!;
+		assert.deepEqual([me.team, me.alpha, me.weapon], ['infected', true, 'claws']);
+		assert.deepEqual([game().playerView(b!.id)!.team, game().playerView(b!.id)!.hp], ['survivor', 5]);
+	});
+
+	it("Patient Zero's claws infect a survivor (+20 s) and end the role", async () => {
 		const { Alice: a, Bob: b, Carol: c, Dave: d, Erin: e, Frank: f } = ps;
 		await moveTo(c!, 0, 800);
 		await moveTo(d!, -1000, -900);
 		await moveTo(e!, 800, 800);
 		await moveTo(f!, 800, -800);
-		await moveTo(a!, -800, 0);
 		await moveTo(b!, -400, 0);
+		await moveTo(a!, -440, 0);
 		const endsAt = game().endsAt;
 		const n = a!.c.messages.length;
-		fireAt(a!, headOf(b!), loadout);
+		fireAt(a!, { x: -400, y: 0, z: 30 }, 'claws');
 		await settle();
 		const inf = events(a!.c, 'infect', n);
-		assert.deepEqual(inf, [{ e: 'infect', id: b!.id, by: a!.id, method: 'gun', timeAdded: INF_INFECTION_BONUS_SECS }]);
+		assert.deepEqual(inf, [{ e: 'infect', id: b!.id, by: a!.id, method: 'claws', timeAdded: INF_INFECTION_BONUS_SECS }]);
 		assert.equal(game().endsAt - endsAt, INF_INFECTION_BONUS_SECS * 1000);
-		assert.equal(chats(a!.c, /Alice shot Bob: infected! \+20 s/, n).length, 1);
-		assert.equal(chats(a!.c, /Alice drops the gun and goes for the claws/, n).length, 1);
-		// The Alpha's own ammo event: claws now.
+		assert.equal(chats(a!.c, /^Alice infected Bob! \+20 s/, n).length, 1);
+		assert.equal(chats(a!.c, /the gun|\bshot\b/, n).length, 0);
+		// The Alpha's own ammo event: claws, no longer Patient Zero.
 		assert.equal(events(a!.c, 'ammo', n).at(-1)!.weapon, 'claws');
 		const st = lastState(a!.c);
 		const alpha = st.players.find((p) => p.id === a!.id)!;
 		assert.deepEqual([alpha.alpha, alpha.weapon, alpha.hasKnife], [false, 'claws', true]);
 		assert.equal(st.alphaId, a!.id);
 		assert.equal(st.players.find((p) => p.id === b!.id)!.team, 'infected');
-		// The Alpha can no longer pick the gun.
+		// Still no gun to pick.
 		a!.c.send({ type: 'loadout', weapon: loadout });
 		await settle();
 		assert.equal(game().weaponOf(a!.id)!.weapon, 'claws');
@@ -595,15 +620,15 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		await runUntil(() => game().playerView(a!.id)!.alive, 3500);
 		assert.equal(game().playerView(a!.id)!.alpha, true);
 
-		// Patient Zero infects Cat with the gun and drops it.
-		await moveTo(a!, -400, 1350);
+		// Patient Zero claws Cat.
 		await moveTo(c!, -100, 1350);
+		await moveTo(a!, -140, 1350);
 		await moveTo(b!, 1400, 1400);
 		const i = a!.c.messages.length;
-		fireAt(a!, headOf(c!), 'barrett');
+		fireAt(a!, { x: -100, y: 1350, z: 30 }, 'claws');
 		await settle();
-		assert.deepEqual(events(a!.c, 'infect', i)[0], { e: 'infect', id: c!.id, by: a!.id, method: 'gun', timeAdded: INF_INFECTION_BONUS_SECS });
-		assert.equal(chats(a!.c, /Ann drops the gun/, i).length, 1);
+		assert.deepEqual(events(a!.c, 'infect', i)[0], { e: 'infect', id: c!.id, by: a!.id, method: 'claws', timeAdded: INF_INFECTION_BONUS_SECS });
+		assert.equal(chats(a!.c, /the gun/, i).length, 0);
 		assert.equal(game().weaponOf(a!.id)!.weapon, 'claws');
 	});
 
@@ -723,7 +748,7 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		const st = lastState(ps.Ann!.c);
 		assert.deepEqual([st.round, st.loadout], [3, 'lmg']);
 		const alpha = byId(st.alphaId!);
-		assert.equal(game().weaponOf(alpha.id)!.weapon, 'lmg');
+		assert.equal(game().weaponOf(alpha.id)!.weapon, 'claws');
 		const quitter = survivorsOf()[0]!;
 		quitter.c.send({ type: 'spectate', targetId: alpha.id });
 		await settle();
@@ -732,14 +757,17 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		await run(40);
 		const q = game().playerView(quitter.id)!;
 		assert.deepEqual([q.team, q.alpha, q.weapon, q.hasKnife, game().infections], ['infected', false, 'claws', true, 0]);
-		// The Alpha still holds the LMG (no infection happened) and can shoot a survivor.
+		// The Alpha keeps the role (no infection happened) and claws a survivor.
+		assert.equal(game().playerView(alpha.id)!.alpha, true);
 		const target = survivorsOf()[0]!;
-		await moveTo(alpha, -400, 1350);
 		await moveTo(target, -100, 1350);
+		await moveTo(alpha, -140, 1350);
 		const n = alpha.c.messages.length;
-		fireAt(alpha, headOf(target), 'lmg');
+		fireAt(alpha, { x: -100, y: 1350, z: 30 }, 'claws');
 		await settle();
-		assert.equal(events(alpha.c, 'infect', n)[0]!.id, target.id);
+		const turned = events(alpha.c, 'infect', n)[0]!;
+		assert.deepEqual([turned.id, turned.by, turned.method], [target.id, alpha.id, 'claws']);
+		assert.equal(game().playerView(alpha.id)!.alpha, false);
 		const m = ps.Ann!.c.messages.length;
 		for (let t = 0; t < 45 && game().phase !== 'ended'; t++) await run(1000);
 		assert.equal(game().phase, 'ended');
@@ -844,6 +872,73 @@ describe('infected respawn beacon', () => {
 		assert.equal(events(s1!.c, 'beaconUse', n2).length, 1);
 		assert.equal(lastState(s1!.c).beacons.length, 0);
 		assert.equal(game().playerView(inf.id)!.alive, true);
+	});
+
+	const noRoom = /^No room for a Respawn Beacon here/;
+	const infected = () => Object.values(ps).find((p) => p.id === game().alphaId)!;
+
+	it('no floor in reach or no room: refused, and only the player is told', async () => {
+		const inf = infected();
+		const other = Object.values(ps).find((p) => p !== inf)!;
+		await run(1600); // past the respawn grace and the cooldown
+		const n = other.c.messages.length;
+		const place = async (x: number, y: number, z: number) => {
+			await moveTo(inf, x, y, z);
+			const k = inf.c.messages.length;
+			inf.c.send({ type: 'placeBeacon' });
+			await settle();
+			assert.equal(events(inf.c, 'beaconPlace', k).length, 0);
+			return chats(inf.c, noRoom, k).length;
+		};
+		assert.equal(await place(600, 600, 400), 1, 'too high');
+		assert.equal(await place(1500, 0, 100), 1, 'over the void');
+		assert.equal(await place(402, 0, 0), 1, 'in the wall');
+		assert.equal(chats(other.c, noRoom, n).length, 0);
+		assert.equal(game().playerView(inf.id)!.hasBeacon, false);
+		// Other refusals (a survivor, the cooldown) stay silent.
+		const k = other.c.messages.length;
+		other.c.send({ type: 'placeBeacon' });
+		await settle();
+		assert.equal(chats(other.c, noRoom, k).length, 0);
+	});
+
+	it('placed in mid-air it lands on the floor; a fall out of the map spawns on it once', async () => {
+		const inf = infected();
+		const other = Object.values(ps).find((p) => p !== inf)!;
+		await moveTo(inf, -600, 600, 120);
+		const n = other.c.messages.length;
+		const k = inf.c.messages.length;
+		inf.c.send({ type: 'placeBeacon' });
+		await settle();
+		const placed = events(other.c, 'beaconPlace', n);
+		assert.equal(placed.length, 1);
+		assert.deepEqual([placed[0]!.ownerId, placed[0]!.x, placed[0]!.y], [inf.id, -600, 600]);
+		assert.ok(placed[0]!.z >= 0 && placed[0]!.z < 0.25, 'on the floor');
+		// A second press within the cooldown is refused without a chat line.
+		inf.c.send({ type: 'placeBeacon' });
+		await settle();
+		assert.equal(events(other.c, 'beaconPlace', n).length, 1);
+		assert.equal(chats(inf.c, noRoom, k).length, 0);
+
+		const deaths = game().playerView(inf.id)!.deaths;
+		await moveTo(inf, 0, 0, -1000);
+		await run(100);
+		let sp = events(inf.c, 'spawn', k);
+		assert.equal(sp.length, 1);
+		assert.deepEqual([sp[0]!.reason, sp[0]!.x, sp[0]!.y, sp[0]!.team, sp[0]!.weapon], ['beacon', -600, 600, 'infected', 'claws']);
+		assert.deepEqual(events(other.c, 'beaconUse', n).map((x) => [x.id, x.ownerId]), [[placed[0]!.id, inf.id]]);
+		assert.equal(lastState(other.c).beacons.length, 0);
+		assert.equal(game().playerView(inf.id)!.deaths, deaths);
+
+		// Used up: the next fall is the far spawn.
+		await moveTo(inf, -600, 600);
+		await run(1100);
+		await moveTo(inf, 0, 0, -1000);
+		await run(100);
+		sp = events(inf.c, 'spawn', k);
+		assert.equal(sp.at(-1)!.reason, 'fall');
+		assert.equal(events(inf.c, 'spawn', k).filter((s) => s.reason === 'beacon').length, 1);
+		assert.equal(events(other.c, 'beaconUse', n).length, 1);
 	});
 });
 

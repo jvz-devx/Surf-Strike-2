@@ -6,6 +6,8 @@ import {
 	SWING_FAR,
 	SWING_NEAR,
 	VARIATION_DB,
+	crashBuild,
+	dbToGain,
 	distanceDb,
 	eventDb,
 	landDb,
@@ -154,5 +156,24 @@ describe('stepAdvance', () => {
 	it('caps footstep cadence at running speed', () => {
 		expect(stepAdvance(200, 0.5)).toBe(100);
 		expect(stepAdvance(2000, 0.5)).toBe(160);
+	});
+});
+
+describe('crashBuild', () => {
+	it('keeps rising in level, brightness and speed; starts soft, the timpani comes in later', () => {
+		const at = [1, 1.3, 1.6, 2, 3, 5, 10, 30, 100].map((m) => crashBuild(m));
+		for (let i = 1; i < at.length; i++) {
+			expect(at[i]!.roll).toBeGreaterThan(at[i - 1]!.roll);
+			expect(at[i]!.cutoff).toBeGreaterThan(at[i - 1]!.cutoff);
+			expect(at[i]!.rate).toBeGreaterThan(at[i - 1]!.rate);
+			expect(at[i]!.timpani).toBeGreaterThanOrEqual(at[i - 1]!.timpani);
+		}
+		expect(at[0]).toMatchObject({ timpani: 0, rate: 0.85 });
+		expect(at[0]!.roll).toBeCloseTo(dbToGain(levelDb('roll', MIX_LUFS.rollMin)));
+		expect(at[2]!.timpani).toBeGreaterThan(0);
+		expect(at.at(-1)!.rate).toBeLessThan(2);
+		expect(at.at(-1)!.cutoff).toBeLessThanOrEqual(16_000);
+		expect(crashBuild(0.5)).toEqual(at[0]);
+		expect(crashBuild(5, true).roll).toBeLessThan(crashBuild(5).roll / 2);
 	});
 });

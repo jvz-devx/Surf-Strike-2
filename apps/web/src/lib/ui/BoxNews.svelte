@@ -2,12 +2,12 @@
 	import { untrack } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { fly } from 'svelte/transition';
-	import { RARITIES } from '@surf/shared';
-	import { newsRarity, NEWS_LOOK, queueNews, stepNews, type NewsEntry } from '#lib/game/box-news.js';
-	import type { BoxNews, GameApi } from '#lib/game/contract.js';
+	import { formatWhole, RARITIES } from '@surf/shared';
+	import { CASINO_LOOK, newsLook, newsRarity, queueNews, stepNews, type News, type NewsEntry } from '#lib/game/box-news.js';
+	import type { GameApi } from '#lib/game/contract.js';
 	import { itemPicture } from '#lib/ui/menu/item-pictures.svelte.js';
 
-	/** What others got from loot boxes, at the top centre (docs/ui.md#box-news). Takes no input. */
+	/** What others got from loot boxes and won in the casino, at the top centre (docs/ui.md#box-news). Takes no input. */
 	let {
 		news,
 		now,
@@ -16,7 +16,7 @@
 		hidden,
 		menu
 	}: {
-		news: readonly BoxNews[];
+		news: readonly News[];
 		now: number;
 		api: GameApi;
 		enabled: boolean;
@@ -28,6 +28,7 @@
 
 	/** Nothing closer to the crosshair than this (px). */
 	const CROSSHAIR = 64;
+	const GAMES = { coinflip: 'Coinflip', crash: 'Crash', slots: 'Slots' };
 	const MEASURE_MS = 200;
 	const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -47,7 +48,7 @@
 		untrack(() => step(t, fresh));
 	});
 
-	function step(t: number, fresh: readonly BoxNews[]) {
+	function step(t: number, fresh: readonly News[]) {
 		if (fresh.length > 0) seen = fresh.at(-1)!.id;
 		if (!enabled) {
 			queue = [];
@@ -64,13 +65,15 @@
 		const before = queue;
 		queue = stepNews(queue, t, room / scale);
 		if (queue === before) return;
-		const used = queue.reduce((h, e) => (e.shownAt === null ? h : Math.max(h, NEWS_LOOK[newsRarity(e)].height)), 0) * scale;
+		const used = queue.reduce((h, e) => (e.shownAt === null ? h : Math.max(h, newsLook(e).height)), 0) * scale;
 		fit = used > 0 ? Math.min(1, Math.max(0.6, room / used)) : 1;
 		const started = queue.filter((e) => e.shownAt === t);
-		for (const { item } of started) {
+		for (const e of started) {
+			if (!('item' in e)) continue;
+			const { item } = e;
 			if (!(item.id in pictures)) itemPicture(item.id, api, (url) => (pictures[item.id] = url));
 		}
-		if (started.length > 0) api.boxSound(started.some((e) => newsRarity(e) === 'rare' || newsRarity(e) === 'epic') ? 'newsRare' : 'news');
+		if (started.length > 0) api.boxSound(started.some((e) => newsLook(e).big) ? 'newsRare' : 'news');
 	}
 
 	/** Below the map name, votes, round info and timers at the top centre. */
@@ -84,26 +87,36 @@
 
 <div class="news" class:hidden style:top="{top}px" style:--fit={fit} role="status" aria-live="polite">
 	{#each shown as e (e.id)}
-		{@const r = newsRarity(e)}
 		<div
 			class="slot"
-			style:height="calc({NEWS_LOOK[r].height}px * var(--hud-scale) * var(--fit))"
+			style:height="calc({newsLook(e).height}px * var(--hud-scale) * var(--fit))"
 			in:fly={{ y: still ? 0 : -50, duration: still ? 0 : 320 }}
 			out:fly={{ y: still ? 0 : -30, duration: still ? 0 : 260 }}
 			animate:flip={{ duration: still ? 0 : 220 }}
 		>
-			<div class="card ss-shadow {r}" class:still style:--c={RARITIES[r].color} style:--h="{NEWS_LOOK[r].height}px">
-				<div class="picture">{#if pictures[e.item.id]}<img src={pictures[e.item.id]} alt="" draggable="false" />{/if}</div>
-				<div class="text">
-					<span class="who"><b>{e.name}</b> opened a loot box</span>
-					<span class="what">
-						<strong>{e.item.name}</strong>
-						<span class="rarity">{RARITIES[r].name}</span>
-						<span class="tag" class:new={!e.duplicate}>{e.duplicate ? 'Duplicate' : 'New'}</span>
-						{#if e.more > 0}<span class="more ss-num">+{e.more} more</span>{/if}
-					</span>
+			{#if 'item' in e}
+				{@const r = newsRarity(e)}
+				<div class="card ss-shadow {r}" class:still style:--c={RARITIES[r].color} style:--h="{newsLook(e).height}px">
+					<div class="picture">{#if pictures[e.item.id]}<img src={pictures[e.item.id]} alt="" draggable="false" />{/if}</div>
+					<div class="text">
+						<span class="who"><b>{e.name}</b> opened a loot box</span>
+						<span class="what">
+							<strong>{e.item.name}</strong>
+							<span class="rarity">{RARITIES[r].name}</span>
+							<span class="tag" class:new={!e.duplicate}>{e.duplicate ? 'Duplicate' : 'New'}</span>
+							{#if e.more > 0}<span class="more ss-num">+{e.more} more</span>{/if}
+						</span>
+					</div>
 				</div>
-			</div>
+			{:else}
+				<div class="card win ss-shadow t{e.tier}" class:still style:--c={CASINO_LOOK[e.tier].color} style:--h="{newsLook(e).height}px">
+					<div class="mult ss-num">{e.mult}</div>
+					<div class="text">
+						<span class="who"><b>{e.name}</b> won big at {GAMES[e.game]}</span>
+						<span class="what"><strong class="ss-num">{formatWhole(e.payout)} coins</strong></span>
+					</div>
+				</div>
+			{/if}
 		</div>
 	{/each}
 </div>
@@ -206,29 +219,52 @@
 		font-weight: 600;
 		color: var(--text);
 	}
+	.mult {
+		flex: none;
+		padding: 0 calc(8px * var(--u)) 0 calc(10px * var(--u));
+		font-size: calc(var(--h) * 0.5 * var(--u));
+		font-weight: 700;
+		line-height: 1;
+		color: var(--c);
+		text-shadow: 0 0 calc(var(--h) * 0.2 * var(--u)) color-mix(in srgb, var(--c) 55%, transparent);
+	}
+	.win .what strong {
+		color: var(--text);
+	}
+	.t10 {
+		font-size: calc(15px * var(--u));
+	}
 	.uncommon {
 		font-size: calc(15px * var(--u));
 	}
-	.rare {
+	.rare,
+	.t20 {
 		padding-right: calc(24px * var(--u));
 		font-size: calc(17px * var(--u));
 		border-width: 1px 1px 1px 4px;
 		border-color: var(--c);
 		box-shadow: 0 0 calc(22px * var(--u)) color-mix(in srgb, var(--c) 60%, transparent);
 	}
-	.rare .what strong {
+	.rare .what strong,
+	.t20 .what strong {
 		font-size: 1.25em;
 	}
-	.epic {
+	.epic,
+	.t50,
+	.t100 {
 		padding-right: calc(30px * var(--u));
 		font-size: calc(19px * var(--u));
 		border: 2px solid var(--c);
 		animation: glow 1.1s ease-in-out infinite alternate;
 	}
-	.epic .what strong {
+	.epic .what strong,
+	.t50 .what strong,
+	.t100 .what strong {
 		font-size: 1.35em;
 	}
-	.epic::after {
+	.epic::after,
+	.t50::after,
+	.t100::after {
 		content: '';
 		position: absolute;
 		inset: 0;
@@ -236,14 +272,22 @@
 		background-size: 250% 100%;
 		animation: shine 2.2s linear infinite;
 	}
+	.t100 {
+		font-size: calc(22px * var(--u));
+		border-width: 3px;
+	}
 	.still,
 	.still::after {
 		animation: none;
 	}
-	.epic.still {
+	.epic.still,
+	.t50.still,
+	.t100.still {
 		box-shadow: 0 0 calc(34px * var(--u)) var(--c);
 	}
-	.epic.still::after {
+	.epic.still::after,
+	.t50.still::after,
+	.t100.still::after {
 		content: none;
 	}
 	@keyframes appear {

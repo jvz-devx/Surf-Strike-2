@@ -14,6 +14,7 @@ import {
 	REVERB_SEND_DB,
 	STEP_DISTANCE,
 	STEP_MIN_SPEED,
+	crashBuild,
 	dbToGain,
 	distanceDb,
 	eventDb,
@@ -40,6 +41,11 @@ export interface MovementAudioState {
 
 type EventGroup = keyof typeof SFX_EVENTS;
 type LoopName = keyof typeof SFX_LOOPS;
+/** Loops that only play while something needs them. */
+type BuildLoop = 'roll' | 'timpani';
+
+/** The crash build-up fades by itself when nothing drives it for this long (s): a hidden tab, a closed menu. */
+const BUILD_HOLD = 0.35;
 
 export class GameAudio {
 	private ctx: AudioContext | null = null;
@@ -51,6 +57,8 @@ export class GameAudio {
 	private windFilter: BiquadFilterNode | null = null;
 	private slideGainNode: GainNode | null = null;
 	private loops: AudioBufferSourceNode[] = [];
+	private buildBuffers = new Map<BuildLoop, AudioBuffer>();
+	private crashLoops: { src: Record<BuildLoop, AudioBufferSourceNode>; gain: Record<BuildLoop, GainNode>; filter: BiquadFilterNode } | null = null;
 	private buffers = new Map<EventGroup, (AudioBuffer | null)[]>();
 	private cycles = new Map<EventGroup, Cycle>();
 	private volume = 0.5;
@@ -140,7 +148,9 @@ export class GameAudio {
 		});
 		const loops = (Object.keys(SFX_LOOPS) as LoopName[]).map(async (name) => {
 			const b = await this.decode(ctx, SFX_LOOPS[name].file);
-			if (b && this.ctx === ctx) this.startLoop(ctx, b, name);
+			if (!b || this.ctx !== ctx) return;
+			if (name === 'roll' || name === 'timpani') this.buildBuffers.set(name, b);
+			else this.startLoop(ctx, b, name);
 		});
 		const events = (Object.keys(SFX_EVENTS) as EventGroup[]).map(async (g) => {
 			const files = SFX_EVENTS[g];
@@ -152,18 +162,23 @@ export class GameAudio {
 		await Promise.all([ir, ...loops, ...events]);
 	}
 
-	private startLoop(ctx: AudioContext, buffer: AudioBuffer, name: LoopName): void {
+	private startLoop(ctx: AudioContext, buffer: AudioBuffer, name: Exclude<LoopName, BuildLoop>): void {
 		const dest = name === 'wind' ? this.windFilter : this.slideGainNode;
 		if (!dest) return;
+		const src = this.loopSource(ctx, buffer, name);
+		src.connect(dest);
+		this.loops.push(src);
+	}
+
+	private loopSource(ctx: AudioContext, buffer: AudioBuffer, name: LoopName): AudioBufferSourceNode {
 		const region = loopRegion(buffer.getChannelData(0), buffer.sampleRate, buffer.duration, SFX_LOOPS[name].loopSeconds);
 		const src = ctx.createBufferSource();
 		src.buffer = buffer;
 		src.loop = true;
 		src.loopStart = region.start;
 		src.loopEnd = region.end;
-		src.connect(dest);
 		src.start(0, region.start);
-		this.loops.push(src);
+		return src;
 	}
 
 	private get live(): boolean {
@@ -281,12 +296,67 @@ export class GameAudio {
 		else this.recordChime();
 	}
 
-	/** Casino (docs/ui.md#casino): the same real recordings as elsewhere. */
+	/**
+	 * Crash (docs/ui.md#casino), every frame of a round: the drum rolls at this
+	 * multiplier; null ends them. `out`: the player has cashed out already.
+	 */
+	crashBuild(mult: number | null, out = false): void {
+		if (mult === null || !this.live) return this.endBuild();
+		const ctx = this.ctx!;
+		const t = ctx.currentTime;
+		const b = (this.crashLoops ??= this.startBuild(ctx));
+		if (!b) return;
+		const m = crashBuild(mult, out);
+		for (const name of ['roll', 'timpani'] as const) {
+			const g = b.gain[name].gain;
+			g.cancelScheduledValues(t);
+			g.setTargetAtTime(m[name], t, 0.06);
+			g.setTargetAtTime(0, t + BUILD_HOLD, 0.1);
+			b.src[name].playbackRate.setTargetAtTime(m.rate, t, 0.06);
+		}
+		b.filter.frequency.setTargetAtTime(m.cutoff, t, 0.06);
+	}
+
+	private startBuild(ctx: AudioContext): GameAudio['crashLoops'] {
+		const buffers = { roll: this.buildBuffers.get('roll'), timpani: this.buildBuffers.get('timpani') };
+		if (!buffers.roll || !buffers.timpani || !this.dry || !this.send) return null;
+		const filter = ctx.createBiquadFilter();
+		filter.type = 'lowpass';
+		filter.Q.value = -3;
+		filter.connect(this.dry);
+		filter.connect(this.send);
+		const gain = { roll: ctx.createGain(), timpani: ctx.createGain() };
+		const src = { roll: this.loopSource(ctx, buffers.roll, 'roll'), timpani: this.loopSource(ctx, buffers.timpani, 'timpani') };
+		const start = crashBuild(1);
+		filter.frequency.value = start.cutoff;
+		for (const name of ['roll', 'timpani'] as const) {
+			gain[name].gain.value = 0;
+			src[name].playbackRate.value = start.rate;
+			src[name].connect(gain[name]).connect(filter);
+		}
+		return { src, gain, filter };
+	}
+
+	private endBuild(): void {
+		const b = this.crashLoops;
+		if (!b || !this.ctx) return;
+		this.crashLoops = null;
+		const t = this.ctx.currentTime;
+		for (const name of ['roll', 'timpani'] as const) {
+			b.gain[name].gain.cancelScheduledValues(t);
+			b.gain[name].gain.setTargetAtTime(0, t, 0.02);
+			b.src[name].stop(t + 0.2);
+		}
+		b.src.roll.onended = () => b.filter.disconnect();
+	}
+
+	/** Casino (docs/ui.md#casino). */
 	casino(name: 'bet' | 'flip' | 'tick' | 'stop' | 'crash' | 'win' | 'big'): void {
 		if (name === 'bet' || name === 'stop') this.play('click', eventDb('click'), false);
 		else if (name === 'tick') this.play('tick', eventDb('tick'), true);
 		else if (name === 'win') this.zoneBeep();
 		else if (name === 'big') this.recordChime();
+		else if (name === 'crash') this.play('crash', eventDb('crash'), false);
 		else this.play('swing', eventDb('swing'), true);
 	}
 
@@ -304,6 +374,8 @@ export class GameAudio {
 			}
 		}
 		this.loops = [];
+		this.crashLoops = null;
+		this.buildBuffers.clear();
 		this.buffers.clear();
 		this.cycles.clear();
 		void this.ctx?.close().catch(() => {});

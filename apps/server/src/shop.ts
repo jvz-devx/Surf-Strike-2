@@ -156,6 +156,14 @@ export class Shop<P extends ShopPlayer> {
 		return true;
 	}
 
+	/** Take an item away (admin), also when it is worn. False when it is not owned. */
+	take(p: P, itemId: string): boolean {
+		if (p.accountId === null || !this.host.db.takeItem(p.accountId, itemId)) return false;
+		this.account(p);
+		this.host.send(p, { type: 'coinsNotice', text: `An admin removed an item: ${getCosmetic(itemId)?.name ?? itemId}.`, tone: 'info' });
+		return true;
+	}
+
 	private buy(accountId: number, id: string | null): string | null {
 		const item = id === null ? undefined : getCosmetic(id);
 		if (!item) return ERRORS.unknown;

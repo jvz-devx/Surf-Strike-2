@@ -99,6 +99,8 @@ export interface AdminHost<C extends AdminClient> {
 	adjustCoins(accountId: number, amount: number | null): { delta: number; balance: number } | null;
 	/** Give an item to a logged-in client; false when it is already owned. */
 	giveItem(c: C, itemId: string): boolean;
+	/** Take an item from a logged-in client; false when it is not owned. */
+	takeItem(c: C, itemId: string): boolean;
 	/** Send `banned`, close with 4009 and drop the connection. */
 	kickBanned(c: C, ban: BanRow): void;
 }
@@ -203,7 +205,12 @@ export class AdminController<C extends AdminClient> {
 				...(c.accountId !== null ? { account: c.name } : {}),
 				guest: c.accountId === null,
 				admin: c.admin,
-				...(c.accountId !== null ? { coins: this.host.db.accountStats(c.accountId).pointsBalance } : {})
+				...(c.accountId !== null
+					? {
+							coins: this.host.db.accountStats(c.accountId).pointsBalance,
+							items: this.host.db.ownedItems(c.accountId).filter((id) => getCosmetic(id))
+						}
+					: {})
 			});
 		}
 		return {
@@ -268,6 +275,9 @@ export class AdminController<C extends AdminClient> {
 					break;
 				case 'giveItem':
 					r = this.giveItem(c, a.targetId, a.item);
+					break;
+				case 'takeItem':
+					r = this.takeItem(c, a.targetId, a.item);
 					break;
 				case 'forceMap':
 					r = this.forceMap(c, a.mapId);
@@ -411,7 +421,18 @@ export class AdminController<C extends AdminClient> {
 		if (target.accountId === null) return { ok: false, error: 'Guests cannot own items.' };
 		if (!this.host.giveItem(target, item.id)) return { ok: false, error: `${target.name} already owns ${item.name}.` };
 		this.audit(c, 'give-item', `account ${target.name}`, item.id);
-		return { ok: true, message: `${target.name} got ${item.name}.` };
+		return { ok: true, changed: true, message: `${target.name} got ${item.name}.` };
+	}
+
+	private takeItem(c: C, targetId: unknown, itemId: unknown): Result {
+		const item = typeof itemId === 'string' ? getCosmetic(itemId) : undefined;
+		if (!item || item.isDefault) return { ok: false, error: 'Unknown item.' };
+		const target = [...this.host.clients()].find((o) => o.helloed && o.id === targetId);
+		if (!target) return { ok: false, error: 'That player is no longer connected.' };
+		if (target.accountId === null) return { ok: false, error: 'Guests cannot own items.' };
+		if (!this.host.takeItem(target, item.id)) return { ok: false, error: `${target.name} does not own ${item.name}.` };
+		this.audit(c, 'take-item', `account ${target.name}`, item.id);
+		return { ok: true, changed: true, message: `Removed ${item.name} from ${target.name}.` };
 	}
 
 	private forceMap(c: C, mapId: unknown): Result {

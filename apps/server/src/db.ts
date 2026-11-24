@@ -444,6 +444,8 @@ export class Db {
 				`INSERT INTO equipped (account_id, slot, item_id) SELECT account_id, ?, item_id FROM owned_items WHERE account_id = ? AND item_id = ?
 				 ON CONFLICT(account_id, slot) DO UPDATE SET item_id = excluded.item_id`
 			),
+			dropItem: d.prepare(`DELETE FROM owned_items WHERE account_id = ? AND item_id = ?`),
+			unequipItem: d.prepare(`DELETE FROM equipped WHERE account_id = ? AND item_id = ?`),
 			unequipSlot: d.prepare(`DELETE FROM equipped WHERE account_id = ? AND slot = ?`),
 
 			credit: d.prepare(`UPDATE account_stats SET points_balance = points_balance + ? WHERE account_id = ?`),
@@ -762,6 +764,16 @@ export class Db {
 				if (this.ownedItems(accountId).includes(itemId)) return false;
 				this.st.grantItem.run(accountId, itemId, at, 0);
 				return true;
+			})
+			.immediate();
+	}
+
+	/** Take an item away, also when it is worn. False when it is not owned. */
+	takeItem(accountId: number, itemId: string): boolean {
+		return this.db
+			.transaction(() => {
+				this.st.unequipItem.run(accountId, itemId);
+				return this.st.dropItem.run(accountId, itemId).changes > 0;
 			})
 			.immediate();
 	}

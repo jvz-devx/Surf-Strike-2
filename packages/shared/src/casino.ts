@@ -161,6 +161,18 @@ export function slotOdds(): { hit: number; profit: number; payback: number } {
 	return { hit, profit, payback };
 }
 
+// ---------------------------------------------------------------------------
+// Big wins, announced to everyone
+
+/** A win that pays at least the first of these (payout divided by bet) is announced; the highest one reached sets the size. */
+export const CASINO_NEWS_TIERS = [5, 10, 20, 50, 100] as const;
+export type CasinoNewsTier = (typeof CASINO_NEWS_TIERS)[number];
+
+/** Tier of a settled bet (same unit for both), null: not announced. */
+export function casinoNewsTier(bet: number, payout: number): CasinoNewsTier | null {
+	return bet > 0 ? (CASINO_NEWS_TIERS.findLast((t) => payout >= bet * t) ?? null) : null;
+}
+
 /** Text of a settled bet in the Coins view: `Coinflip won`. `net`: payout minus bet, tenths. */
 export function casinoLabel(game: string, net: number): string {
 	const name = isCasinoGame(game) ? { coinflip: 'Coinflip', crash: 'Crash', slots: 'Slots' }[game] : game;

@@ -67,6 +67,7 @@
 
 	function climb(from: number, top: number) {
 		ms = Math.min(crashTime(top), Math.max(0, performance.now() - from));
+		api.crashBuild(crashCurve(ms) / CRASH.one, tail);
 		const whole = Math.floor(crashCurve(ms) / CRASH.one);
 		if (whole <= ticked) return;
 		ticked = whole;
@@ -83,6 +84,7 @@
 				return;
 			}
 			tail = false;
+			api.crashBuild(null);
 			api.casinoSound('crash');
 		};
 		step();
@@ -118,12 +120,16 @@
 			api.casinoSound(o.payout === 0 ? 'crash' : o.payout >= o.bet * 10 ? 'big' : 'win');
 			cancelAnimationFrame(raf);
 			if (o.at !== null && o.crash > o.at && startedAt !== null) follow(o, startedAt);
-			else ms = crashTime(o.crash);
+			else {
+				ms = crashTime(o.crash);
+				api.crashBuild(null);
+			}
 			startedAt = null;
 		});
 	});
 	onDestroy(() => {
 		cancelAnimationFrame(raf);
+		api.crashBuild(null);
 		clearTimeout(coolTimer);
 	});
 

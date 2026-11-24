@@ -542,6 +542,7 @@ export class Economy {
 				if (!session.open) return;
 				if (session.roundOpen) this.endRound(session);
 				session.startRound(++this.rounds, this.host.clock());
+				this.sayMinimum(need());
 			},
 			roundEnd: () => {
 				if (session.open && session.roundOpen) this.endRound(session);
@@ -576,6 +577,14 @@ export class Economy {
 				if (p && !p.spectating) this.activities.get(p)?.acted();
 			}
 		};
+	}
+
+	/** Why a round pays nothing: too few active players. */
+	private sayMinimum(need: number): void {
+		const active = this.activePlayers();
+		if (active >= need) return;
+		const text = `No coins right now: this mode needs ${need} active players (${active} now).`;
+		for (const p of this.host.players()) this.host.systemTo(p, text);
 	}
 
 	private award(session: Session, id: number, base: number, reason: AwardReason, need: number, opts: AwardOptions): AwardResult {

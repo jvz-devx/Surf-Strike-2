@@ -9,7 +9,8 @@
  *
  * Server rules this mirrors (packages/shared/src/modes/infected/game.ts):
  * - A survivor is infected in place: `infect` for me, then `ammo` 'claws'.
- * - Patient Zero loses the gun through an `ammo` 'claws' event only.
+ * - Infected have claws only, Patient Zero too; on older servers Patient Zero
+ *   has the guns until an `ammo` 'claws' event.
  * - `ammo` with `scavenger: true` names the primary (or, with the scavenger
  *   perk, the pistol) even while another slot is held: a reserve update only.
  * - Survivors carry three slots: [1] the round preset, [2] the pistol
@@ -366,7 +367,7 @@ export class InfectedClient {
 	/** Player max speed: claws speed, or the held weapon (CS-style weapon speed); hit slows. */
 	maxSpeed(now = performance.now()): number {
 		const slow = zmSlowFactor(now < this.slowUntil ? this.slowStacks : 0);
-		if (this.team === 'infected' && !this.alpha) return INF_INFECTED_SPEED * slow;
+		if (this.ws.weapon === 'claws' || (this.team === 'infected' && !this.alpha)) return INF_INFECTED_SPEED * slow;
 		const steady = this.has('steady') ? INF_STEADY_SPEED_FACTOR : 1;
 		return WEAPONS[this.ws.weapon].moveSpeed * steady * slow;
 	}
@@ -777,7 +778,7 @@ export class InfectedClient {
 					this.hp = INF_INFECTED_HP;
 					this.clearStreak();
 					this.freshSecondary();
-					if (this.meleeWs.weapon !== 'knife') this.meleeWs.equip('knife');
+					this.holdClaws();
 					this.flash = { text: 'You are Patient Zero · infect a survivor', at: now, tone: 'infected' };
 				} else {
 					this.flash = { text: `${this.host.name(ev.id)} is Patient Zero · run!`, at: now, tone: 'survivor' };
@@ -787,6 +788,8 @@ export class InfectedClient {
 				break;
 			case 'infect': {
 				if (ev.timeAdded > 0) {
+					// The first infection: Patient Zero is one of many.
+					this.alpha = false;
 					this.timeBonusAt = now;
 					if (this.endsAt > 0) this.endsAt += ev.timeAdded * 1000;
 				}
@@ -851,9 +854,10 @@ export class InfectedClient {
 					break;
 				}
 				if (ev.weapon === 'claws') {
-					// Infected in place, or Patient Zero lost the gun (no other event for that).
+					// Infected in place, Patient Zero at the start, or a refused swing: the role is not decided here.
 					this.team = 'infected';
-					this.alpha = false;
+					// Older servers: Patient Zero loses the gun and the role.
+					if (this.meleeWs.weapon !== 'claws') this.alpha = false;
 					this.clearStreak();
 					this.holdClaws();
 				} else {

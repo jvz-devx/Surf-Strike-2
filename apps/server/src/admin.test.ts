@@ -353,6 +353,27 @@ describe('admin', () => {
 			assert.equal((await admin(tim, { action: 'giveItem', ...bad })).ok, false);
 		}
 		assert.equal((await admin(eve, { action: 'giveItem', targetId: id, item: 'hat_cap' })).ok, false, 'no admin');
+
+		// Taken away again, also while worn.
+		const state = () => tim.of('adminState').at(-1)!.players.find((p) => p.id === id)!;
+		eve.send({ type: 'shopEquip', slot: 'hat', item: 'hat_joker' });
+		await eve.waitFor('shopResult', (m) => m.ok && m.action === 'equip');
+		await admin(tim, { action: 'listBans' });
+		assert.deepEqual(state().items, ['hat_joker']);
+		const k = eve.messages.length;
+		assert.deepEqual(await admin(tim, { action: 'takeItem', targetId: id, item: 'hat_joker' }), {
+			type: 'adminResult',
+			ok: true,
+			message: 'Removed Clown prince mask from Eve.'
+		});
+		const shop = await eve.waitFor('shop', () => true, k);
+		assert.deepEqual([shop.owned, shop.loadout.hat], [[], null]);
+		assert.match((await eve.waitFor('coinsNotice', (m) => /removed/.test(m.text), k)).text, /Clown prince mask/);
+		await eve.waitFor('cosmetics', (m) => m.id === id && m.loadout.hat === null, k);
+		for (const bad of [{ targetId: id, item: 'hat_joker' }, { targetId: id, item: 'nope' }, { targetId: 9999, item: 'hat_cap' }]) {
+			assert.equal((await admin(tim, { action: 'takeItem', ...bad })).ok, false);
+		}
+		assert.equal((await admin(eve, { action: 'takeItem', targetId: id, item: 'hat_joker' })).ok, false, 'no admin');
 		eve.close();
 	});
 

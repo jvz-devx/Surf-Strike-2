@@ -103,11 +103,20 @@
 			"snapDb": -20,
 			"fadeIn": 0.002,
 			"fadeOut": 0.1
+		},
+		"crash": {
+			"src": "45102",
+			"takes": [{ "start": 0.0, "dur": 3.2 }],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 1.8
 		}
 	},
 	"loops": {
 		"wind": { "src": "454092", "start": 2.5, "len": 16.5, "xfade": 1.5, "channels": 2, "bitrate": "128k" },
-		"slide": { "src": "612665", "start": 0.2, "len": 10.5, "xfade": 1.0, "channels": 1, "bitrate": "96k" }
+		"slide": { "src": "612665", "start": 0.2, "len": 10.5, "xfade": 1.0, "channels": 1, "bitrate": "96k" },
+		"roll": { "src": "52760", "start": 4.0, "len": 8.0, "xfade": 1.0, "channels": 1, "bitrate": "96k" },
+		"timpani": { "src": "373946", "start": 1.5, "len": 6.0, "xfade": 1.0, "channels": 1, "bitrate": "96k" }
 	},
 	"ir": { "src": "423866", "out": "ir-hall", "dur": 2.0, "fadeOut": 0.4, "channels": 2, "bitrate": "160k" },
 	"abOnly": {
