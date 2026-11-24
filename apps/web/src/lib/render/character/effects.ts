@@ -282,19 +282,20 @@ export class CharacterEffect {
 	constructor(
 		private readonly def: EffectDef,
 		geometry: THREE.BufferGeometry,
-		skeleton: THREE.Skeleton
+		skeleton: THREE.Skeleton,
+		strength = 1
 	) {
 		// Two wearers never flicker in step.
 		this.time = (nextPhase = (nextPhase + 7.31) % 50);
-		this.shell = new THREE.SkinnedMesh(geometry, effectMaterial(SHELL_VERT, SHELL_FRAG, def, def.shell, THREE.BackSide));
-		this.flames = new THREE.SkinnedMesh(flameGeometry(def.flames), effectMaterial(FLAME_VERT, FLAME_FRAG, def, def.strength, THREE.DoubleSide));
+		this.shell = new THREE.SkinnedMesh(geometry, effectMaterial(SHELL_VERT, SHELL_FRAG, def, def.shell * strength, THREE.BackSide));
+		this.flames = new THREE.SkinnedMesh(flameGeometry(def.flames), effectMaterial(FLAME_VERT, FLAME_FRAG, def, def.strength * strength, THREE.DoubleSide));
 		for (const m of this.objects) {
 			m.bindMode = THREE.DetachedBindMode;
 			m.bind(skeleton, new THREE.Matrix4());
 			m.boundingSphere = this.sphere;
-			m.renderOrder = 3;
+			m.renderOrder = 4.5;
 		}
-		this.flames.renderOrder = 4;
+		this.flames.renderOrder = 4.6;
 		this.shell.name = 'effect-shell';
 		this.flames.name = 'effect-flames';
 		this.sync();

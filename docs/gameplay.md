@@ -51,7 +51,7 @@ Two totals per account, shown to everyone in the Tab scoreboard of every mode. G
 
 ## Ghosts
 
-On surf and bhop maps (race modes only, never tag), a translucent ghost of the fastest run races you, as in racing games, so you can watch and copy its line.
+On surf and bhop maps (race modes only, never tag), a see-through ghost of the fastest run, in the colours and items of its player, races you, as in racing games, so you can watch and copy its line.
 
 - **Which ghost.** Online: the map's record ghost, labelled with the holder's name and time (`Alice · 01:23.456`). With no record ghost yet, or offline, your own best run in this browser (`Your PB · 01:23.456`).
 - **Playback** (client only). The ghost starts when your run starts (you leave the start zone) and plays in sync with your timer: at run tick *t* it is where the ghost was at its run tick *t*, interpolated between ticks for rendering. It is hidden while you stand in the start zone, and `!r`, `!restart`, teleports to the start and finishing hide it until your next run starts. It disappears once it has finished. It is purely visual: no collision, no sound. Hidden while spectating.
@@ -97,7 +97,7 @@ Race columns: name, map rank, PB, status (`Start zone`, `Stage 3`, `Running`, `S
 
 - Each map runs for 15:00.
 - At 0:30 left, a 20-second vote opens for everyone.
-- Options: up to 6 maps, picked at random from the enabled maps other than the current one: 2 surf, 2 bhop, 1 tag, 1 Zombie Run. A category with too few maps leaves free slots, filled with random maps of the other categories, so there are still 6 distinct maps (fewer only when fewer maps are enabled). They are listed by category (surf, bhop, tag, Zombie Run), each labelled with it ("Surf · Kessler", "Zombie Run · …"), in the panel and in the chat lines. The timed vote adds "Extend 10 min" as the last option (option 7 with 6 maps). Keys `1`–`7` vote while the vote is open, instead of their binds (no weapon switch); changing a vote is allowed until it closes.
+- Options: up to 7 maps, picked at random from the enabled maps other than the current one: 2 surf and 1 each of bhop, tag, Zombie Run, Infected and Hide and seek. A category with too few maps leaves free slots, filled with random maps of the other categories, so there are still 7 distinct maps (fewer only when fewer maps are enabled). They are listed by category in that order, each labelled with it ("Surf · Kessler", "Zombie Run · …"), in the panel and in the chat lines. The timed vote adds "Extend 10 min" as the last option (option 8 with 7 maps). Keys `1`–`8` vote while the vote is open, instead of their binds (no weapon switch); changing a vote is allowed until it closes.
 - Most votes wins. Ties are broken at random. No votes at all: a random map from the options.
 - "Extend" adds 10:00 to the current map. At most 2 extends per map; after that, the option is not offered.
 - **RTV request** (rock the vote): `!rtv` (or console `rtv`), or picking a map in Esc › Change map while others are online, asks everyone "<name> wants to vote for a new map (<map>)" in a modal at the top of the screen ([ui.md](ui.md#rtv-request)). It is open for 20 s. The initiator votes yes; every other non-spectating player presses `1` = yes or `2` = no (changing the answer is allowed). Spectators see it but cannot vote or start one.

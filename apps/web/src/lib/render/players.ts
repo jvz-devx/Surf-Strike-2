@@ -209,6 +209,11 @@ export class RemotePlayers {
 		for (const a of this.avatars.values()) a.model.setEffects(on);
 	}
 
+	/** What a player wears, null for the default look. */
+	loadoutOf(id: number): Loadout | null {
+		return this.loadouts.get(id) ?? null;
+	}
+
 	/** Hide and seek: mark a seeker (red tint and SEEKER tag) or a hider. */
 	setSeeker(id: number, seeker: boolean): void {
 		const a = this.avatars.get(id);
@@ -337,10 +342,10 @@ function makeGhostTag(label: string): THREE.CanvasTexture {
 	return tex;
 }
 
-export const GHOST_OPACITY = 0.35;
+export const GHOST_OPACITY = 0.45;
 
 /**
- * The race ghost: a translucent, slightly glowing character with a name tag.
+ * The race ghost: the run's player, see-through, in their own colours and items, with a name tag.
  * Purely visual (no collision). One instance, owned by the renderer.
  */
 export class GhostAvatar {
@@ -352,6 +357,7 @@ export class GhostAvatar {
 	private tag: THREE.Sprite;
 	private tagTex: THREE.CanvasTexture | null = null;
 	private label = '';
+	private personId = 0;
 
 	constructor(assets: HeldAssets) {
 		this.group.name = 'ghost';
@@ -367,8 +373,12 @@ export class GhostAvatar {
 		this.group.visible = false;
 	}
 
-	/** Cosmetics of the run's player (your own ghost). */
-	setLoadout(loadout: Loadout | null): void {
+	/** The run's player: person (as on a player with this id) and cosmetics. */
+	setPlayer(personId: number, loadout: Loadout | null): void {
+		if (personId !== this.personId) {
+			this.personId = personId;
+			this.model.setPerson(personOf(personId));
+		}
 		applyLoadout(this.model, loadout ?? emptyLoadout());
 	}
 

@@ -453,6 +453,8 @@ export type ServerMessage =
 	| { type: 'boxResult'; ok: false; error: string }
 	/** A player opened a loot box and has seen the result (to everyone, the opener included). Item ids may be unknown. */
 	| { type: 'boxNews'; id: number; name: string; item: string; duplicate: boolean }
+	/** What the holder of the map's record ghost wears (with the ghost frame). Use `sanitizeLoadout`. */
+	| { type: 'ghostLook'; map: string; loadout: Loadout }
 	/** A player's equipped cosmetics changed (to everyone, the player included). Use `sanitizeLoadout`. */
 	| { type: 'cosmetics'; id: number; loadout: Loadout }
 	/**

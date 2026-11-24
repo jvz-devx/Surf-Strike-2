@@ -400,7 +400,13 @@ describe('cosmetics', () => {
 		m.dispose();
 		const ghost = new CharacterModel(personOf(4), assets, { ghost: true });
 		applyLoadout(ghost, wear({ effect: 'effect_fire' }));
-		expect(ghost.group.children.some((c) => c.name.startsWith('effect-'))).toBe(false);
+		expect(ghost.group.children.filter((c) => c.name.startsWith('effect-'))).toHaveLength(2);
+		// In the real colours of the player and the items.
+		const solid = new CharacterModel(personOf(4), assets);
+		applyLoadout(ghost, wear({ top: 'top_sunset' }));
+		applyLoadout(solid, wear({ top: 'top_sunset' }));
+		expect(ghost.material.palette).toEqual(solid.material.palette);
+		solid.dispose();
 		ghost.dispose();
 	});
 

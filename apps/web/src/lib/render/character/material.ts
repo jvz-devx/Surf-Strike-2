@@ -13,7 +13,7 @@ export class CharacterMaterial extends THREE.MeshLambertMaterial {
 	readonly palette: THREE.Vector4[] = Array.from({ length: PAL_SIZE }, () => new THREE.Vector4(1, 1, 1, 0));
 	private readonly ghost: boolean;
 
-	/** `ghost`: translucent, brighter at the silhouette, no depth writes. */
+	/** `ghost`: translucent, denser at the silhouette, no depth writes. */
 	constructor(ghost = false) {
 		super({ color: 0xffffff });
 		this.ghost = ghost;

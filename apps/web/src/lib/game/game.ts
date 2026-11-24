@@ -56,6 +56,7 @@ import {
 	type Cvars,
 	type GameModeDef,
 	type GhostFrame,
+	type Loadout,
 	type Spawn,
 	type TagModeState,
 	type MapDef,
@@ -303,6 +304,8 @@ export class Game implements CommandContext {
 	private ghostSeq = 0;
 	private ghostFrameSeq = 0;
 	private ghostWarned = false;
+	/** What the record ghost's holder wears. */
+	private ghostLook: { map: string; loadout: Loadout } | null = null;
 	private lastRotationUpdate = 0;
 	private lastSoloBoard = 0;
 
@@ -1017,12 +1020,21 @@ export class Game implements CommandContext {
 		}
 	}
 
-	/** Own cosmetics on the ghost, when it replays a run of this player. */
+	/** The ghost looks like the player whose run it shows: this one, one who is here, or as the server describes them. */
 	private dressGhost(): void {
 		const g = this.ghost.source;
-		const own = g !== null && (g.kind === 'pb' || (this.hud.account !== null && g.name === this.hud.account.username));
-		this.renderer?.ghost.setLoadout(own ? (this.hud.shop?.loadout ?? null) : null);
+		if (!g || !this.renderer) return;
+		const { players, ghost } = this.renderer;
+		if (g.kind === 'pb' || (this.hud.account !== null && g.name === this.hud.account.username)) {
+			return ghost.setPlayer(this.selfId, this.hud.shop?.loadout ?? null);
+		}
+		for (const r of this.remotes.values()) if (r.name === g.name) return ghost.setPlayer(r.id, players.loadoutOf(r.id));
+		// Not here: a person of their own, always the same.
+		let hash = 0;
+		for (const ch of g.name) hash = (Math.imul(hash, 31) + ch.codePointAt(0)!) | 0;
+		ghost.setPlayer(hash >>> 1, this.ghostLook?.map === g.map ? this.ghostLook.loadout : null);
 	}
+
 
 	// -----------------------------------------------------------------------
 	// Admin (docs/ui.md#admin): the server decides who is admin and re-checks every request.
@@ -2270,14 +2282,17 @@ export class Game implements CommandContext {
 					this.remote(m.player.id, m.player.name).spectating = m.player.spectating;
 					this.renderer?.players.setLoadout(m.player.id, sanitizeLoadout(m.player.loadout));
 					this.updatePlayerCount();
+					this.dressGhost();
 				}
 				break;
 			case 'leave':
 				this.dropRemote(m.id);
 				this.updatePlayerCount();
+				this.dressGhost();
 				break;
 			case 'rename':
 				if (m.id !== this.selfId) this.remote(m.id, m.name);
+				this.dressGhost();
 				break;
 			case 'spectating':
 				if (m.id === this.selfId) {
@@ -2393,6 +2408,11 @@ export class Game implements CommandContext {
 			case 'cosmetics':
 				// The own items come with `shop`.
 				if (typeof m.id === 'number' && m.id !== this.selfId) this.renderer?.players.setLoadout(m.id, sanitizeLoadout(m.loadout));
+				this.dressGhost();
+				break;
+			case 'ghostLook':
+				this.ghostLook = { map: m.map, loadout: sanitizeLoadout(m.loadout) };
+				this.dressGhost();
 				break;
 			case 'shop':
 				this.hud.shop = { busy: this.hud.shop?.busy ?? false, notice: this.hud.shop?.notice ?? null, opened: this.hud.shop?.opened ?? null, ...parseShop(m) };

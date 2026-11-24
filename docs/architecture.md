@@ -88,6 +88,7 @@ Each client simulates its own movement with zero input lag. The server trusts po
 | S→C | `snapshot` (all players' state) | binary, 32 Hz |
 | C→S | `zone { kind, index, tick }` | JSON |
 | S→C | `runResult { ticks, rank, pb, record, splits, records }` (`records`: the runner's PB, rank and map record after the run, PB or not) | JSON |
+| S→C | `ghostLook { map, loadout }`: what the record ghost's holder wears, with the ghost frame | JSON |
 | S→C | `scoreboard { rows[], richest?[{ name, coins, online }] }` (1 Hz, every mode): `ScoreRow` per player, with the mode's fields and the account totals `pointsTotal` (lifetime earned, no longer shown), `playtimeSecs` and `coins` (what it has now); all are `null` for guests and absent on older servers (shown as `–`) | JSON |
 | S→C | `records` inside `welcome`, `mapChange`, `runResult`, `auth` and `records`: `{ pbTicks, pbSplits, rank, recordTicks, recordName, top? }`; `top` = first 10 times `{ rank, name, ticks, self? }` on race maps, absent on older servers and in other modes | JSON |
 | S→C | `records { map, records }`: pushed to every other player on the map when a run sets a new PB (their rank and the map record may have changed) | JSON |

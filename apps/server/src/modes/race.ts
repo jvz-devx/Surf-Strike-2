@@ -3,8 +3,8 @@
  * validation, personal bests and the per-map leaderboard (docs/gameplay.md).
  */
 import { deflateRawSync } from 'node:zlib';
-import type { GameModeId, GhostTrack, MapRecordInfo, NetState, ScoreRow } from '@surf/shared';
-import { decayed, encodeGhostFrame, formatTicks, GhostRecorder, packGhost, RACE_PAY, raceFinish, RECORDS_TOP, REPEAT_MS, Status } from '@surf/shared';
+import type { GameModeId, GhostTrack, MapRecordInfo, NetState, ScoreRow, ServerMessage } from '@surf/shared';
+import { decayed, encodeGhostFrame, formatTicks, GhostRecorder, packGhost, RACE_PAY, raceFinish, RECORDS_TOP, REPEAT_MS, sanitizeLoadout, Status } from '@surf/shared';
 import type { Command } from '../commands.ts';
 import { RunValidator } from '../validation.ts';
 import type { ModeHost, ModePlayer, ServerMode, ZoneKind } from './types.ts';
@@ -53,6 +53,14 @@ export class RaceMode implements ServerMode {
 			return;
 		}
 		h.sendBinary(p, this.loadGhostFrame());
+		const look = this.ghostLook();
+		if (look) h.send(p, look);
+	}
+
+	/** What the ghost's holder wears now; null without a ghost. */
+	private ghostLook(): ServerMessage | null {
+		const r = this.host.db.getReplay(this.host.map.id);
+		return r && { type: 'ghostLook', map: this.host.map.id, loadout: sanitizeLoadout(this.host.db.equipped(r.accountId)) };
 	}
 
 	private loadGhostFrame(): Uint8Array {
@@ -75,6 +83,8 @@ export class RaceMode implements ServerMode {
 		if (!h.db.saveReplay(h.map.id, accountId, ticks, track.length, data, Date.now())) return;
 		this.ghostFrame = undefined;
 		h.broadcastBinary(this.loadGhostFrame());
+		const look = this.ghostLook();
+		if (look) h.broadcast(look);
 		h.log(`ghost ${h.map.id} ${p.name} ${formatTicks(ticks)} ${track.length} samples ${data.length} B`);
 	}
 

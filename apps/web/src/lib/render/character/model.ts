@@ -163,6 +163,7 @@ export class CharacterModel {
 	private loadout: Loadout = emptyLoadout();
 	private role: CharacterRole = 'none';
 	private claws = false;
+	private depth: THREE.SkinnedMesh<THREE.BufferGeometry, THREE.Material> | null = null;
 	private effect: CharacterEffect | null = null;
 	private effectId: string | null = null;
 	private effectsOn = true;
@@ -190,6 +191,19 @@ export class CharacterModel {
 		this.mesh.bindMode = THREE.DetachedBindMode;
 		this.mesh.bind(this.sk.skeleton, new THREE.Matrix4());
 		this.group.add(this.mesh);
+		if (opts.ghost) {
+			// Depth first: only the outermost surface of the see-through body is drawn.
+			const m = new THREE.MeshBasicMaterial({ colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+			this.depth = new THREE.SkinnedMesh(this.mesh.geometry, m);
+			this.depth.boundingSphere = this.mesh.boundingSphere;
+			this.depth.bindMode = THREE.DetachedBindMode;
+			this.depth.bind(this.sk.skeleton, new THREE.Matrix4());
+			// With the transparent objects, before the body.
+			m.transparent = true;
+			this.depth.renderOrder = 3.5;
+			this.mesh.renderOrder = 4;
+			this.group.add(this.depth);
+		}
 		this.animator = new CharacterAnimator(this.sk);
 		this.recolor();
 	}
@@ -210,6 +224,7 @@ export class CharacterModel {
 			this.look = acquireLook(spec);
 			this.mesh.geometry = this.look.get(this.lod);
 			this.effect?.setGeometry(this.mesh.geometry);
+			if (this.depth) this.depth.geometry = this.mesh.geometry;
 			old.release();
 		}
 		this.recolor();
@@ -247,14 +262,14 @@ export class CharacterModel {
 		this.syncEffect();
 	}
 
-	/** Role looks must read at any distance, and the ghost is see-through: no effects on them. */
+	/** Role looks must read at any distance: no effects on them. The ghost's are fainter. */
 	private syncEffect(): void {
-		const def = this.effectsOn && this.role === 'none' ? effectDef(this.loadout.effect) : null;
+		const def = this.effectsOn && (this.role === 'none' || this.role === 'ghost') ? effectDef(this.loadout.effect) : null;
 		const id = def ? this.loadout.effect : null;
 		if (id === this.effectId) return;
 		this.effectId = id;
 		this.effect?.dispose();
-		this.effect = def ? new CharacterEffect(def, this.mesh.geometry, this.sk.skeleton) : null;
+		this.effect = def ? new CharacterEffect(def, this.mesh.geometry, this.sk.skeleton, this.role === 'ghost' ? 0.5 : 1) : null;
 		if (this.effect) this.group.add(...this.effect.objects);
 	}
 
@@ -306,16 +321,6 @@ export class CharacterModel {
 				hex(base + i, h, over ? glow : (def?.glow?.[i] ?? 0));
 			}
 		}
-		if (this.role === 'ghost') this.ghostTint();
-	}
-
-	private ghostTint(): void {
-		const base = c2.setHex(0x9fdcff);
-		for (const v of this.material.palette) {
-			// Keep some of each part's lightness so the figure stays readable.
-			const l = 0.55 + 0.45 * Math.sqrt(0.3 * v.x + 0.6 * v.y + 0.1 * v.z);
-			v.set(base.r * l, base.g * l, base.b * l, 0.6);
-		}
 	}
 
 	// ---- Frame -------------------------------------------------------------------
@@ -335,6 +340,7 @@ export class CharacterModel {
 			this.lod = lod;
 			this.mesh.geometry = this.look.get(lod);
 			this.effect?.setGeometry(this.mesh.geometry);
+			if (this.depth) this.depth.geometry = this.mesh.geometry;
 		}
 		this.effect?.update(dtSec, dist, s.vx, s.vy, s.vz);
 		this.pending += dtSec;
@@ -390,6 +396,7 @@ export class CharacterModel {
 	dispose(): void {
 		this.group.removeFromParent();
 		this.effect?.dispose();
+		this.depth?.material.dispose();
 		this.look.release();
 		this.sk.skeleton.dispose();
 		this.material.dispose();

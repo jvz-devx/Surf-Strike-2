@@ -50,7 +50,7 @@ The registry holds `top_default`, `bottom_default`, `shoes_default` and the shop
 | shoes | High-tops, Beach slides, Trail boots, Slip-ons, Canvas low-tops, Garden clogs; Common: Pulse runners, Chelsea boots, Penny loafers, Skate shoes, Rain boots; Uncommon: Rubber duck slippers, Rocket boots; Rare: Polished oxfords |
 | effect | Rare: Blue, Yellow, Red, Purple, Black, Orange, Pink, White, Green and Gray aura; Epic: Living flame |
 
-The own player is never drawn in the game, except as the shop preview and as the race ghost of an own run (your PB, or your record), which wears what you wear now.
+The own player is never drawn in the game, except as the shop preview and as the race ghost of an own run (your PB, or your record), which wears what you wear now. Other record ghosts look like their holder, too: as the player who is here, else with the cosmetics the server sends (`ghostLook`). The ghost is see-through in real colours (a depth pass first, so only the outer surface shows), with fainter effects.
 
 Drawing (`apps/web/src/lib/render/character/`):
 
@@ -106,7 +106,7 @@ The `effect` slot puts a glow or fire over the whole body (`effects.ts`; loot on
 
 To add one: a `SHOP_ITEMS` line with `slot: 'effect'` and an entry in `EFFECTS`.
 
-Not drawn: on role looks (IT, seeker, zombies, infected: they must read), on the race ghost, and for anyone in Hide and Seek (it would give hiders away).
+Not drawn: on role looks (IT, seeker, zombies, infected: they must read) and for anyone in Hide and Seek (it would give hiders away).
 
 ## Roles
 
