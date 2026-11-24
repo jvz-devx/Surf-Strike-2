@@ -264,6 +264,33 @@ registerItemMesh('glasses_shades', {
 	}
 });
 
+registerItemMesh('glasses_round', {
+	colors: [0xc9a24d, 0x1b2926, 0x22332f, 0x8d6f30],
+	build(b) {
+		b.socket('glasses', () => {
+			const seg = b.pick(18, 10, 7);
+			for (const s of SIDES) {
+				const z = sideSign(s) * 1.95;
+				const deform = (p: THREE.Vector3) => {
+					p.x -= (Math.abs(p.z) - 1) * 0.36;
+				};
+				const disc = (x: number, r: number, pal: number): Ring => ({ c: [x, -0.1, z], f: r, b: r, s: r, w: HEAD, pal });
+				// Thin round metal rim with a dark lens inside.
+				b.loft([disc(0.2, 1.42, PAL.glassesA), disc(0.46, 1.42, PAL.glassesA), disc(0.47, 1.2, PAL.glassesB), disc(0.53, 0.65, PAL.glassesC)], {
+					seg,
+					u: [0, 1, 0],
+					v: [0, 0, 1],
+					capStart: true,
+					capEnd: true,
+					deform
+				});
+				b.box([-3, 0.35, z * 2.12], [5.2, 0.3, 0.22], { w: HEAD, pal: PAL.glassesA, rot: [0, sideSign(s) * 0.05, 0] });
+			}
+			b.box([0.42, 0.25, 0], [0.24, 0.26, 1.3], { w: HEAD, pal: PAL.glassesD });
+		});
+	}
+});
+
 // ---------------------------------------------------------------------------
 // T-shirts
 
@@ -501,6 +528,28 @@ registerItemMesh('shoes_slides', {
 				u: [0, 1, 0],
 				v: [0, 0, 1]
 			});
+		}
+	}
+});
+
+registerItemMesh('shoes_slipons', {
+	colors: [0xb4493c, 0xf1e9d6, 0x2b2d34, 0xf2f0ea],
+	build(b) {
+		for (const s of SIDES) {
+			// Plain canvas on a flat sole: no laces, a dark elastic band over the instep.
+			buildShoeBase(b, s, { palAt: (x) => (b.lod < 2 && x >= -0.6 && x < 1.2 ? PAL.shoesC : PAL.shoesA), soleHeight: () => 1.35, soleGrow: 0.28 });
+			// Low collar with a short sock.
+			shaft(
+				b,
+				s,
+				[
+					[3.6, 3.4, 2.55, 2.2],
+					[4.7, 2.95, 2.3, 2.3],
+					[5.3, 2.7, 2.3, 2.35],
+					[7, 2.5, 2.35, 2.38]
+				],
+				{ shaft: PAL.shoesA, top: PAL.shoesD, inner: PAL.shoesD }
+			);
 		}
 	}
 });

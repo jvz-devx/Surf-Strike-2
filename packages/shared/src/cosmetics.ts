@@ -123,13 +123,14 @@ registerCosmetic({ id: 'top_default', slot: 'top', name: 'Surf tee', isDefault: 
 registerCosmetic({ id: 'bottom_default', slot: 'bottom', name: 'Trousers', isDefault: true });
 registerCosmetic({ id: 'shoes_default', slot: 'shoes', name: 'Sneakers', isDefault: true });
 
-/** The items: 13 basic ones in the shop, the others for loot boxes. Ids are stored in the database: never rename or reuse one. */
+/** The items: 15 basic ones in the shop, the others for loot boxes. Ids are stored in the database: never rename or reuse one. */
 const SHOP_ITEMS: readonly Required<Omit<CosmeticItem, 'isDefault'>>[] = [
 	{ id: 'hat_cap', slot: 'hat', name: 'Breakline cap', rarity: 'basic' },
 	{ id: 'hat_beanie', slot: 'hat', name: 'Pom beanie', rarity: 'basic' },
 	{ id: 'hat_straw', slot: 'hat', name: 'Straw hat', rarity: 'basic' },
 	{ id: 'hat_frycook', slot: 'hat', name: 'Fry cook hat', rarity: 'common' },
 	{ id: 'glasses_shades', slot: 'glasses', name: 'Glare shades', rarity: 'basic' },
+	{ id: 'glasses_round', slot: 'glasses', name: 'Round shades', rarity: 'basic' },
 	{ id: 'top_sunset', slot: 'top', name: 'Sunset tee', rarity: 'basic' },
 	{ id: 'top_halves', slot: 'top', name: 'Half-and-half tee', rarity: 'basic' },
 	{ id: 'top_checker', slot: 'top', name: 'Checker tee', rarity: 'basic' },
@@ -138,6 +139,7 @@ const SHOP_ITEMS: readonly Required<Omit<CosmeticItem, 'isDefault'>>[] = [
 	{ id: 'bottom_cargo', slot: 'bottom', name: 'Cargo pants', rarity: 'basic' },
 	{ id: 'shoes_hightops', slot: 'shoes', name: 'High-tops', rarity: 'basic' },
 	{ id: 'shoes_slides', slot: 'shoes', name: 'Beach slides', rarity: 'basic' },
-	{ id: 'shoes_boots', slot: 'shoes', name: 'Trail boots', rarity: 'basic' }
+	{ id: 'shoes_boots', slot: 'shoes', name: 'Trail boots', rarity: 'basic' },
+	{ id: 'shoes_slipons', slot: 'shoes', name: 'Slip-ons', rarity: 'basic' }
 ];
 for (const item of SHOP_ITEMS) registerCosmetic(item);

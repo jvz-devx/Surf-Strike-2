@@ -27,7 +27,7 @@ describe('shop view', () => {
 	});
 
 	it('lists what both sides know at the server price, every slot in a category', () => {
-		expect(shopEntries(view())).toHaveLength(13);
+		expect(shopEntries(view())).toHaveLength(15);
 		// Loot is listed only once owned, even if an older server still sells it.
 		expect(shopEntries(view({ items: [{ id: 'hat_frycook', price: 2000 }] }))).toEqual([]);
 		expect(shopEntries(view({ items: [], owned: ['hat_frycook'] })).map((e) => e.item.id)).toEqual(['hat_frycook']);

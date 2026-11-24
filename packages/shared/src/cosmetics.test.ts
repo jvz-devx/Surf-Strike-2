@@ -3,18 +3,18 @@ import { COSMETIC_SLOTS, cosmeticPrice, defaultItem, emptyLoadout, getCosmetic, 
 import { awardLabel, pts } from './economy.ts';
 
 describe('cosmetics', () => {
-	it('sells 13 basic items at 30 coins, next to the default look', () => {
+	it('sells 15 basic items at 30 coins, next to the default look', () => {
 		const sold = shopItems();
 		const n = (slot: CosmeticSlot) => sold.filter((i) => i.slot === slot).length;
-		expect([n('hat'), n('glasses'), n('top'), n('bottom'), n('shoes')]).toEqual([3, 1, 3, 3, 3]);
-		expect(new Set(sold.map((i) => i.name)).size).toBe(13);
+		expect([n('hat'), n('glasses'), n('top'), n('bottom'), n('shoes')]).toEqual([3, 2, 3, 3, 4]);
+		expect(new Set(sold.map((i) => i.name)).size).toBe(15);
 		for (const i of sold) {
 			expect(i.rarity).toBe('basic');
 			expect(cosmeticPrice(i)).toBe(pts(30));
 			expect(awardLabel(`shop:${i.id}`)).toBe(`Shop: ${i.name}`);
 		}
 		expect(listCosmetics().filter((i) => i.isDefault).map((i) => i.id)).toEqual(['top_default', 'bottom_default', 'shoes_default']);
-		expect(listCosmetics()).toHaveLength(17);
+		expect(listCosmetics()).toHaveLength(19);
 		// Default items are never for sale, whatever their rarity.
 		expect(cosmeticPrice({ id: 'x', slot: 'top', name: 'x', isDefault: true, rarity: 'basic' })).toBeNull();
 		for (const r of Object.values(RARITIES)) expect((r.price === null || (Number.isInteger(r.price) && r.price > 0)) && /^#[0-9a-f]{6}$/.test(r.color) && r.name !== '').toBe(true);
@@ -31,8 +31,8 @@ describe('cosmetics', () => {
 		// These are in players' databases: never rename or remove one.
 		expect(listCosmetics().map((i) => i.id)).toEqual(
 			expect.arrayContaining([
-				'hat_cap', 'hat_beanie', 'hat_straw', 'hat_frycook', 'glasses_shades', 'top_sunset', 'top_halves', 'top_checker',
-				'bottom_boardshorts', 'bottom_joggers', 'bottom_cargo', 'shoes_hightops', 'shoes_slides', 'shoes_boots'
+				'hat_cap', 'hat_beanie', 'hat_straw', 'hat_frycook', 'glasses_shades', 'glasses_round', 'top_sunset', 'top_halves', 'top_checker',
+				'bottom_boardshorts', 'bottom_joggers', 'bottom_cargo', 'shoes_hightops', 'shoes_slides', 'shoes_boots', 'shoes_slipons'
 			])
 		);
 	});

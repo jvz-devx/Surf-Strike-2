@@ -41,10 +41,10 @@ The registry holds `top_default`, `bottom_default`, `shoes_default` and the shop
 | Slot | Items (Basic, 30 coins, unless noted) |
 | --- | --- |
 | hat | Breakline cap, Pom beanie, Straw hat, Fry cook hat (Common, not in the shop) |
-| glasses | Glare shades |
+| glasses | Glare shades, Round shades |
 | top | Sunset tee, Half-and-half tee, Checker tee |
 | bottom | Boardshorts, Joggers, Cargo pants |
-| shoes | High-tops, Beach slides, Trail boots |
+| shoes | High-tops, Beach slides, Trail boots, Slip-ons |
 
 The own player is never drawn in the game, except as the shop preview and as the race ghost of an own run (your PB, or your record), which wears what you wear now.
 
