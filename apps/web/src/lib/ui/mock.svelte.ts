@@ -30,12 +30,12 @@ const MOCK_WARNING =
 	'Your coins are paused for 5 minutes: this looks like point farming. Play normally and nothing else happens; if it continues you are banned for 5 minutes.';
 
 function mockAwards(n: number) {
-	const labels = ['Found a hider', 'Playtime', 'Hiding in plain view', 'Evacuated', 'Being chased', 'Shop: hat'];
+	const labels = ['Found a hider', 'Playtime', 'Hiding in plain view', 'Evacuated', 'Being chased', 'Shop: hat', 'Coinflip won', 'Crash lost'];
 	return Array.from({ length: n }, (_, i) => ({
 		at: Date.now() - i * 95_000,
-		reason: 'x',
+		reason: ['x', 'x', 'x', 'x', 'x', 'shop:hat', 'casino:coinflip', 'casino:crash'][i % labels.length]!,
 		label: labels[i % labels.length]!,
-		amount: [45, 100, 24, 160, 15, -750][i % labels.length]!,
+		amount: [45, 100, 24, 160, 15, -750, 200, -50][i % labels.length]!,
 		mult: i % labels.length === 1 ? 10 : 15
 	}));
 }
@@ -173,7 +173,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 					}))
 				: null,
 		account: open === 'auth' || coinsN === 0 ? null : asAdmin ? { username: 'Tim', admin: true } : { username: 'you' },
-		coins: coinsN === 0 || old ? null : { total: 123_456, balance: params.has('balance') ? Number(params.get('balance')) * 10 : 7_459, recent: mockAwards(14) },
+		coins: coinsN === 0 || old ? null : { total: 123_456, balance: params.has('balance') ? Number(params.get('balance')) * 10 : 7_459, recent: mockAwards(30) },
 		shop:
 			old || params.has('noshop')
 				? null

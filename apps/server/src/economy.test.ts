@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { FLAG_ON_GROUND, FLAG_TELEPORTED, pts, type MapDef } from '@surf/shared';
-import { Db, POINT_LOG_DAYS } from './db.ts';
+import { Db, POINT_LOG_KEEP, POINT_LOG_RULES_MS } from './db.ts';
 import { world } from './economy-helpers.ts';
 import { testMap } from './test-helpers.ts';
 
@@ -187,26 +187,29 @@ describe('ledger', () => {
 		assert.equal(w.mode.award(a!.id, pts(1), 'raceFinish').paid, 10);
 	});
 
-	it('old log rows are summed up, the totals stay', () => {
+	it('only the newest log rows per account are kept, older ones are summed up, the totals stay', () => {
 		const w = world(TAG);
 		const [a, b] = w.join(3);
-		w.active();
-		for (let i = 0; i < 3; i++) w.mode.award(a!.id, pts(1), 'tagTag');
-		w.mode.award(b!.id, pts(1), 'tagTag');
+		const add = (id: number, n: number) => {
+			for (let i = 0; i < n; i++) w.db.payPoints({ accountId: id, at: w.now, mode: 'tag', map: 'm', reason: 'tagTag', label: 'x', base: 10, counted: 0, mult: 12, amount: 12 });
+		};
+		const rows = (id: number) => (w.db.db.prepare('SELECT COUNT(*) AS n FROM point_log WHERE account_id = ?').get(id) as { n: number }).n;
+		add(a!.accountId!, POINT_LOG_KEEP + 5);
+		add(b!.accountId!, 4);
 		const before = w.db.accountStats(a!.accountId!);
-		w.now += POINT_LOG_DAYS * 86_400_000 + 1;
-		w.mode.roundStart();
-		w.mode.award(a!.id, pts(1), 'tagTag');
 		w.clock += 11 * 60_000;
 		w.economy.tick();
-		assert.equal((w.db.db.prepare('SELECT COUNT(*) AS n FROM point_log').get() as { n: number }).n, 1);
-		assert.deepEqual(w.db.db.prepare('SELECT * FROM point_rollup ORDER BY account_id').all(), [
-			{ account_id: a!.accountId, mode: 'tag', reason: 'tagTag', entries: 3, base: 30, amount: 36 },
-			{ account_id: b!.accountId, mode: 'tag', reason: 'tagTag', entries: 1, base: 10, amount: 12 }
+		assert.equal(rows(a!.accountId!), POINT_LOG_KEEP + 5, 'the limits on repeats still need them');
+		w.now += POINT_LOG_RULES_MS + 1;
+		w.clock += 11 * 60_000;
+		w.economy.tick();
+		assert.deepEqual([rows(a!.accountId!), rows(b!.accountId!)], [POINT_LOG_KEEP, 4]);
+		assert.deepEqual(w.db.db.prepare('SELECT * FROM point_rollup').all(), [
+			{ account_id: a!.accountId, mode: 'tag', reason: 'tagTag', entries: 5, base: 50, amount: 60 }
 		]);
-		assert.equal(w.db.rollUpPoints(w.now + 1), 1, 'adds to the sums');
-		assert.equal((w.db.db.prepare('SELECT amount FROM point_rollup WHERE account_id = ?').get(a!.accountId) as { amount: number }).amount, 48);
-		assert.equal(w.db.accountStats(a!.accountId!).pointsTotal, before.pointsTotal + 12);
+		assert.equal(w.db.rollUpPoints(w.now + 1, POINT_LOG_KEEP - 1), 1, 'adds to the sums');
+		assert.equal((w.db.db.prepare('SELECT amount FROM point_rollup WHERE account_id = ?').get(a!.accountId) as { amount: number }).amount, 72);
+		assert.deepEqual(w.db.accountStats(a!.accountId!), before);
 	});
 });
 

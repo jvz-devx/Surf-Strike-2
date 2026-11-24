@@ -1,22 +1,31 @@
 <script lang="ts">
-	import { formatMultiplier, formatTenths, formatWhole } from '@surf/shared';
+	import { formatMultiplier, formatTenths, formatWhole, type PointLogEntry, type RichEntry } from '@surf/shared';
 	import type { CoinsView, GameApi } from '#lib/game/contract.js';
 
-	/** Coins submenu (docs/ui.md#coins): balance, lifetime points, latest awards and purchases. */
+	import RichList from '#lib/ui/RichList.svelte';
+
+	/** Coins submenu (docs/ui.md#coins): balance, what changed it lately (awards, purchases, casino), and the richest players. */
 	let {
 		api,
 		coins,
 		multiplier,
+		richest,
+		account,
 		loggedIn,
 		online
 	}: {
 		api: GameApi;
 		coins: CoinsView | null;
 		multiplier: { mult: number; active: number; need: number } | null;
+		richest: readonly RichEntry[];
+		/** Account of the local player. */
+		account: string | null;
 		loggedIn: boolean;
 		online: boolean;
 	} = $props();
 
+	/** Only awards have a multiplier. */
+	const earned = (e: PointLogEntry) => e.amount >= 0 && e.reason !== 'admin' && e.reason !== 'welcome' && !/^(shop|casino):/.test(e.reason);
 	const when = (t: number) => new Date(t).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 </script>
 
@@ -33,29 +42,24 @@
 	{/if}
 </header>
 
+<div class="cols">
 <div class="body">
 	{#if coins}
-		<div class="cards">
-			<div class="card">
-				<span class="ss-label">Coins</span>
-				<span class="value ss-num">{formatWhole(coins.balance)}</span>
-			</div>
-			<div class="card">
-				<span class="ss-label">Points earned in total</span>
-				<span class="value ss-num dim">{formatWhole(coins.total)}</span>
-			</div>
+		<div class="card">
+			<span class="ss-label">Coins</span>
+			<span class="value ss-num">{formatWhole(coins.balance)}</span>
 		</div>
 		<h3 class="ss-label">Latest</h3>
 		<ul class="rows">
 			{#each coins.recent as e, i (`${e.at}:${i}`)}
 				<li class="row">
-					<span class="amount ss-num" class:spent={e.amount < 0}>{e.amount < 0 ? '' : '+'}{formatTenths(e.amount)}</span>
+					<span class="amount ss-num" class:spent={e.amount < 0} class:even={e.amount === 0}>{e.amount > 0 ? '+' : ''}{formatTenths(e.amount)}</span>
 					<span class="what">{e.label}</span>
-					{#if e.amount >= 0 && e.reason !== 'admin' && e.reason !== 'welcome' && !e.reason.startsWith('shop:')}<span class="dim ss-num">{formatMultiplier(e.mult)}</span>{/if}
+					{#if earned(e)}<span class="dim ss-num">{formatMultiplier(e.mult)}</span>{/if}
 					<span class="dim time">{when(e.at)}</span>
 				</li>
 			{:else}
-				<li class="hint">Nothing earned yet.</li>
+				<li class="hint">Nothing earned or spent yet.</li>
 			{/each}
 		</ul>
 		<p class="hint">
@@ -70,6 +74,10 @@
 		<p class="hint">Guests play everything but earn no coins.</p>
 		<div><button type="button" class="ss-button" onclick={() => api.openAuth()}>Log in / Register</button></div>
 	{/if}
+</div>
+{#if online}
+	<aside><RichList {richest} {account} column /></aside>
+{/if}
 </div>
 
 <style>
@@ -92,19 +100,25 @@
 	.mult strong {
 		color: var(--text);
 	}
-	.body {
+	.cols {
 		flex: 1;
+		min-height: 0;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(190px, 30%);
+		grid-template-rows: minmax(0, 1fr);
+		gap: 18px;
+	}
+	aside {
+		min-height: 0;
+		overflow-y: auto;
+	}
+	.body {
 		min-height: 0;
 		overflow-y: auto;
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
 		padding-right: 4px;
-	}
-	.cards {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 10px;
 	}
 	.card {
 		display: flex;
@@ -120,9 +134,6 @@
 		font-weight: 700;
 		line-height: 1;
 		color: var(--accent);
-	}
-	.value.dim {
-		color: var(--text);
 	}
 	h3 {
 		margin: 4px 0 0;
@@ -149,6 +160,9 @@
 		text-align: right;
 		font-weight: 700;
 		color: var(--good);
+	}
+	.amount.even {
+		color: var(--text-dim);
 	}
 	.amount.spent {
 		color: var(--bad);

@@ -309,18 +309,18 @@ export interface AdminState {
 export interface PointLogEntry {
 	/** Wall clock (ms). */
 	at: number;
-	/** Reason id (economy.ts AWARDS); `shop:<item>` for purchases. */
+	/** Reason id (economy.ts AWARDS); `shop:<item>` for purchases, `casino:<game>` for bets. */
 	reason: string;
 	/** Display text. */
 	label: string;
-	/** Tenths of a point; negative for purchases. */
+	/** Tenths of a point; negative for purchases and lost bets. */
 	amount: number;
 	/** Multiplier in tenths. */
 	mult: number;
 }
 
 /** Entries in `coins.recent`. */
-export const RECENT_AWARDS = 20;
+export const RECENT_AWARDS = 30;
 
 export type ServerMessage =
 	| {

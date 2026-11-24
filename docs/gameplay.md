@@ -47,7 +47,7 @@ Migration: tables are created with `CREATE TABLE IF NOT EXISTS`, so an existing 
 Two totals per account, shown to everyone in the Tab scoreboard of every mode. Guests have no account and offline play has no server, so both show `–` there.
 
 - **Total playtime** is the time connected to the server while logged in, in any mode, spectating and idling included, added up across sessions (`12h 34m`). An account connected twice counts once. The server writes it every 60 s, on disconnect or logout and at shutdown, so a crash loses at most a minute.
-- **Coins** (`points_balance`) is what the account has now: it rises with earnings and winnings and falls with purchases and bets ([economy.md](economy.md)). The lifetime sum of earned points is a separate number, shown to its owner (Esc › Coins).
+- **Coins** (`points_balance`) is what the account has now: it rises with earnings and winnings and falls with purchases and bets ([economy.md](economy.md)). The lifetime sum of earned points is stored too, but no longer shown.
 
 ## Ghosts
 

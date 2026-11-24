@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { formatPoints, gameMode, scoreboardColumns, splitScoreboard, type GameModeId, type ModeState, type RichEntry, type ScoreRow } from '@surf/shared';
+	import { gameMode, scoreboardColumns, splitScoreboard, type GameModeId, type ModeState, type RichEntry, type ScoreRow } from '@surf/shared';
 	import { formatClock } from '#lib/ui/format.js';
+	import RichList from '#lib/ui/RichList.svelte';
 
 	let {
 		rows,
@@ -88,18 +89,7 @@
 	</section>
 	</div>
 	{#if richest.length > 0}
-		<section class="rich ss-panel" aria-label="Richest players">
-			<span class="ss-label">Richest players</span>
-			<ol>
-				{#each richest as r, i (r.name)}
-					<li class="place{i + 1}" class:own={r.name === account}>
-						<span class="pos ss-num">{i + 1}</span>
-						<span class="who"><span class="dot" class:on={r.online} title={r.online ? 'Online' : 'Offline'}></span><span class="nick">{r.name}</span></span>
-						<span class="sum ss-num">{formatPoints(r.coins)}<span class="unit">coins</span></span>
-					</li>
-				{/each}
-			</ol>
-		</section>
+		<div class="rich ss-panel"><RichList {richest} {account} /></div>
 	{/if}
 </div>
 
@@ -131,75 +121,6 @@
 		/* Over the speed and timer: nothing may shine through. */
 		background: rgba(12, 14, 18, 0.97);
 		font-size: calc(15px * var(--hud-scale));
-	}
-	.rich ol {
-		list-style: none;
-		margin: 7px 0 0;
-		padding: 0;
-		display: grid;
-		grid-template-columns: repeat(5, minmax(0, 1fr));
-		gap: 7px;
-	}
-	.rich li {
-		--medal: var(--text-faint);
-		display: grid;
-		grid-template-columns: auto minmax(0, 1fr);
-		column-gap: 9px;
-		align-items: center;
-		padding: 6px 10px;
-		background: rgba(255, 255, 255, 0.04);
-		border-left: 3px solid var(--medal);
-		border-radius: 2px;
-	}
-	.rich .place1 {
-		--medal: #f3c14b;
-	}
-	.rich .place2 {
-		--medal: #c3ccd6;
-	}
-	.rich .place3 {
-		--medal: #cd8a52;
-	}
-	.rich .own {
-		background: var(--accent-soft);
-	}
-	.pos {
-		grid-row: 1 / 3;
-		font-size: 1.5em;
-		font-weight: 700;
-		color: var(--medal);
-	}
-	.who {
-		min-width: 0;
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		font-weight: 600;
-	}
-	.nick {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.dot {
-		flex: none;
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: var(--text-faint);
-	}
-	.dot.on {
-		background: var(--good);
-	}
-	.sum {
-		font-weight: 700;
-		color: var(--accent);
-	}
-	.unit {
-		margin-left: 4px;
-		font-size: 0.8em;
-		font-weight: 500;
-		color: var(--text-dim);
 	}
 	.board {
 		--em: calc(15px * var(--hud-scale));
@@ -363,9 +284,6 @@
 	}
 	/* Small windows: drop what matters least, then let the header wrap. */
 	@media (max-width: 860px) {
-		.rich ol {
-			grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-		}
 		.minor {
 			display: none;
 		}

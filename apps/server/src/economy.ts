@@ -26,7 +26,7 @@ import {
 import { AbuseEngine } from './abuse.ts';
 import { knownPoints, PlayerActivity, StepClock, type Stillness } from './activity.ts';
 import { ipKey } from './admin.ts';
-import { type AbuseRow, CASINO_LOG_DAYS, type Db, POINT_LOG_DAYS } from './db.ts';
+import { type AbuseRow, type Db, POINT_LOG_KEEP, POINT_LOG_RULES_MS } from './db.ts';
 
 /** Activity and multiplier are updated this often (ms). */
 export const ECONOMY_TICK_MS = 250;
@@ -340,8 +340,7 @@ export class Economy {
 		if (this.pairRounds.size > 1000) this.pairRounds.clear();
 		try {
 			this.host.db.deleteExpiredBans(now);
-			const n = this.host.db.rollUpPoints(now - POINT_LOG_DAYS * 86_400_000);
-			this.host.db.pruneCasino(now - CASINO_LOG_DAYS * 86_400_000);
+			const n = this.host.db.rollUpPoints(now - POINT_LOG_RULES_MS, POINT_LOG_KEEP);
 			if (n > 0) this.host.log(`point log: ${n} old entries summed up`);
 		} catch (err) {
 			this.host.log(`housekeeping failed: ${(err as Error).message}`);
@@ -494,7 +493,7 @@ export class Economy {
 	private sendCoins(p: EconomyPlayer): void {
 		if (p.accountId === null) return;
 		const row = this.host.db.accountStats(p.accountId);
-		const recent: PointLogEntry[] = this.host.db.recentPoints(p.accountId, RECENT_AWARDS);
+		const recent: PointLogEntry[] = this.host.db.recentMoney(p.accountId, RECENT_AWARDS);
 		this.host.send(p, { type: 'coins', total: row.pointsTotal, balance: row.pointsBalance, recent });
 	}
 

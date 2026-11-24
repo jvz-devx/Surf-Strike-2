@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { crashTime, pts, START_COINS, type ServerMessage } from '@surf/shared';
+import { CASINO_RECENT, crashTime, pts, START_COINS, type ServerMessage } from '@surf/shared';
 import { hashPassword } from './auth.ts';
 import { Casino, secureRandom, type CasinoPlayer } from './casino.ts';
 import { Db } from './db.ts';
@@ -142,14 +142,26 @@ describe('casino: coinflip and slots', () => {
 		assert.ok(Math.abs(rolls.filter((r) => r < 0.5).length / n - 0.5) < 0.02);
 	});
 
-	it('old log rows go, the sums stay', () => {
-		const t = table(100);
-		t.ask({ type: 'casinoBet', game: 'coinflip', bet: 10, side: 'tails' });
-		t.now += 31 * 86_400_000;
-		t.ask({ type: 'casinoBet', game: 'coinflip', bet: 20, side: 'tails' });
-		assert.equal(t.db.pruneCasino(t.now - 30 * 86_400_000), 1);
-		assert.deepEqual(t.db.recentCasino(t.account, 10).map((r) => r.bet), [pts(20)]);
-		assert.equal(t.db.casinoNet(t.account), pts(-30));
+	it('keeps the newest bets per account and all sums; the Coins view shows bets among the rest', () => {
+		const t = table(400);
+		for (let i = 0; i < CASINO_RECENT + 4; i++) t.db.casinoPlay(t.account, { at: t.now + i, game: 'slots', bet: pts(1), payout: i % 3 === 0 ? pts(1) : 0 });
+		const n = t.db.db.prepare('SELECT COUNT(*) AS n FROM casino_log').get() as { n: number };
+		assert.equal(n.n, CASINO_RECENT);
+		assert.equal(t.db.casinoNet(t.account), -pts(CASINO_RECENT + 4) + pts(Math.ceil((CASINO_RECENT + 4) / 3)));
+		t.now += 10_000;
+		t.db.casinoPlay(t.account, { at: t.now, game: 'coinflip', bet: pts(10), payout: pts(20) });
+		t.db.spendPoints({ accountId: t.account, at: t.now + 1, reason: 'shop:hat_cap', label: 'Shop: Breakline cap', amount: pts(30) });
+		t.db.casinoPlay(t.account, { at: t.now + 2, game: 'crash', bet: pts(5), payout: 0 });
+		const recent = t.db.recentMoney(t.account, 30);
+		assert.equal(recent.length, 30);
+		assert.deepEqual(recent.slice(0, 5).map((r) => [r.reason, r.label, r.amount]), [
+			['casino:crash', 'Crash lost', -pts(5)],
+			['shop:hat_cap', 'Shop: Breakline cap', -pts(30)],
+			['casino:coinflip', 'Coinflip won', pts(10)],
+			['casino:slots', 'Slots bet returned', 0],
+			['casino:slots', 'Slots lost', -pts(1)]
+		]);
+		assert.deepEqual(Object.keys(recent[0]!).sort(), ['amount', 'at', 'label', 'mult', 'reason']);
 	});
 });
 

@@ -14,8 +14,8 @@ export const isCasinoGame = (v: unknown): v is CasinoGame => CASINO_GAMES.includ
 /** Smallest and largest bet, whole coins. */
 export const CASINO_MIN: Readonly<Record<CasinoGame, number>> = Object.freeze({ coinflip: 10, crash: 5, slots: 1 });
 export const CASINO_MAX_BET = 500;
-/** Latest results in the `casino` message, all games together. */
-export const CASINO_RECENT = 60;
+/** Latest results in the `casino` message and kept per account, all games together. */
+export const CASINO_RECENT = 30;
 
 /** Uniform in [0, 1). */
 export type RandomSource = () => number;
@@ -159,4 +159,10 @@ export function slotOdds(): { hit: number; profit: number; payback: number } {
 				payback += p * mult;
 			}
 	return { hit, profit, payback };
+}
+
+/** Text of a settled bet in the Coins view: `Coinflip won`. `net`: payout minus bet, tenths. */
+export function casinoLabel(game: string, net: number): string {
+	const name = isCasinoGame(game) ? { coinflip: 'Coinflip', crash: 'Crash', slots: 'Slots' }[game] : game;
+	return `${name} ${net > 0 ? 'won' : net < 0 ? 'lost' : 'bet returned'}`;
 }

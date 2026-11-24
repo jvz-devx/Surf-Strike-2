@@ -4,7 +4,7 @@ Status: the core is implemented (ledger, activity, playtime points, abuse detect
 
 ## Terms
 
-- **Points** are what you earn. The lifetime sum never goes down (Esc › Coins).
+- **Points** are what you earn. The lifetime sum never goes down; it is stored but not shown.
 - **Coins** are the spendable balance. Every point earned adds 1 coin. Everyone sees everyone's coins on the Tab scoreboard. Buying in the shop lowers the coins only.
 - Accounts only. Guests play everything but earn nothing.
 - <a id="start-bonus"></a>**Start bonus.** A newly registered account starts with 100 coins (`START_COINS`): balance only, no lifetime points, written in the transaction that creates the account with one log row (`welcome`, "Welcome bonus", not counted towards the backstop). The player gets a notice. Accounts of before are unchanged.
@@ -198,10 +198,10 @@ All in the game server's SQLite, amounts in tenths. Migrations are additive: new
 | `account_stats` | as before, plus `active_ms` (active time towards the next playtime points) |
 | `bans` | as before, plus `expires_at` (wall clock ms; null = permanent) |
 | `point_log` | `account_id`, `created_at`, `mode`, `map`, `reason`, `label`, `base`, `counted` (towards the backstop), `multiplier`, `amount` (negative for purchases and admin removals) |
-| `casino_log` | `account_id`, `created_at`, `game`, `bet`, `payout`: settled casino bets of the last 30 days |
+| `casino_log` | `account_id`, `created_at`, `game`, `bet`, `payout`: settled casino bets, the newest 30 per account |
 | `casino_stats` | `account_id`, `plays`, `bet`, `payout`: sums of all bets ever (the net result) |
 | `casino_crash` | `id`, `account_id` (unique), `created_at`, `bet`: open crash bets |
-| `point_rollup` | `account_id`, `mode`, `reason`, `entries`, `base`, `amount`: sums of log rows older than 30 days, which are deleted |
+| `point_rollup` | `account_id`, `mode`, `reason`, `entries`, `base`, `amount`: sums of deleted log rows. `point_log` keeps the newest 30 rows per account, plus those of the last 25 hours, which the limits on repeated awards count |
 | `abuse_log` | `created_at`, `account_id`, `username`, `action` (`warning`, `ban`, `exempt`), `strikes`, `evidence`; the latest 2000 rows. No IP addresses |
 
 Totals, log row and (for playtime) the rest of the active time are written in one transaction. Active time is written every 60 s, when the account leaves and at shutdown.
@@ -216,7 +216,7 @@ Additive; older clients ignore the messages, newer clients show nothing without 
 
 | Direction | Message |
 | --- | --- |
-| S→C | `coins { total, balance, recent[{ at, reason, label, amount, mult }] }`: after `welcome`, `auth` and purchases; the latest 20 entries |
+| S→C | `coins { total, balance, recent[{ at, reason, label, amount, mult }] }`: after `welcome`, `auth` and every change that is no award; the latest 30 entries, casino bets included (`casino:<game>`) |
 | S→C | `award { at, reason, label, base, mult, amount, total, balance }`: to the player who earned it |
 | S→C | `multiplier { mult, active, need }`: on join and every change, to everyone; `need` = active players this mode needs to pay |
 | S→C | `coinsNotice { text, tone: info\|warn }`: guest hint and abuse warning (also sent as a chat line for older clients), welcome bonus, hourly limit, refunded crash bet |
@@ -343,7 +343,7 @@ Three games in the Esc menu, for logged-in accounts; guests can look. Coins are 
 | Pearl | 1 | 10× | 250× |
 
 - **Rules:** bets are whole coins; `CASINO_MIN` and `CASINO_MAX_BET` (500). Every outcome is rolled with `node:crypto` (`secureRandom`); the roll functions take the random source, so tests and the dev mock use the same code. Taking the bet, paying and logging are one transaction (`Db.casinoPlay`); for crash the bet is taken at the start (`crashOpen`) and the payout is paid at the end (`crashClose`). The balance never goes below zero.
-- **Only the balance changes:** no lifetime points, no `point_log` row, nothing towards playtime, backstop or abuse detection. `casino_log` keeps 30 days, `casino_stats` the sums for the net result.
+- **Only the balance changes:** no lifetime points, no `point_log` row (the Coins view merges `casino_log` in), nothing towards playtime, backstop or abuse detection. `casino_log` keeps the newest 30 bets per account, `casino_stats` the sums for the net result.
 - At most 5 requests per second and connection; more are refused, above 100 the client is kicked.
 
 | Direction | Message |

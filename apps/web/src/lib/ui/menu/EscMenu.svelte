@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { mapTitle, type AdminState } from '@surf/shared';
+	import { mapTitle, type AdminState, type RichEntry } from '@surf/shared';
 	import type { CasinoView, CoinsView, GameApi, MapListEntry, ShopView } from '#lib/game/contract.js';
 	import SettingsMenu from '#lib/ui/menu/SettingsMenu.svelte';
 	import MapMenu from '#lib/ui/menu/MapMenu.svelte';
@@ -33,6 +33,7 @@
 		shop = null,
 		casino = null,
 		multiplier = null,
+		richest = [],
 		adminState = null,
 		adminNotice = null,
 		blocked = false,
@@ -57,6 +58,8 @@
 		/** Casino submenu (null: offline or a server without one). */
 		casino?: CasinoView | null;
 		multiplier?: { mult: number; active: number; need: number } | null;
+		/** Coins submenu: accounts with the most coins. */
+		richest?: readonly RichEntry[];
 		/** Admin menu data (server-sent to admin accounts only). */
 		adminState?: AdminState | null;
 		adminNotice?: { ok: boolean; text: string; at: number } | null;
@@ -222,7 +225,7 @@
 		<div
 			class="content ss-panel"
 			class:compact={view === 'account'}
-			class:wide={view === 'shop' || view === 'inventory' || view === 'casino'}
+			class:wide={view === 'shop' || view === 'inventory' || view === 'coins' || view === 'casino'}
 			id="ss-menu-content"
 			role="dialog"
 			aria-modal="false"
@@ -248,7 +251,7 @@
 			{:else if view === 'inventory'}
 				<InventoryMenu {api} {shop} loggedIn={account !== null} {online} initial={shownItem} onshop={() => go('shop')} />
 			{:else if view === 'coins'}
-				<CoinsMenu {api} {coins} {multiplier} loggedIn={account !== null} {online} />
+				<CoinsMenu {api} {coins} {multiplier} {richest} account={account?.username ?? null} loggedIn={account !== null} {online} />
 			{:else if view === 'casino'}
 				<CasinoMenu {api} {casino} balance={coins?.balance ?? 0} loggedIn={account !== null} {online} />
 			{:else if view === 'admin'}

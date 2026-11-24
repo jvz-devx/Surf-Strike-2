@@ -159,6 +159,7 @@
 			shop={hud.shop}
 			casino={hud.casino}
 			multiplier={hud.multiplier}
+			richest={hud.richest}
 			maps={hud.maps}
 			mapId={hud.mapId}
 			canChangeMap={hud.canChangeMap}

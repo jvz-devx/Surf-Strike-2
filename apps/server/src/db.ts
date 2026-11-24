@@ -15,13 +15,13 @@
  * - `runs`: legacy guest runs keyed by the localStorage UUID (and timed at
  *   the old 128 tick). Kept untouched for reference, never read or written.
  *
- * - `point_log`: every award and purchase of the last POINT_LOG_DAYS days;
+ * - `point_log`: the last POINT_LOG_KEEP awards and purchases per account;
  *   older rows are summed up in `point_rollup` (docs/economy.md#storage).
  * - `abuse_log`: automatic warnings and bans.
  * - `owned_items`, `equipped`: cosmetics bought in the shop and worn, one item
  *   per slot (docs/economy.md#shop).
- * - `casino_log`, `casino_stats`, `casino_crash`: casino bets of the last
- *   CASINO_LOG_DAYS days, their sums per account, and the open crash bets
+ * - `casino_log`, `casino_stats`, `casino_crash`: the last CASINO_RECENT casino
+ *   bets per account, their sums per account, and the open crash bets
  *   (docs/economy.md#casino).
  *
  * Every table is created with CREATE TABLE IF NOT EXISTS and new columns are
@@ -31,7 +31,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
-import { usernameKey } from '@surf/shared';
+import { CASINO_RECENT, casinoLabel, RECENT_AWARDS, usernameKey } from '@surf/shared';
 
 export interface RunRow {
 	accountId: number;
@@ -104,10 +104,12 @@ export interface AbuseRow {
 	evidence: string;
 }
 
-/** Days a point_log row is kept before it is summed up. */
-export const POINT_LOG_DAYS = 30;
-/** Days a casino_log row is kept; the sums are in casino_stats. */
-export const CASINO_LOG_DAYS = 30;
+/**
+ * point_log rows kept per account; older ones are summed up. Those of the last
+ * POINT_LOG_RULES_MS stay longer: the limits on repeated awards (up to 24 hours) count them.
+ */
+export const POINT_LOG_KEEP = RECENT_AWARDS;
+export const POINT_LOG_RULES_MS = 25 * 3600_000;
 /** abuse_log rows kept. */
 export const ABUSE_LOG_MAX = 2000;
 
@@ -409,13 +411,23 @@ export class Db {
 			recentPoints: d.prepare(
 				`SELECT created_at AS at, reason, label, amount, multiplier AS mult FROM point_log WHERE account_id = ? ORDER BY id DESC LIMIT ?`
 			),
+			oldPoints: d.prepare(
+				`SELECT id FROM (SELECT id, created_at, ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY id DESC) AS n FROM point_log) WHERE created_at < ? AND n > ?`
+			).pluck(),
+			// What changed the balance: awards, purchases, admins (point_log) and settled bets (casino_log).
+			recentMoney: d.prepare(
+				`SELECT * FROM (SELECT id, created_at AS at, reason, label, amount, multiplier AS mult, 0 AS bet FROM point_log WHERE account_id = @id ORDER BY id DESC LIMIT @n)
+				 UNION ALL
+				 SELECT * FROM (SELECT id, created_at AS at, 'casino:' || game AS reason, '' AS label, payout - bet AS amount, 10 AS mult, 1 AS bet FROM casino_log WHERE account_id = @id ORDER BY id DESC LIMIT @n)
+				 ORDER BY at DESC, id DESC LIMIT @n`
+			),
 			rollUp: d.prepare(
 				`INSERT INTO point_rollup (account_id, mode, reason, entries, base, amount)
-				 SELECT account_id, mode, reason, COUNT(*), SUM(base), SUM(amount) FROM point_log WHERE created_at < ? GROUP BY account_id, mode, reason
+				 SELECT account_id, mode, reason, COUNT(*), SUM(base), SUM(amount) FROM point_log WHERE id IN (SELECT value FROM json_each(?)) GROUP BY account_id, mode, reason
 				 ON CONFLICT(account_id, mode, reason) DO UPDATE SET
 					entries = entries + excluded.entries, base = base + excluded.base, amount = amount + excluded.amount`
 			),
-			deleteOldPoints: d.prepare(`DELETE FROM point_log WHERE created_at < ?`),
+			deleteOldPoints: d.prepare(`DELETE FROM point_log WHERE id IN (SELECT value FROM json_each(?))`),
 			insertAbuse: d.prepare(
 				`INSERT INTO abuse_log (created_at, account_id, username, action, strikes, evidence) VALUES (?, ?, ?, ?, ?, ?)`
 			),
@@ -442,7 +454,9 @@ export class Db {
 			),
 			casinoNet: d.prepare(`SELECT payout - bet FROM casino_stats WHERE account_id = ?`).pluck(),
 			recentCasino: d.prepare(`SELECT created_at AS at, game, bet, payout FROM casino_log WHERE account_id = ? ORDER BY id DESC LIMIT ?`),
-			pruneCasino: d.prepare(`DELETE FROM casino_log WHERE created_at < ?`),
+			pruneCasino: d.prepare(
+				`DELETE FROM casino_log WHERE account_id = @id AND id <= (SELECT id FROM casino_log WHERE account_id = @id ORDER BY id DESC LIMIT 1 OFFSET @keep)`
+			),
 			openCrash: d.prepare(`INSERT INTO casino_crash (account_id, created_at, bet) VALUES (?, ?, ?) ON CONFLICT(account_id) DO NOTHING`),
 			closeCrash: d.prepare(`DELETE FROM casino_crash WHERE id = ? RETURNING account_id AS accountId, bet`),
 			openCrashes: d.prepare(`SELECT id FROM casino_crash ORDER BY id`).pluck(),
@@ -687,6 +701,7 @@ export class Db {
 	private settleCasino(accountId: number, e: CasinoRow): void {
 		if (e.payout > 0) this.st.credit.run(e.payout, accountId);
 		this.st.logCasino.run(accountId, e.at, e.game, e.bet, e.payout);
+		this.st.pruneCasino.run({ id: accountId, keep: CASINO_RECENT });
 		this.st.addCasino.run(accountId, e.bet, e.payout);
 	}
 
@@ -740,11 +755,6 @@ export class Db {
 		return this.st.recentCasino.all(accountId, limit) as CasinoRow[];
 	}
 
-	/** Delete log rows older than `before`; returns how many. */
-	pruneCasino(before: number): number {
-		return this.st.pruneCasino.run(before).changes;
-	}
-
 	/** Item ids, oldest first (also items this version does not know). */
 	ownedItems(accountId: number): string[] {
 		return this.st.ownedItems.all(accountId) as string[];
@@ -788,11 +798,18 @@ export class Db {
 		return this.st.recentPoints.all(accountId, limit) as PointLogRow[];
 	}
 
-	/** Sum up and delete log rows older than `before`; returns how many. */
-	rollUpPoints(before: number): number {
+	/** The last changes of the balance, newest first: awards, purchases, admin changes and settled casino bets. */
+	recentMoney(accountId: number, limit: number): PointLogRow[] {
+		const rows = this.st.recentMoney.all({ id: accountId, n: limit }) as (PointLogRow & { id: number; bet: number })[];
+		return rows.map(({ id: _id, bet, ...r }) => (bet ? { ...r, label: casinoLabel(r.reason.slice('casino:'.length), r.amount) } : r));
+	}
+
+	/** Sum up and delete log rows older than `before`, except the newest `keep` of each account; returns how many. */
+	rollUpPoints(before: number, keep: number): number {
 		return this.db.transaction(() => {
-			this.st.rollUp.run(before);
-			return this.st.deleteOldPoints.run(before).changes;
+			const ids = JSON.stringify(this.st.oldPoints.all(before, keep));
+			this.st.rollUp.run(ids);
+			return this.st.deleteOldPoints.run(ids).changes;
 		})();
 	}
 

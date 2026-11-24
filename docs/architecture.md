@@ -131,7 +131,7 @@ Username + password, no email or verification ([gameplay.md](gameplay.md#account
 | `replays` | `map` (primary key), `account_id`, `time_ticks`, `samples`, `data` (deflate-raw BLOB), `created_at`: one record ghost per map, replaced only by a faster validated account run ([gameplay.md](gameplay.md#ghosts)) |
 | `owned_items` | `account_id`, `item_id` (primary key together), `bought_at`, `price` ([economy.md](economy.md#shop)) |
 | `equipped` | `account_id`, `slot` (primary key together), `item_id`; references `owned_items` |
-| `casino_log`, `casino_stats`, `casino_crash` | Settled bets of 30 days, sums per account, open crash bets ([economy.md](economy.md#storage)) |
+| `casino_log`, `casino_stats`, `casino_crash` | The newest 30 settled bets and the sums per account, open crash bets ([economy.md](economy.md#storage)) |
 
 ### Account totals
 
