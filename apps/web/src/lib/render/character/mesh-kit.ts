@@ -119,7 +119,7 @@ export function sample(table: readonly (readonly number[])[], x: number, out: nu
 	return out;
 }
 
-function superellipse(a: number, n: number): [number, number] {
+export function superellipse(a: number, n: number): [number, number] {
 	const c = Math.cos(a);
 	const s = Math.sin(a);
 	if (n === 2) return [c, s];
@@ -132,6 +132,7 @@ export class PartBuilder {
 	private groupStart = 0;
 	private socketDef: (typeof SOCKET_DEFS)[SocketName] | null = null;
 	private socketBone: BoneName | null = null;
+	private socketAt: THREE.Matrix4 | null = null;
 
 	constructor(readonly lod: Lod) {}
 
@@ -143,8 +144,10 @@ export class PartBuilder {
 	/**
 	 * Build the parts inside `fn` in the local space of a socket, rigidly bound
 	 * to its bone (hats, glasses). Weights given to the primitives are ignored.
+	 * `at` places everything inside the socket (uniform scale, then rotate, then move).
 	 */
-	socket(name: SocketName, fn: () => void): void {
+	socket(name: SocketName, fn: () => void, at?: { pos: V3; scale: number; rot?: V3 }): void {
+		this.socketAt = at ? new THREE.Matrix4().compose(new THREE.Vector3(...at.pos), new THREE.Quaternion().setFromEuler(new THREE.Euler(...(at.rot ?? [0, 0, 0]))), new THREE.Vector3(at.scale, at.scale, at.scale)) : null;
 		this.socketDef = SOCKET_DEFS[name];
 		this.socketBone = this.socketDef.bone;
 		try {
@@ -152,6 +155,7 @@ export class PartBuilder {
 		} finally {
 			this.socketDef = null;
 			this.socketBone = null;
+			this.socketAt = null;
 		}
 	}
 
@@ -159,7 +163,9 @@ export class PartBuilder {
 		const d = this.data;
 		const i = d.pos.length / 3;
 		if (this.socketDef) {
-			tmp.copy(p).applyQuaternion(this.socketDef.quat);
+			tmp.copy(p);
+			if (this.socketAt) tmp.applyMatrix4(this.socketAt);
+			tmp.applyQuaternion(this.socketDef.quat);
 			d.pos.push(tmp.x + this.socketDef.pos[0], tmp.y + this.socketDef.pos[1], tmp.z + this.socketDef.pos[2]);
 			w = [[this.socketBone!, 1]];
 		} else d.pos.push(p.x, p.y, p.z);

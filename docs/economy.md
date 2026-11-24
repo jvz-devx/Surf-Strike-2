@@ -277,7 +277,7 @@ this.chased.reset();
 
 Cosmetics only. The stock, the rarities and their prices are data in `packages/shared/src/cosmetics.ts` ([how to add an item](characters.md#adding-an-item)); the rules are in `apps/server/src/shop.ts`. Menu: [ui.md](ui.md#shop).
 
-- **Rarity** sets the price. Only `basic` exists: 75 coins (750 tenths).
+- **Rarity** sets the price. `basic` is 75 coins (750 tenths), `common` is 200.
 - **Buying** (`Db.buyItem`) is one transaction that takes the write lock first: not owned yet, balance suffices, deduct, log `shop:<id>` (label `Shop: <name>`), grant. A second click, tab or process gets "You already own this item". No refunds.
 - **Wearing**: owned items only, one per slot, in the item's own slot; `null` takes it off. Kept across sessions, maps and modes.
 - **Guests** see the stock and can try items on, but not buy or wear them.

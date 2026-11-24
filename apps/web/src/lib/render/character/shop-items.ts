@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { legWeights } from './body.js';
 import { registerItemMesh } from './items.js';
-import { bone, lerp, mix, PAL, smooth, type PartBuilder, type Ring } from './mesh-kit.js';
+import { bone, lerp, mix, PAL, smooth, superellipse, type PartBuilder, type Ring } from './mesh-kit.js';
 import {
 	buildCollar,
 	buildLaces,
@@ -123,6 +123,115 @@ registerItemMesh('hat_straw', {
 			b.grid(rows.map((r) => r.map((p) => p.clone().setY(p.y - 0.28))), { w: HEAD, pal: PAL.hatC, wrap: true, shadeAt: () => 0.85 });
 			b.grid([rows[3]!, rows[3]!.map((p) => p.clone().setY(p.y - 0.28))], { w: HEAD, pal: PAL.hatD, wrap: true, flip: true });
 		});
+	}
+});
+
+/** Crown of the fry cook hat: height and radius. */
+const FRY_ROWS: readonly (readonly [number, number])[] = [[-0.2, 5.1], [1.5, 5.2], [4, 5.35], [6.5, 5.45], [8.5, 5.35], [10, 4.95], [11.1, 4.1], [11.8, 2.8], [12.1, 1.1]];
+const fryRadius = (y: number): number => {
+	let i = 1;
+	while (i < FRY_ROWS.length - 1 && FRY_ROWS[i]![0] < y) i++;
+	const [y0, r0] = FRY_ROWS[i - 1]!;
+	const [y1, r1] = FRY_ROWS[i]!;
+	return lerp(r0, r1, Math.min(1, Math.max(0, (y - y0) / (y1 - y0))));
+};
+/** Worn small, perched on top of the head and tipped back a little. */
+const FRY_AT = { pos: [-0.5, 3.1, 0] as [number, number, number], scale: 0.58, rot: [0, 0, 0.1] as [number, number, number] };
+/** Black, drawn as a very dark shade so the four palette colours stay free. */
+const INK = 0.06;
+
+registerItemMesh('hat_frycook', {
+	// Sits on top of the hair, which stays as it is.
+	colors: [0xf7f6f2, 0xee5a3e, 0x4f86c8, 0xb9e5f8],
+	build(b) {
+		b.socket('hat', () => {
+			const seg = b.pick(36, 14, 9);
+			const off = (a: number) => Math.abs(Math.atan2(Math.sin(a), Math.cos(a)));
+			// Tall white crown; a light blue panel behind the red seam, on both sides.
+			const rows = b.lod === 2 ? FRY_ROWS.filter((_, i) => i % 2 === 0) : FRY_ROWS;
+			b.loft(rows.map(([y, r]) => ({ c: [0.1, y, 0], f: r, b: r + 0.15, s: r - 0.25, n: 2.2, w: HEAD })), {
+				seg,
+				pal: PAL.hatA,
+				capEnd: true,
+				palAt: (_i, a) => (off(a) > 1.4 && off(a) < 2.2 ? PAL.hatD : PAL.hatA)
+			});
+			// Point on the crown, `out` units outside it. Angle 0 is the front.
+			const on = (y: number, a: number, out: number): THREE.Vector3 => {
+				const r = fryRadius(y) + out;
+				const [ca, sa] = superellipse(a, 2.2);
+				return new THREE.Vector3(0.1 + ca * (ca < 0 ? r + 0.15 : r), y, sa * (r - 0.25));
+			};
+			// Angle of the front point `z` units to the side.
+			const at = (z: number) => Math.sign(z) * Math.asin(Math.min(1, Math.abs(z) / 5.2) ** 1.1);
+			// Black band around the head.
+			b.loft([[-1, 4.9], [-1, 5.5], [0.7, 5.5], [0.75, 5.1]].map(([y, r]) => ({ c: [0.1, y!, 0], f: r!, b: r! + 0.15, s: r! - 0.25, n: 2.2, w: HEAD, shade: INK })), { seg, pal: PAL.hatC, shadeAt: () => INK });
+			// Black button on top.
+			b.ball([0.1, 12.1, 0], [1.7, 1, 1.7], { w: HEAD, pal: PAL.hatC, seg: b.pick(12, 8, 6), rings: b.pick(6, 4, 3), shade: INK });
+			if (b.lod < 2) {
+				// Red seam: up one side, over the top, down the other.
+				const ys = FRY_ROWS.slice(0, 8).map(([y]) => y);
+				const path = [...ys.map((y) => on(y, -1.45, 0.05)), on(12.1, 0, 0.1).setX(0.1).setZ(0), ...ys.slice().reverse().map((y) => on(y, 1.45, 0.05))];
+				const n = b.pick(6, 4, 4);
+				const tube = path.map((c, k) => {
+					const dir = path[Math.min(k + 1, path.length - 1)]!.clone().sub(path[Math.max(k - 1, 0)]!).normalize();
+					const side = new THREE.Vector3(1, 0, 0);
+					const up = dir.clone().cross(side).normalize();
+					return Array.from({ length: n }, (_, j) => {
+						const t = (j / n) * Math.PI * 2;
+						return c.clone().addScaledVector(side, Math.cos(t) * 0.42).addScaledVector(up, Math.sin(t) * 0.42);
+					});
+				});
+				b.grid(tube, { w: HEAD, pal: PAL.hatB, wrap: true });
+				// Black line between the light blue panel and the white back.
+				if (b.lod === 0)
+					for (const s of SIDES) {
+						const z = sideSign(s);
+						const line = ys.slice(1, 7).map((y) => [on(y, z * 2.16, 0.07), on(y, z * 2.24, 0.07)]);
+						b.grid(line, { w: HEAD, pal: PAL.hatC, flip: z < 0, shadeAt: () => INK });
+					}
+				// Anchor on the front. Patches of [y, z half-width] follow the crown.
+				const patch = (rowsIn: readonly (readonly [number, number, number])[]) => {
+					b.grid(
+						rowsIn.map(([y, z0, z1]) => [on(y, at(z0), 0.1), on(y, at((z0 + z1) / 2), 0.1), on(y, at(z1), 0.1)]),
+						{ w: HEAD, pal: PAL.hatC, flip: true }
+					);
+				};
+				const ring = (y: number, r: number, w: number) => {
+					const k = b.pick(16, 8, 8);
+					const edge = (rr: number) => Array.from({ length: k }, (_, j) => {
+						const t = (j / k) * Math.PI * 2;
+						return on(y + Math.sin(t) * rr, at(Math.cos(t) * rr), 0.1);
+					});
+					b.grid([edge(r), edge(r - w)], { w: HEAD, pal: PAL.hatC, wrap: true, flip: true });
+				};
+				ring(8.6, 0.95, 0.42);
+				patch([[2.5, -0.22, 0.22], [7.8, -0.22, 0.22]]);
+				patch([[6.2, -1.55, 1.55], [6.75, -1.55, 1.55]]);
+				// Curved flukes.
+				const arc = b.pick(12, 6, 6);
+				const bend = (inner: boolean) => Array.from({ length: arc + 1 }, (_, j) => {
+					const t = (j / arc - 0.5) * 2;
+					const tip = 1 - Math.abs(t);
+					const y = 3.3 + t * t * 1.1 + (inner ? 0.25 + 0.35 * tip : -0.15 * tip);
+					return on(y, at(t * 2), 0.1);
+				});
+				b.grid([bend(false), bend(true)], { w: HEAD, pal: PAL.hatC, flip: true });
+			}
+			// Big blue peak with a black edge, turned up towards the tip.
+			const cols = b.pick(15, 9, 5);
+			const peakRow = (k: number) =>
+				Array.from({ length: cols }, (_, j) => {
+					const a = (j / (cols - 1) - 0.5) * 2.4;
+					const c = Math.cos(a);
+					return new THREE.Vector3(c * (5.3 + k * 6.4) - k * (1 - c) * 1.2, -0.15 - Math.sin(Math.PI * Math.min(1, k * 1.15)) * 0.5 + k * k * 1.1 - Math.sin(a) ** 2 * 1.1 * k, Math.sin(a) * (5 + k * 0.5));
+				});
+			const peak = [0, 0.35, 0.65, 0.88].map(peakRow);
+			const edge = peakRow(1);
+			const lower = (r: THREE.Vector3[]) => r.map((p) => p.clone().setY(p.y - 0.4));
+			b.grid(peak, { w: HEAD, pal: PAL.hatC, flip: true });
+			b.grid([peak[3]!, edge, lower(edge), lower(peak[3]!)], { w: HEAD, pal: PAL.hatC, flip: true, shadeAt: () => INK });
+			b.grid(peak.map(lower), { w: HEAD, pal: PAL.hatC, shadeAt: () => 0.75 });
+		}, FRY_AT);
 	}
 });
 

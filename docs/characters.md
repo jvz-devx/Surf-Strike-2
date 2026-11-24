@@ -27,7 +27,7 @@ Data, shared by server and client (`packages/shared/src/cosmetics.ts`):
 COSMETIC_SLOTS                 // ['hat', 'glasses', 'top', 'bottom', 'shoes']
 type Loadout                   // Record<CosmeticSlot, string | null>; null = the slot's default
 interface CosmeticItem         // { id, slot, name, isDefault?, rarity? }
-RARITIES                       // { basic: { name, color, price } }; price in tenths of a coin
+RARITIES                       // { basic, common: { name, color, price } }; price in tenths of a coin
 shopItems(), cosmeticPrice(i)  // items with a rarity are for sale
 registerCosmetic(item)         // add an item (throws on a duplicate id)
 getCosmetic(id), listCosmetics(slot?), defaultItem(slot)
@@ -37,9 +37,9 @@ sanitizeLoadout(untrusted)     // always a valid Loadout; use it on everything r
 
 The registry holds `top_default`, `bottom_default`, `shoes_default` and the shop's items (`SHOP_ITEMS`). Hat and glasses are empty by default. Buying, storage and messages: [economy.md](economy.md#shop). Guests wear the default look. Both ends run `sanitizeLoadout` on everything received or stored, so an item the other side does not know is simply not worn.
 
-| Slot | Items (all Basic, 75 coins) |
+| Slot | Items (Basic, 75 coins, unless noted) |
 | --- | --- |
-| hat | Breakline cap, Pom beanie, Straw hat |
+| hat | Breakline cap, Pom beanie, Straw hat, Fry cook hat (Common, 200 coins) |
 | glasses | Glare shades |
 | top | Sunset tee, Half-and-half tee, Checker tee |
 | bottom | Boardshorts, Joggers, Cargo pants |

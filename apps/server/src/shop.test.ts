@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { Worker } from 'node:worker_threads';
-import { COSMETIC_SLOTS, emptyLoadout, getCosmetic, pts, shopItems } from '@surf/shared';
+import { COSMETIC_SLOTS, cosmeticPrice, emptyLoadout, getCosmetic, pts, shopItems } from '@surf/shared';
 import { Db } from './db.ts';
 import { world } from './economy-helpers.ts';
 import type { GameServer } from './server.ts';
@@ -199,7 +199,7 @@ describe('shop on the server', () => {
 	it('guests see the stock but cannot buy or equip', async () => {
 		const { c, welcome } = await connect('Guesty');
 		const shop = await c.waitFor('shop');
-		assert.deepEqual(shop.items, shopItems().map((i) => ({ id: i.id, price: PRICE })));
+		assert.deepEqual(shop.items, shopItems().map((i) => ({ id: i.id, price: cosmeticPrice(i) })));
 		assert.deepEqual(shop.owned, []);
 		assert.deepEqual(shop.loadout, emptyLoadout());
 		assert.equal('loadout' in welcome.players.find((p) => p.id === welcome.selfId)!, false);

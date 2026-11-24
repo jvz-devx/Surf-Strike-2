@@ -25,7 +25,8 @@ export interface Rarity {
 
 /** Rarity levels, cheapest first. */
 export const RARITIES = Object.freeze({
-	basic: { name: 'Basic', color: '#9fc3dc', price: 750 }
+	basic: { name: 'Basic', color: '#9fc3dc', price: 750 },
+	common: { name: 'Common', color: '#7fd08a', price: 2000 }
 }) satisfies Readonly<Record<string, Rarity>>;
 export type RarityId = keyof typeof RARITIES;
 
@@ -110,6 +111,7 @@ const SHOP_ITEMS: readonly Required<Omit<CosmeticItem, 'isDefault'>>[] = [
 	{ id: 'hat_cap', slot: 'hat', name: 'Breakline cap', rarity: 'basic' },
 	{ id: 'hat_beanie', slot: 'hat', name: 'Pom beanie', rarity: 'basic' },
 	{ id: 'hat_straw', slot: 'hat', name: 'Straw hat', rarity: 'basic' },
+	{ id: 'hat_frycook', slot: 'hat', name: 'Fry cook hat', rarity: 'common' },
 	{ id: 'glasses_shades', slot: 'glasses', name: 'Glare shades', rarity: 'basic' },
 	{ id: 'top_sunset', slot: 'top', name: 'Sunset tee', rarity: 'basic' },
 	{ id: 'top_halves', slot: 'top', name: 'Half-and-half tee', rarity: 'basic' },

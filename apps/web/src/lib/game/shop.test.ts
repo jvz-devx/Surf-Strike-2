@@ -27,7 +27,7 @@ describe('shop view', () => {
 	});
 
 	it('lists what both sides know at the server price, every slot in a category', () => {
-		expect(shopEntries(view())).toHaveLength(13);
+		expect(shopEntries(view())).toHaveLength(14);
 		expect(shopEntries(view({ items: [{ id: 'hat_cap', price: 10 }] }))).toEqual([{ item: cap, price: 10 }]);
 		expect(shopItems().every((i) => SHOP_CATEGORIES.some((c) => c.slot === i.slot))).toBe(true);
 	});
