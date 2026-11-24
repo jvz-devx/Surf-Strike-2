@@ -6,6 +6,7 @@ import {
 	canDisableMap,
 	groupAdminMaps,
 	isAdminTab,
+	parseAdminCoins,
 	mapSelectable,
 	mapMenuState,
 	mapRowPickable,
@@ -172,6 +173,11 @@ describe('admin menu helpers', () => {
 		expect(mapSelectable({}, false)).toBe(true);
 		expect(isAdminTab('bans')).toBe(true);
 		expect(isAdminTab('nope')).toBe(false);
+	});
+
+	it('coin amounts: whole numbers the server accepts', () => {
+		expect([' 50 ', '1', '100000'].map(parseAdminCoins)).toEqual([50, 1, 100000]);
+		for (const bad of ['', '0', '-5', '1.5', '1e3', 'x', '100001', null]) expect(parseAdminCoins(bad)).toBeNull();
 	});
 });
 

@@ -92,8 +92,8 @@ Each client simulates its own movement with zero input lag. The server trusts po
 | S→C | `records` inside `welcome`, `mapChange`, `runResult`, `auth` and `records`: `{ pbTicks, pbSplits, rank, recordTicks, recordName, top? }`; `top` = first 10 times `{ rank, name, ticks, self? }` on race maps, absent on older servers and in other modes | JSON |
 | S→C | `records { map, records }`: pushed to every other player on the map when a run sets a new PB (their rank and the map record may have changed) | JSON |
 | C↔S | `chat { text }` / `chat { from, text, admin? }` (`admin`: server-set marker for admin senders; scoreboard rows carry the same flag) | JSON |
-| C→S | `admin { action }`: `setMapEnabled { mapId, enabled }`, `ban { targetId? \| username?, reason? }`, `unban { banId }`, `forceMap { mapId }`, `extend`, `listBans`. Re-checked on the server; non-admins get `adminResult { ok: false }` and nothing happens | JSON |
-| S→C | `adminResult { ok, error?, message? }` (every `admin` request) and, to admins only, `adminState { maps[{ id, title, kind, enabled }], bans[{ id, username, kind, reason, createdAt, createdBy, secondsLeft? }], abuse[]?, players[{ id, name, account?, guest, admin }] }` (after each request and when players or bans change) | JSON |
+| C→S | `admin { action }`: `setMapEnabled { mapId, enabled }`, `ban { targetId? \| username?, reason? }`, `unban { banId }`, `coins { username, op: add\|subtract\|reset, amount? }` (whole coins), `forceMap { mapId }`, `extend`, `listBans`. Re-checked on the server; non-admins get `adminResult { ok: false }` and nothing happens | JSON |
+| S→C | `adminResult { ok, error?, message? }` (every `admin` request) and, to admins only, `adminState { maps[{ id, title, kind, enabled }], bans[{ id, username, kind, reason, createdAt, createdBy, secondsLeft? }], abuse[]?, players[{ id, name, account?, guest, admin, coins? }] }` (after each request and when players or bans change) | JSON |
 | S→C | `banned { reason, seconds? }`, then close 4009 | JSON |
 | C→S | Shop: `shopBuy { item }`, `shopEquip { slot, item }` ([economy.md](economy.md#shop)) | JSON |
 | S→C | Shop: `shop`, `shopResult`, `cosmetics { id, loadout }`; `loadout?` in `welcome.players[]` and `join.player` ([economy.md](economy.md#shop)) | JSON |
@@ -161,7 +161,7 @@ A small admin menu (Esc menu › Admin, [ui.md](ui.md#admin)) for the host. Code
 | --- | --- |
 | `map_settings` | `map_id` (primary key), `enabled` (0/1; missing row = enabled) |
 | `bans` | `id`, `account_id` (nullable), `player_key` (nullable), `ip` (nullable), `username_snapshot`, `reason`, `created_at`, `created_by`, `expires_at` (null = permanent) |
-| `admin_log` | `id`, `created_at`, `admin_account_id`, `admin_username`, `action` (`enable-map`, `disable-map`, `force-map`, `extend`, `ban`, `unban`), `target`, `detail` |
+| `admin_log` | `id`, `created_at`, `admin_account_id`, `admin_username`, `action` (`enable-map`, `disable-map`, `force-map`, `extend`, `ban`, `unban`, `coins-add`, `coins-subtract`, `coins-reset`), `target`, `detail` |
 
 ## Repo layout
 

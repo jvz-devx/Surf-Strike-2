@@ -2,7 +2,7 @@
  * Pure helpers for the Esc menu (docs/ui.md#esc-menu): map grouping by
  * gamemode, filtering, settings sections and their cvar defaults. No DOM.
  */
-import { GAME_MODES, GAME_MODE_IDS, MAP_SIZE_LABELS, type AdminMapInfo } from '@surf/shared';
+import { ADMIN_COINS_MAX, GAME_MODES, GAME_MODE_IDS, MAP_SIZE_LABELS, type AdminMapInfo } from '@surf/shared';
 import type { MapListEntry } from '#lib/game/contract.js';
 import { CLIENT_CVARS, type CvarDef } from '#lib/game/cvars.js';
 
@@ -141,6 +141,13 @@ export const ADMIN_TABS: readonly { id: AdminTabId; label: string }[] = [
 
 export function isAdminTab(v: unknown): v is AdminTabId {
 	return ADMIN_TABS.some((t) => t.id === v);
+}
+
+/** Whole coins typed into the Admin menu; null when not a number the server accepts. */
+export function parseAdminCoins(v: string | number | null | undefined): number | null {
+	const s = String(v ?? '').trim();
+	const n = /^\d{1,6}$/.test(s) ? Number(s) : 0;
+	return n >= 1 && n <= ADMIN_COINS_MAX ? n : null;
 }
 
 export interface AdminMapGroup {

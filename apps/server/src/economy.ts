@@ -431,6 +431,21 @@ export class Economy {
 		return r;
 	}
 
+	/**
+	 * Admin change of the balance (docs/economy.md#admin-changes): signed tenths, or
+	 * null for a reset to zero. Clamped at zero; lifetime points and awards stay.
+	 * Null when the account does not exist.
+	 */
+	adjust(accountId: number, amount: number | null): { delta: number; balance: number } | null {
+		const label = amount === null ? 'Coins reset by an admin' : amount > 0 ? 'Coins added by an admin' : 'Coins removed by an admin';
+		const r = this.host.db.adjustBalance({ accountId, at: this.host.now(), reason: 'admin', label }, amount);
+		if (!r || r.delta === 0) return r;
+		this.sendCoinsTo(accountId);
+		const text = r.delta > 0 ? `An admin gave you ${formatTenths(r.delta)} coins.` : `An admin removed ${formatTenths(-r.delta)} of your coins.`;
+		for (const p of this.host.players()) if (p.accountId === accountId) this.host.send(p, { type: 'coinsNotice', text, tone: 'info' });
+		return r;
+	}
+
 	private sendCoinsTo(accountId: number): void {
 		for (const p of this.host.players()) if (p.accountId === accountId) this.sendCoins(p);
 	}

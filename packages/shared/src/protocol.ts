@@ -213,11 +213,15 @@ export type AdminAction =
 	| { action: 'forceMap'; mapId: string }
 	/** Add ADMIN_EXTEND seconds to the current map. */
 	| { action: 'extend' }
+	/** Change an account's coin balance (docs/economy.md#admin-changes); `amount` is whole coins, not used by `reset`. */
+	| { action: 'coins'; username: string; op: 'add' | 'subtract' | 'reset'; amount?: number }
 	/** Just ask for a fresh `adminState`. */
 	| { action: 'listBans' };
 
 /** Seconds the admin "extend" button adds. */
 export const ADMIN_EXTEND = 10 * 60;
+/** Most coins one admin `coins` action adds or takes. */
+export const ADMIN_COINS_MAX = 100_000;
 /** Max length of a ban reason. */
 export const MAX_BAN_REASON = 128;
 
@@ -263,6 +267,8 @@ export interface AdminPlayerInfo {
 	guest: boolean;
 	/** Admins cannot be banned. */
 	admin: boolean;
+	/** Balance of the account in tenths (absent for guests and on older servers). */
+	coins?: number;
 }
 
 export interface AdminState {

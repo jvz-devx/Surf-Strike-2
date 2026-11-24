@@ -11,12 +11,13 @@
  * - Bans (`bans`), permanent or with an expiry: account bans (plus the player key of a connected target)
  *   and guest bans (player key, plus the client IP when known). Banned
  *   connections get `banned` and close code 4009. Admins cannot be banned.
+ * - Coins: add to, subtract from or reset an account's balance (Economy.adjust).
  * - Every action is logged to the console and to `admin_log`.
  */
 import type { IncomingMessage } from 'node:http';
 import { isIP } from 'node:net';
 import type { AdminAction, AdminState, MapDef, ServerMessage } from '@surf/shared';
-import { ADMIN_EXTEND, mapTitle, MAX_BAN_REASON, sanitizeText, usernameKey } from '@surf/shared';
+import { ADMIN_COINS_MAX, ADMIN_EXTEND, formatTenths, mapTitle, MAX_BAN_REASON, sanitizeText, usernameKey } from '@surf/shared';
 import { AttemptLimiter } from './auth.ts';
 import type { BanRow, Db } from './db.ts';
 
@@ -94,6 +95,8 @@ export interface AdminHost<C extends AdminClient> {
 	forceMap(mapId: string): boolean;
 	/** Extend the current map; null on success, else the reason. */
 	extend(seconds: number): string | null;
+	/** Change an account's balance (Economy.adjust); null = no such account. */
+	adjustCoins(accountId: number, amount: number | null): { delta: number; balance: number } | null;
 	/** Send `banned`, close with 4009 and drop the connection. */
 	kickBanned(c: C, ban: BanRow): void;
 }
@@ -197,7 +200,8 @@ export class AdminController<C extends AdminClient> {
 				name: c.name,
 				...(c.accountId !== null ? { account: c.name } : {}),
 				guest: c.accountId === null,
-				admin: c.admin
+				admin: c.admin,
+				...(c.accountId !== null ? { coins: this.host.db.accountStats(c.accountId).pointsBalance } : {})
 			});
 		}
 		return {
@@ -256,6 +260,9 @@ export class AdminController<C extends AdminClient> {
 					break;
 				case 'unban':
 					r = this.unban(c, a.banId);
+					break;
+				case 'coins':
+					r = this.coins(c, a.username, a.op, a.amount);
 					break;
 				case 'forceMap':
 					r = this.forceMap(c, a.mapId);
@@ -369,6 +376,26 @@ export class AdminController<C extends AdminClient> {
 		if (!ban) return { ok: false, error: 'No such ban.' };
 		this.audit(c, 'unban', `${ban.accountId !== null ? 'account' : 'guest'} ${ban.usernameSnapshot}`, `ban ${ban.id}`);
 		return { ok: true, changed: true, message: `Unbanned ${ban.usernameSnapshot}.` };
+	}
+
+	private coins(c: C, username: unknown, op: unknown, amount: unknown): Result {
+		if (typeof username !== 'string' || !username.trim()) return { ok: false, error: 'Pick a player or enter a username.' };
+		if (op !== 'add' && op !== 'subtract' && op !== 'reset') return { ok: false, error: 'Bad admin request.' };
+		let tenths: number | null = null;
+		if (op !== 'reset') {
+			if (typeof amount !== 'number' || !Number.isInteger(amount) || amount < 1 || amount > ADMIN_COINS_MAX) {
+				return { ok: false, error: `Enter a whole number from 1 to ${ADMIN_COINS_MAX}.` };
+			}
+			tenths = (op === 'add' ? 1 : -1) * amount * 10;
+		}
+		const account = this.host.db.accountByName(username.trim().slice(0, 64));
+		const r = account && this.host.adjustCoins(account.id, tenths);
+		if (!account || !r) return { ok: false, error: `No account named "${username.trim().slice(0, 24)}".` };
+		const now = `${formatTenths(r.balance)} coins`;
+		if (r.delta === 0) return { ok: true, message: `${account.username} already has ${now}.` };
+		const change = `${r.delta > 0 ? '+' : ''}${formatTenths(r.delta)}`;
+		this.audit(c, `coins-${op}`, `account ${account.username}`, `${change}, now ${formatTenths(r.balance)}`);
+		return { ok: true, changed: true, message: `${account.username}: ${change} coins, now ${now}.` };
 	}
 
 	private forceMap(c: C, mapId: unknown): Result {

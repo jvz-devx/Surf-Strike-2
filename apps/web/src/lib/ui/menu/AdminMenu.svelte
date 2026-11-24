@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { mapTitle, type AdminState } from '@surf/shared';
+	import { formatWhole, mapTitle, type AdminState } from '@surf/shared';
 	import type { GameApi } from '#lib/game/contract.js';
 	import Tabs from '#lib/ui/menu/Tabs.svelte';
 	import Toggle from '#lib/ui/menu/Toggle.svelte';
-	import { ADMIN_TABS, canDisableMap, groupAdminMaps, isAdminTab, type AdminTabId } from '#lib/ui/menu/menu.js';
+	import { ADMIN_TABS, canDisableMap, groupAdminMaps, isAdminTab, parseAdminCoins, type AdminTabId } from '#lib/ui/menu/menu.js';
 
 	/**
 	 * Admin submenu (docs/ui.md#admin): Maps (enable/disable, force change),
-	 * Players (ban), Bans (unban), Abuse log. Only shown for admin accounts; the server
+	 * Players (coins, ban), Bans (unban), Abuse log. Only shown for admin accounts; the server
 	 * re-checks every request, so this is just a remote control.
 	 */
 	let {
@@ -30,10 +30,14 @@
 	}
 
 	let tab: AdminTabId = $state(devTab());
-	/** Inline confirm: `force:<mapId>`, `ban:<playerId>`, `offline`. */
+	/** Inline confirm: `force:<mapId>`, `ban:<playerId>`, `offline`, `coins:<playerId>`, `offline-coins`. */
 	let confirming: string | null = $state(null);
 	let reason = $state('');
 	let offlineName = $state('');
+	let coins = $state('');
+	/** Reset was clicked once and waits for the confirmation. */
+	let resetting = $state(false);
+	const coinAmount = $derived(parseAdminCoins(coins));
 	/** Bumped to redraw a switch the server will refuse (last enabled map). */
 	let reset = $state(0);
 
@@ -54,6 +58,8 @@
 	function ask(key: string) {
 		confirming = confirming === key ? null : key;
 		reason = '';
+		coins = '';
+		resetting = false;
 	}
 
 	function forceMap(id: string) {
@@ -76,10 +82,41 @@
 		offlineName = '';
 	}
 
+	function changeCoins(username: string, op: 'add' | 'subtract' | 'reset') {
+		if (op === 'reset') {
+			if (!resetting) {
+				resetting = true;
+				return;
+			}
+			api.admin({ action: 'coins', username, op });
+		} else {
+			if (coinAmount === null) return;
+			api.admin({ action: 'coins', username, op, amount: coinAmount });
+		}
+		confirming = null;
+		resetting = false;
+	}
+
 	function when(t: number): string {
 		return new Date(t).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 	}
 </script>
+
+{#snippet coinEditor(username: string)}
+	<span class="confirm" role="group" aria-label="Change the coins of {username}">
+		{#if resetting}
+			<span class="q">Reset {username} to 0 coins?</span>
+			<button type="button" class="ss-button danger small" onclick={() => changeCoins(username, 'reset')}>Yes</button>
+			<button type="button" class="ss-button ghost small" onclick={() => (resetting = false)}>No</button>
+		{:else}
+			<input class="ss-input coins" type="text" inputmode="numeric" maxlength="6" placeholder="Coins" aria-label="Amount of coins" autocomplete="off" bind:value={coins} />
+			<button type="button" class="ss-button small" disabled={coinAmount === null} onclick={() => changeCoins(username, 'add')}>Add</button>
+			<button type="button" class="ss-button ghost small" disabled={coinAmount === null} onclick={() => changeCoins(username, 'subtract')}>Subtract</button>
+			<button type="button" class="ss-button danger small" onclick={() => changeCoins(username, 'reset')}>Reset</button>
+			<button type="button" class="ss-button ghost small" onclick={() => (confirming = null)}>Cancel</button>
+		{/if}
+	</span>
+{/snippet}
 
 <header class="head">
 	<h2 id="ss-menu-title">Admin</h2>
@@ -137,10 +174,13 @@
 			{#each players as p (p.id)}
 				<li class="row player">
 					<span class="name">{p.name}</span>
-					<span class="badge" class:admin={p.admin}>{p.admin ? 'Admin' : p.guest ? 'Guest' : 'Account'}</span>
+					{#if confirming !== `coins:${p.id}`}
+						<span class="badge" class:admin={p.admin}>{p.admin ? 'Admin' : p.guest ? 'Guest' : 'Account'}</span>
+					{/if}
+					{#if p.coins !== undefined}<span class="muted balance ss-num">{formatWhole(p.coins)} coins</span>{/if}
 					<span class="grow"></span>
-					{#if p.admin}
-						<span class="muted">—</span>
+					{#if p.account && confirming === `coins:${p.id}`}
+						{@render coinEditor(p.account)}
 					{:else if confirming === `ban:${p.id}`}
 						<span class="confirm" role="group" aria-label="Confirm ban">
 							<input
@@ -155,7 +195,12 @@
 							<button type="button" class="ss-button ghost small" onclick={() => (confirming = null)}>Cancel</button>
 						</span>
 					{:else}
-						<button type="button" class="ss-button ghost small" onclick={() => ask(`ban:${p.id}`)}>Ban</button>
+						{#if p.account}
+							<button type="button" class="ss-button ghost small" onclick={() => ask(`coins:${p.id}`)}>Coins</button>
+						{/if}
+						{#if !p.admin}
+							<button type="button" class="ss-button ghost small" onclick={() => ask(`ban:${p.id}`)}>Ban</button>
+						{/if}
 					{/if}
 				</li>
 			{:else}
@@ -165,22 +210,24 @@
 		<form
 			class="offline"
 			onsubmit={(e) => {
+				// Enter does nothing: every action here needs its own button.
 				e.preventDefault();
-				if (offlineName.trim()) ask('offline');
 			}}
 		>
-			<span class="ss-label">Ban an account by username</span>
+			<span class="ss-label">Coins or ban of an account by username</span>
 			<div class="line">
 				<input
 					class="ss-input"
 					type="text"
 					maxlength="24"
 					placeholder="Username"
-					aria-label="Username to ban"
+					aria-label="Account username"
 					autocomplete="off"
 					bind:value={offlineName}
 				/>
-				{#if confirming === 'offline'}
+				{#if confirming === 'offline-coins' && offlineName.trim()}
+					{@render coinEditor(offlineName.trim())}
+				{:else if confirming === 'offline'}
 					<input
 						class="ss-input reason"
 						type="text"
@@ -192,7 +239,8 @@
 					<button type="button" class="ss-button danger small" onclick={banOffline}>Ban {offlineName.trim()}</button>
 					<button type="button" class="ss-button ghost small" onclick={() => (confirming = null)}>Cancel</button>
 				{:else}
-					<button type="submit" class="ss-button ghost small" disabled={!offlineName.trim()}>Ban…</button>
+					<button type="button" class="ss-button ghost small" disabled={!offlineName.trim()} onclick={() => ask('offline-coins')}>Coins…</button>
+					<button type="button" class="ss-button ghost small" disabled={!offlineName.trim()} onclick={() => ask('offline')}>Ban…</button>
 				{/if}
 			</div>
 		</form>
@@ -364,6 +412,14 @@
 		width: 170px;
 		padding: 5px 8px;
 		font-size: 14px;
+	}
+	.coins {
+		width: 70px;
+		padding: 5px 8px;
+		font-size: 14px;
+	}
+	.balance {
+		flex-shrink: 0;
 	}
 	.offline {
 		display: flex;

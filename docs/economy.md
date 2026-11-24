@@ -194,11 +194,15 @@ All in the game server's SQLite, amounts in tenths. Migrations are additive: new
 | --- | --- |
 | `account_stats` | as before, plus `active_ms` (active time towards the next playtime points) |
 | `bans` | as before, plus `expires_at` (wall clock ms; null = permanent) |
-| `point_log` | `account_id`, `created_at`, `mode`, `map`, `reason`, `label`, `base`, `counted` (towards the backstop), `multiplier`, `amount` (negative for purchases) |
+| `point_log` | `account_id`, `created_at`, `mode`, `map`, `reason`, `label`, `base`, `counted` (towards the backstop), `multiplier`, `amount` (negative for purchases and admin removals) |
 | `point_rollup` | `account_id`, `mode`, `reason`, `entries`, `base`, `amount`: sums of log rows older than 30 days, which are deleted |
 | `abuse_log` | `created_at`, `account_id`, `username`, `action` (`warning`, `ban`, `exempt`), `strikes`, `evidence`; the latest 2000 rows. No IP addresses |
 
 Totals, log row and (for playtime) the rest of the active time are written in one transaction. Active time is written every 60 s, when the account leaves and at shutdown.
+
+### Admin changes
+
+An admin can add to, subtract from or reset an account's balance, online or offline (`Economy.adjust`, at most 100,000 coins at once). Only the coin balance changes, never the lifetime points. It never goes below zero: subtracting more takes what is there. Each change is one transaction with a `point_log` row (mode and reason `admin`, not counted towards the backstop, no multiplier) and an `admin_log` row. The player sees it at once as a notice and in the Coins view. Bought items stay.
 
 ### Wire
 

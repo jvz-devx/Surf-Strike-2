@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join as pathJoin } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import type { AdminAction } from '@surf/shared';
-import { ADMIN_EXTEND, CLOSE_IP_LIMIT, RTV_BLOCK } from '@surf/shared';
+import { ADMIN_COINS_MAX, ADMIN_EXTEND, CLOSE_IP_LIMIT, RTV_BLOCK } from '@surf/shared';
 import { clientIp, ipKey, parseAdminUsernames } from './admin.ts';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
@@ -285,6 +285,59 @@ describe('admin', () => {
 		tim = clients[clients.length - 1];
 	});
 
+	it('coins: add, subtract and reset, online and offline; never below zero, lifetime points stay', async () => {
+		const { c: dave } = await join('Dave0');
+		assert.ok((await dave.auth('register', 'Dave', 'secret1')).ok);
+		const id = server.db.accountByName('dave')!.id;
+		const stats = () => server.db.accountStats(id);
+
+		// Non-admins change nothing.
+		assert.equal((await admin(dave, { action: 'coins', username: 'Dave', op: 'add', amount: 50 })).ok, false);
+		assert.equal(stats().pointsBalance, 0);
+
+		const n = dave.messages.length;
+		const r = await admin(tim, { action: 'coins', username: 'dave', op: 'add', amount: 50 });
+		assert.deepEqual(r, { type: 'adminResult', ok: true, message: 'Dave: +50 coins, now 50 coins.' });
+		const coins = await dave.waitFor('coins', () => true, n);
+		assert.equal(coins.balance, 500);
+		assert.equal(coins.total, 0, 'lifetime points stay');
+		assert.deepEqual(coins.recent.map((e) => [e.reason, e.amount]), [['admin', 500]]);
+		assert.equal((await dave.waitFor('coinsNotice', () => true, n)).text, 'An admin gave you 50 coins.');
+		const st = await adminState(tim, tim.messages.length - 1);
+		assert.equal(st.players.find((p) => p.account === 'Dave')?.coins, 500);
+
+		assert.equal((await admin(tim, { action: 'coins', username: 'Dave', op: 'subtract', amount: 20 })).ok, true);
+		assert.equal(stats().pointsBalance, 300);
+
+		// Offline: subtracting more than there is stops at zero and logs what was taken.
+		dave.close();
+		await new Promise((res) => setTimeout(res, 50));
+		assert.deepEqual(await admin(tim, { action: 'coins', username: 'Dave', op: 'subtract', amount: 999 }), {
+			type: 'adminResult',
+			ok: true,
+			message: 'Dave: -30 coins, now 0 coins.'
+		});
+		assert.equal(stats().pointsBalance, 0);
+		const rows = () => server.db.recentPoints(id, 20).length;
+		assert.equal(rows(), 3);
+		const none = await admin(tim, { action: 'coins', username: 'Dave', op: 'reset' });
+		assert.ok(none.ok && none.message === 'Dave already has 0 coins.');
+		assert.equal(rows(), 3, 'nothing changed, nothing logged');
+		await admin(tim, { action: 'coins', username: 'Dave', op: 'add', amount: 7 });
+		assert.equal((await admin(tim, { action: 'coins', username: 'Dave', op: 'reset' })).ok, true);
+		assert.deepEqual([stats().pointsBalance, stats().pointsTotal, server.db.countedSince(id, 0)], [0, 0, 0]);
+
+		// Bad requests.
+		for (const amount of [0, -5, 1.5, NaN, ADMIN_COINS_MAX + 1, '5' as never, undefined]) {
+			assert.equal((await admin(tim, { action: 'coins', username: 'Dave', op: 'add', amount })).ok, false, String(amount));
+		}
+		assert.equal((await admin(tim, { action: 'coins', username: 'Dave', op: 'set' as never, amount: 5 })).ok, false);
+		assert.equal((await admin(tim, { action: 'coins', username: 'nobody', op: 'reset' })).ok, false);
+		assert.equal(stats().pointsBalance, 0);
+		// Admins can change their own balance too.
+		assert.equal((await admin(tim, { action: 'coins', username: 'Tim', op: 'add', amount: 1 })).ok, true);
+	});
+
 	it('writes admin_log rows', () => {
 		const rows = server.db.db.prepare('SELECT admin_username, action, target FROM admin_log ORDER BY id').all() as {
 			admin_username: string;
@@ -292,7 +345,7 @@ describe('admin', () => {
 			target: string | null;
 		}[];
 		const actions = rows.map((r) => r.action);
-		for (const a of ['disable-map', 'enable-map', 'force-map', 'extend', 'ban', 'unban']) assert.ok(actions.includes(a), a);
+		for (const a of ['disable-map', 'enable-map', 'force-map', 'extend', 'ban', 'unban', 'coins-add', 'coins-subtract', 'coins-reset']) assert.ok(actions.includes(a), a);
 		assert.ok(rows.every((r) => r.admin_username === 'Tim'));
 		assert.ok(rows.some((r) => r.action === 'ban' && r.target === 'account Bob'));
 	});

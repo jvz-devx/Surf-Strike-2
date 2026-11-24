@@ -315,6 +315,7 @@ export class Lobby {
 					this.handleRotation([ev]);
 					return null;
 				},
+				adjustCoins: (accountId, amount) => this.economy.adjust(accountId, amount),
 				kickBanned: (c, ban) => this.kickBanned(c, ban)
 			},
 			usernames,

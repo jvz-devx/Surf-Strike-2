@@ -353,6 +353,10 @@ export class Db {
 			spendPoints: d.prepare(
 				`UPDATE account_stats SET points_balance = points_balance - @amount WHERE account_id = @id AND points_balance >= @amount`
 			),
+			setBalance: d.prepare(
+				`INSERT INTO account_stats (account_id, points_balance) SELECT id, @balance FROM accounts WHERE id = @id
+				 ON CONFLICT(account_id) DO UPDATE SET points_balance = excluded.points_balance`
+			),
 			logPoints: d.prepare(
 				`INSERT INTO point_log (account_id, created_at, mode, map, reason, label, base, counted, multiplier, amount)
 				 VALUES (@accountId, @at, @mode, @map, @reason, @label, @base, @counted, @mult, @amount)`
@@ -544,6 +548,24 @@ export class Db {
 				if (!this.spendPoints(e)) return 'poor';
 				this.st.grantItem.run(e.accountId, itemId, e.at, e.amount);
 				return 'ok';
+			})
+			.immediate();
+	}
+
+	/**
+	 * Admin change of the balance: `amount` tenths (signed), or null for a reset
+	 * to zero. Never below zero; lifetime points stay. `delta` is what really
+	 * changed (logged unless 0). Null when the account no longer exists.
+	 */
+	adjustBalance(e: Pick<PointEntry, 'accountId' | 'at' | 'reason' | 'label'>, amount: number | null): { delta: number; balance: number } | null {
+		return this.db
+			.transaction(() => {
+				const before = this.accountStats(e.accountId).pointsBalance;
+				const balance = amount === null ? 0 : Math.max(0, before + amount);
+				const delta = balance - before;
+				if (this.st.setBalance.run({ id: e.accountId, balance }).changes === 0) return null;
+				if (delta !== 0) this.st.logPoints.run({ ...e, mode: 'admin', map: '', base: 0, counted: 0, mult: 10, amount: delta });
+				return { delta, balance };
 			})
 			.immediate();
 	}

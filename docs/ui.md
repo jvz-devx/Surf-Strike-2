@@ -143,7 +143,7 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
 - **Account**: "Logged in as X" with **Log out**, or guest with **Log in / Register** (opens the account panel).
 - <a id="admin"></a>**Admin** (only when the server says the account is admin, [gameplay.md](gameplay.md#admin); `AdminMenu.svelte`): **Extend +10 min** in the header, then tabs
   - Maps: every map grouped by gamemode with an on/off switch (the last enabled map cannot be switched off) and **Force change** with an inline "Change now? Yes / Cancel"; the current map is marked.
-  - Players: connected players with an Admin / Account / Guest badge and **Ban** (inline confirm with an optional reason; not for admins), plus "Ban an account by username" for offline accounts.
+  - Players: connected players with an Admin / Account / Guest badge and the coin balance of accounts, **Coins** (accounts; inline amount with Add, Subtract, and Reset with a confirm) and **Ban** (inline confirm with an optional reason; not for admins), plus both for an account by username, also offline.
   - Bans: username, kind, reason, date, who banned, when it lifts, and **Unban**.
   - Abuse log: the latest 50 automatic warnings and bans with their evidence.
 

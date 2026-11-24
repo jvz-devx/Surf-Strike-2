@@ -208,10 +208,10 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 						{ id: 1, createdAt: Date.now() - 400_000, username: 'Smurf', action: 'warning', strikes: 4, evidence: 'shadow (round 4): Smurf stayed next to boreal: 20 s without a swing' }
 					],
 					players: [
-						{ id: 2, name: 'Tim', account: 'Tim', guest: false, admin: true },
-						{ id: 1, name: 'glidepath', account: 'glidepath', guest: false, admin: false },
+						{ id: 2, name: 'Tim', account: 'Tim', guest: false, admin: true, coins: 87_650 },
+						{ id: 1, name: 'glidepath', account: 'glidepath', guest: false, admin: false, coins: 1234 },
 						{ id: 3, name: 'cirrus', guest: true, admin: false },
-						{ id: 4, name: 'boreal', account: 'boreal', guest: false, admin: false }
+						{ id: 4, name: 'boreal', account: 'boreal', guest: false, admin: false, coins: 0 }
 					]
 				}
 			: null,
@@ -413,6 +413,14 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			} else if (a.action === 'forceMap') {
 				api.changeMap(a.mapId);
 				done(`Changed to ${a.mapId}.`);
+			} else if (a.action === 'coins') {
+				const players = st.players.map((x) => {
+					if (x.account?.toLowerCase() !== a.username.toLowerCase()) return x;
+					const n = (a.amount ?? 0) * 10;
+					return { ...x, coins: a.op === 'reset' ? 0 : Math.max(0, (x.coins ?? 0) + (a.op === 'add' ? n : -n)) };
+				});
+				hud.adminState = { ...st, players };
+				done(`${a.username}: coins changed.`);
 			} else if (a.action === 'extend') {
 				done('Extended by 10 minutes.');
 			}

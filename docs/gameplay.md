@@ -139,6 +139,7 @@ Admin accounts (server config `ADMIN_USERNAMES`, default `tim`; [architecture.md
 - **Maps:** enable or disable maps. Disabled maps leave the vote options, `!rtv` and the Change map list; the current map keeps running until it ends. At least one map stays enabled.
 - **Force change:** switch everyone to any map at once (disabled ones too); **Extend +10 min** adds time to the current map.
 - **Ban / unban:** ban a connected player (account, or guest by browser and IP) or an account by username. Banned players are disconnected with "You are banned" and cannot rejoin until unbanned. Point farming is banned automatically for 5 minutes ([economy.md](economy.md#abuse-and-collusion)). Admins cannot be banned.
+- **Coins:** add to, subtract from or reset the coin balance of any account, online or offline ([economy.md](economy.md#admin-changes)).
 - Admin names have an `ADMIN` marker in chat and on the scoreboard.
 
 Lobby:
