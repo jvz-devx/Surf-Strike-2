@@ -10,7 +10,7 @@ Every humanoid in the game (remote players, turned players, infected, AI zombies
 | `outfit.ts` | Default tee, trousers, sneakers, plus reusable torso, sleeve, leg and seat builders |
 | `items.ts` | Client item meshes: `registerItemMesh`, `ItemMesh` |
 | `shop-items.ts` | Meshes of the shop's items, and helpers shared with `common/` |
-| `common/`, `uncommon/`, `rare/`, `epic/` | Meshes of the other items, one file per item, listed in their `index.ts` |
+| `basic/`, `common/`, `uncommon/`, `rare/`, `epic/` | Meshes of the other items, one file per item, listed in their `index.ts` |
 | `preview.ts` | Shop turntable and item pictures (own small WebGL context) |
 | `geometry.ts` | Merges the parts of a look into one shared, reference-counted geometry per LOD |
 | `material.ts` | One Lambert-based material per character: palette, baked shade, rim light |
@@ -43,11 +43,11 @@ The registry holds `top_default`, `bottom_default`, `shoes_default` and the shop
 
 | Slot | Items (Basic, 30 coins; all others only come from loot boxes) |
 | --- | --- |
-| hat | Breakline cap, Pom beanie, Straw hat; Common: Fry cook hat, Palm bucket hat, Trilby, Wave bandana, Newsboy cap, Backwards snapback, Headphones; Uncommon: Shark bite hat, Propeller cap; Epic: Dark lord helmet, Clown prince mask |
-| glasses | Glare shades, Round shades; Common: Gold aviators, Sport wraps, Cat-eye shades, Reading glasses; Uncommon: Pixel shades; Rare: Executive shades |
-| top | Sunset tee, Half-and-half tee, Checker tee; Common: Zip hoodie, Floral shirt, Varsity jacket, Denim jacket, Flannel shirt, Rugby shirt; Uncommon: Skeleton hoodie; Rare: Tailored suit jacket |
-| bottom | Boardshorts, Joggers, Cargo pants; Common: Cuffed jeans, Track pants, Corduroy pants, Court shorts; Uncommon: Lava pants; Rare: Tailored suit trousers |
-| shoes | High-tops, Beach slides, Trail boots, Slip-ons; Common: Pulse runners, Chelsea boots, Penny loafers, Skate shoes; Uncommon: Rubber duck slippers; Rare: Polished oxfords |
+| hat | Breakline cap, Pom beanie, Straw hat; Common: Fry cook hat, Palm bucket hat, Trilby, Wave bandana, Newsboy cap, Backwards snapback, Headphones, Trapper hat; Uncommon: Shark bite hat, Propeller cap; Epic: Dark lord helmet, Clown prince mask |
+| glasses | Glare shades, Round shades, Slim shades; Common: Gold aviators, Sport wraps, Cat-eye shades, Reading glasses, Shutter shades; Uncommon: Pixel shades, Googly eye glasses; Rare: Executive shades |
+| top | Sunset tee, Half-and-half tee, Checker tee; Common: Zip hoodie, Floral shirt, Varsity jacket, Denim jacket, Flannel shirt, Rugby shirt, Puffer jacket; Uncommon: Skeleton hoodie, Astronaut jacket; Rare: Tailored suit jacket |
+| bottom | Boardshorts, Joggers, Cargo pants; Common: Cuffed jeans, Track pants, Corduroy pants, Court shorts, Plaid golf trousers, Patchwork jeans; Uncommon: Lava pants, Robot legs; Rare: Tailored suit trousers |
+| shoes | High-tops, Beach slides, Trail boots, Slip-ons, Canvas low-tops, Garden clogs; Common: Pulse runners, Chelsea boots, Penny loafers, Skate shoes, Rain boots; Uncommon: Rubber duck slippers, Rocket boots; Rare: Polished oxfords |
 | effect | Rare: Blue, Yellow, Red, Purple, Black, Orange, Pink, White, Green and Gray aura; Epic: Living flame |
 
 The own player is never drawn in the game, except as the shop preview and as the race ghost of an own run (your PB, or your record), which wears what you wear now.

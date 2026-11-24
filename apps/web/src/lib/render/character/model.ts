@@ -14,6 +14,7 @@ import { drawnItems, itemMesh, type PlayerTint } from './items.js';
 import { CharacterMaterial } from './material.js';
 import { PAL, type Lod } from './mesh-kit.js';
 import './shop-items.js';
+import './basic/index.js';
 import './common/index.js';
 import './uncommon/index.js';
 import './rare/index.js';

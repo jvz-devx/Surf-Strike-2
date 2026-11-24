@@ -145,7 +145,7 @@ registerCosmetic({ id: 'top_default', slot: 'top', name: 'Surf tee', isDefault: 
 registerCosmetic({ id: 'bottom_default', slot: 'bottom', name: 'Trousers', isDefault: true });
 registerCosmetic({ id: 'shoes_default', slot: 'shoes', name: 'Sneakers', isDefault: true });
 
-/** The items: 15 basic ones in the shop, the others for loot boxes. Ids are stored in the database: never rename or reuse one. */
+/** The items: the basic ones in the shop, the others for loot boxes. Ids are stored in the database: never rename or reuse one. */
 const SHOP_ITEMS: readonly Required<Omit<CosmeticItem, 'isDefault'>>[] = [
 	{ id: 'hat_cap', slot: 'hat', name: 'Breakline cap', rarity: 'basic' },
 	{ id: 'hat_beanie', slot: 'hat', name: 'Pom beanie', rarity: 'basic' },
@@ -163,6 +163,9 @@ const SHOP_ITEMS: readonly Required<Omit<CosmeticItem, 'isDefault'>>[] = [
 	{ id: 'shoes_slides', slot: 'shoes', name: 'Beach slides', rarity: 'basic' },
 	{ id: 'shoes_boots', slot: 'shoes', name: 'Trail boots', rarity: 'basic' },
 	{ id: 'shoes_slipons', slot: 'shoes', name: 'Slip-ons', rarity: 'basic' },
+	{ id: 'glasses_slim', slot: 'glasses', name: 'Slim shades', rarity: 'basic' },
+	{ id: 'shoes_canvas', slot: 'shoes', name: 'Canvas low-tops', rarity: 'basic' },
+	{ id: 'shoes_clogs', slot: 'shoes', name: 'Garden clogs', rarity: 'basic' },
 	{ id: 'hat_bucket', slot: 'hat', name: 'Palm bucket hat', rarity: 'common' },
 	{ id: 'hat_trilby', slot: 'hat', name: 'Trilby', rarity: 'common' },
 	{ id: 'hat_bandana', slot: 'hat', name: 'Wave bandana', rarity: 'common' },
@@ -187,12 +190,22 @@ const SHOP_ITEMS: readonly Required<Omit<CosmeticItem, 'isDefault'>>[] = [
 	{ id: 'bottom_court', slot: 'bottom', name: 'Court shorts', rarity: 'common' },
 	{ id: 'shoes_loafers', slot: 'shoes', name: 'Penny loafers', rarity: 'common' },
 	{ id: 'shoes_skate', slot: 'shoes', name: 'Skate shoes', rarity: 'common' },
+	{ id: 'hat_trapper', slot: 'hat', name: 'Trapper hat', rarity: 'common' },
+	{ id: 'glasses_shutter', slot: 'glasses', name: 'Shutter shades', rarity: 'common' },
+	{ id: 'top_puffer', slot: 'top', name: 'Puffer jacket', rarity: 'common' },
+	{ id: 'bottom_plaid', slot: 'bottom', name: 'Plaid golf trousers', rarity: 'common' },
+	{ id: 'bottom_patch', slot: 'bottom', name: 'Patchwork jeans', rarity: 'common' },
+	{ id: 'shoes_rain', slot: 'shoes', name: 'Rain boots', rarity: 'common' },
 	{ id: 'hat_shark', slot: 'hat', name: 'Shark bite hat', rarity: 'uncommon' },
 	{ id: 'hat_propeller', slot: 'hat', name: 'Propeller cap', rarity: 'uncommon' },
 	{ id: 'glasses_pixel', slot: 'glasses', name: 'Pixel shades', rarity: 'uncommon' },
 	{ id: 'top_skeleton', slot: 'top', name: 'Skeleton hoodie', rarity: 'uncommon' },
 	{ id: 'bottom_lava', slot: 'bottom', name: 'Lava pants', rarity: 'uncommon' },
 	{ id: 'shoes_duck', slot: 'shoes', name: 'Rubber duck slippers', rarity: 'uncommon' },
+	{ id: 'glasses_googly', slot: 'glasses', name: 'Googly eye glasses', rarity: 'uncommon' },
+	{ id: 'top_astronaut', slot: 'top', name: 'Astronaut jacket', rarity: 'uncommon' },
+	{ id: 'bottom_robot', slot: 'bottom', name: 'Robot legs', rarity: 'uncommon' },
+	{ id: 'shoes_rocket', slot: 'shoes', name: 'Rocket boots', rarity: 'uncommon' },
 	{ id: 'glasses_suit', slot: 'glasses', name: 'Executive shades', rarity: 'rare' },
 	{ id: 'top_suit', slot: 'top', name: 'Tailored suit jacket', rarity: 'rare' },
 	{ id: 'bottom_suit', slot: 'bottom', name: 'Tailored suit trousers', rarity: 'rare' },
