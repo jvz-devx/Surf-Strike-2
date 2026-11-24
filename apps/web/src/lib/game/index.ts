@@ -37,6 +37,9 @@ const inertApi: GameApi = {
 	vote: noop,
 	changeMap: noop,
 	minimizeBan: noop,
+	shopBuy: noop,
+	shopEquip: noop,
+	createPreview: () => null,
 	rtvVote: noop,
 	admin: noop
 };

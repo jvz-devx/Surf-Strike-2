@@ -2,7 +2,7 @@
 	import { formatMultiplier, formatTenths, formatWhole } from '@surf/shared';
 	import type { CoinsView, GameApi } from '#lib/game/contract.js';
 
-	/** Coins submenu (docs/ui.md#coins): balance, lifetime points, latest awards. The shop goes here too. */
+	/** Coins submenu (docs/ui.md#coins): balance, lifetime points, latest awards and purchases. */
 	let {
 		api,
 		coins,

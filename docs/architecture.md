@@ -95,6 +95,8 @@ Each client simulates its own movement with zero input lag. The server trusts po
 | C→S | `admin { action }`: `setMapEnabled { mapId, enabled }`, `ban { targetId? \| username?, reason? }`, `unban { banId }`, `forceMap { mapId }`, `extend`, `listBans`. Re-checked on the server; non-admins get `adminResult { ok: false }` and nothing happens | JSON |
 | S→C | `adminResult { ok, error?, message? }` (every `admin` request) and, to admins only, `adminState { maps[{ id, title, kind, enabled }], bans[{ id, username, kind, reason, createdAt, createdBy, secondsLeft? }], abuse[]?, players[{ id, name, account?, guest, admin }] }` (after each request and when players or bans change) | JSON |
 | S→C | `banned { reason, seconds? }`, then close 4009 | JSON |
+| C→S | Shop: `shopBuy { item }`, `shopEquip { slot, item }` ([economy.md](economy.md#shop)) | JSON |
+| S→C | Shop: `shop`, `shopResult`, `cosmetics { id, loadout }`; `loadout?` in `welcome.players[]` and `join.player` ([economy.md](economy.md#shop)) | JSON |
 | S→C | Coins: `coins`, `award`, `multiplier`, `coinsNotice` ([economy.md](economy.md#wire)) | JSON |
 | C→S | `vote { option }` (1-based, up to 7), `rtv` (= `rtvRequest` without a map), `spectate { targetId }` | JSON |
 | C→S | `rtvRequest { mapId? }`: start an RTV request, optionally nominating a map (on an open request: a yes vote); `rtvVote { yes }`: answer it. Errors come back as system chat | JSON |
@@ -125,6 +127,8 @@ Username + password, no email or verification ([gameplay.md](gameplay.md#account
 | `accounts` | `id`, `username`, `username_lower` (unique), `password_hash`, `created_at`, `last_login` |
 | `sessions` | `token_hash` (SHA-256 hex), `account_id`, `created_at`, `expires_at` |
 | `replays` | `map` (primary key), `account_id`, `time_ticks`, `samples`, `data` (deflate-raw BLOB), `created_at`: one record ghost per map, replaced only by a faster validated account run ([gameplay.md](gameplay.md#ghosts)) |
+| `owned_items` | `account_id`, `item_id` (primary key together), `bought_at`, `price` ([economy.md](economy.md#shop)) |
+| `equipped` | `account_id`, `slot` (primary key together), `item_id`; references `owned_items` |
 
 ### Account totals
 

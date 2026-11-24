@@ -9,6 +9,7 @@ import type { WebSocket } from 'ws';
 import type {
 	ClientMessage,
 	Cvars,
+	Loadout,
 	MapDef,
 	MapRecordInfo,
 	NetState,
@@ -21,6 +22,8 @@ import type {
 } from '@surf/shared';
 import {
 	CLOSE_IP_LIMIT,
+	emptyLoadout,
+	isEmptyLoadout,
 	mapTitle,
 	encodeSnapshot,
 	decodeState,
@@ -41,6 +44,7 @@ import { Accounts, AttemptLimiter, AUTH_LIMITS, TOO_MANY } from './auth.ts';
 import { HELP_LINES, parseCommand } from './commands.ts';
 import type { AccountRow, BanRow, Db } from './db.ts';
 import { Economy } from './economy.ts';
+import { Shop } from './shop.ts';
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
 import type { ZoneKind } from './validation.ts';
 
@@ -57,7 +61,8 @@ export const HELLO_TIMEOUT_MS = 10_000;
 export const RATE = {
 	state: { limit: 70, kick: 250 },
 	chat: { limit: 2, kick: 20 },
-	json: { limit: 60, kick: 300 }
+	json: { limit: 60, kick: 300 },
+	shop: { limit: 8, kick: 100 }
 } as const;
 
 export interface LobbyOptions {
@@ -125,7 +130,9 @@ interface Client {
 	targetId: number | null;
 	state: NetState | null;
 	ping: number;
-	rate: { state: Window; chat: Window; json: Window };
+	/** Worn cosmetics (docs/economy.md#shop); the default look for guests. */
+	loadout: Loadout;
+	rate: { state: Window; chat: Window; json: Window; shop: Window };
 	helloTimer: NodeJS.Timeout | null;
 	closed: boolean;
 }
@@ -157,6 +164,8 @@ export class Lobby {
 	private readonly accounts: Accounts;
 	/** Points, coins and abuse detection (docs/economy.md). */
 	readonly economy: Economy;
+	/** Cosmetics: purchases and worn items (docs/economy.md#shop). */
+	private readonly shop: Shop<Client>;
 	/** Playtime and points of the accounts online (docs/gameplay.md#points-and-playtime). */
 	readonly stats: AccountStats;
 	readonly admin: AdminController<Client>;
@@ -181,6 +190,13 @@ export class Lobby {
 		this.modeOptions = opts.modes ?? {};
 		this.admin = this.createAdmin(opts.adminUsernames ?? parseAdminUsernames(undefined));
 		this.economy = this.createEconomy(opts.playClock ?? opts.now ?? (() => performance.now()));
+		this.shop = new Shop<Client>({
+			db: this.db,
+			economy: () => this.economy,
+			send: (p, m) => this.send(p, m),
+			broadcast: (m) => this.broadcast(m),
+			log: this.log
+		});
 		this.mode = this.createMode();
 		this.rotation = new MapRotation({
 			isEnabled: (id) => this.admin.isEnabled(id),
@@ -388,7 +404,8 @@ export class Lobby {
 			targetId: null,
 			state: null,
 			ping: 0,
-			rate: { state: new Window(), chat: new Window(), json: new Window() },
+			loadout: emptyLoadout(),
+			rate: { state: new Window(), chat: new Window(), json: new Window(), shop: new Window() },
 			helloTimer: null,
 			closed: false
 		};
@@ -521,6 +538,13 @@ export class Lobby {
 				// Zombies/infected weapons and hide-and-seek knife (docs/modes.md); the mode validates every field.
 				if (!c.spectating) this.mode.message?.(c, msg);
 				return;
+			case 'shopBuy':
+			case 'shopEquip': {
+				const k = c.rate.shop.hit(t);
+				if (k > RATE.shop.kick) return this.kick(c, 'shop flood');
+				if (c.closed) return;
+				return this.shop.handle(c, msg, k > RATE.shop.limit);
+			}
 			case 'admin':
 				return this.admin.handle(c, msg.action);
 			case 'pong':
@@ -572,6 +596,7 @@ export class Lobby {
 		c.sessionHash = resumed?.hash ?? null;
 		c.admin = admin;
 		c.helloed = true;
+		c.loadout = this.shop.loadoutOf(c.accountId);
 		if (c.accountId !== null) this.stats.join(c.accountId, c);
 		if (c.helloTimer) clearTimeout(c.helloTimer);
 		c.helloTimer = null;
@@ -598,6 +623,7 @@ export class Lobby {
 			this.send(c, { type: 'auth', ok: false, error: 'Your session expired. Log in again.' });
 		}
 		this.economy.join(c);
+		this.shop.send(c);
 		this.mode.join(c);
 		this.broadcast({ type: 'join', player: info(c) }, c);
 		this.system(`${name} joined.`, c);
@@ -682,6 +708,7 @@ export class Lobby {
 		if (old !== account.username) this.system(`${old} logged in as ${account.username}.`);
 		this.send(c, { type: 'auth', ok: true, username: account.username, token, records: this.mode.records(c), admin: c.admin });
 		this.economy.account(c);
+		this.shop.account(c);
 		this.admin.pushState();
 	}
 
@@ -711,6 +738,7 @@ export class Lobby {
 			if (old !== c.name) this.system(`${old} logged out and is now ${c.name}.`);
 		}
 		this.send(c, { type: 'auth', ok: true, username: null, records: this.mode.records(c), admin: false });
+		this.shop.account(c);
 		this.admin.pushState();
 	}
 
@@ -1064,7 +1092,7 @@ export class Lobby {
 }
 
 function info(c: Client): PlayerInfo {
-	return { id: c.id, name: c.name, spectating: c.spectating };
+	return { id: c.id, name: c.name, spectating: c.spectating, ...(isEmptyLoadout(c.loadout) ? {} : { loadout: c.loadout }) };
 }
 
 function cleanName(raw: string): string {

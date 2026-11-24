@@ -116,7 +116,7 @@ Settings are saved to localStorage on change.
 
 A CS2-style pause menu opened with `Esc` (pointer lock is released). The game stays visible behind a dark gradient; the HUD is hidden while it is open. Components live in `apps/web/src/lib/ui/menu/` (`EscMenu.svelte` and one component per submenu); pure helpers (map grouping, settings sections, cvar defaults) are in `menu.ts` with unit tests.
 
-Main menu (left column): brand, current map and mode, then the entries **Resume**, **Change map**, **Settings**, **Coins**, **Account** (and **Admin** for admin accounts, see below), and below them the account line ("Logged in as X" or "Guest · runs are not saved") and a key hint. A submenu opens in a panel beside the entries; clicking its entry again folds it.
+Main menu (left column): brand, current map and mode, then the entries **Resume**, **Change map**, **Settings**, **Shop**, **Coins**, **Account** (and **Admin** for admin accounts, see below), and below them the account line ("Logged in as X" or "Guest · runs are not saved") and a key hint. A submenu opens in a panel beside the entries; clicking its entry again folds it.
 
 Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the open submenu, `←`/`→` (and `Home`/`End`) switch tabs. `Esc` goes back one level (submenu to main menu), then resumes. In the map filter, `Esc` first clears the text. Focus is always visible.
 
@@ -128,6 +128,12 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
   - Audio: master volume
 
   Each tab has **Reset … to defaults**, which sets that tab's cvars to the engine defaults (`CLIENT_CVARS`); it is disabled when they already are.
+- <a id="shop"></a>**Shop** (`ShopMenu.svelte`; pure helpers in `game/shop.ts`; rules in [economy.md](economy.md#shop)): the balance, the items by category with picture, name, rarity (in its colour) and price or Owned / Equipped (a price you cannot afford is red), and a turntable of your own character.
+  - Clicking an item tries it on (one per slot, on top of what you wear); clicking it again or **Reset look** undoes that. Drag turns the character; it stands still with reduced motion.
+  - **Buy · 75 coins**, then **Confirm** or **Cancel**; after that **Equip** / **Take off**. Too few coins: the button is disabled and the missing amount is shown. Guests get a login button. Errors and "… bought" show below.
+  - Offline, or on a server without a shop: one line says so.
+  - Narrow panels put the preview on top, sticky, and the list below.
+  - The preview (`render/character/preview.ts`, through `GameApi.createPreview`) is a second small WebGL context of at most 45 fps with its own geometry. It exists only while the submenu is open. The item pictures are drawn with it, one per frame. No sounds.
 - <a id="coins"></a>**Coins** (`CoinsMenu.svelte`): coins, points earned in total (both rounded down), the current multiplier and active players, and the latest 20 awards and purchases. Guests get a login button.
 - **Account**: "Logged in as X" with **Log out**, or guest with **Log in / Register** (opens the account panel).
 - <a id="admin"></a>**Admin** (only when the server says the account is admin, [gameplay.md](gameplay.md#admin); `AdminMenu.svelte`): **Extend +10 min** in the header, then tabs
@@ -140,7 +146,7 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
 
 All values are the same cvars as the console and are saved the same way.
 
-Dev preview: `/?mockhud&open=settings` (main menu), `&open=maps` (map submenu), `&open=settings&view=settings&tab=hud` (a settings tab), `&view=account`, `&view=coins`, `&view=admin` (logged in as an admin; `&tab=maps|players|bans|abuse`), and `&solo=0` for the read-only map list.
+Dev preview: `/?mockhud&open=settings` (main menu), `&open=maps` (map submenu), `&open=settings&view=settings&tab=hud` (a settings tab), `&view=account`, `&view=shop` (`&balance=<coins>`, `&coins=0` a guest, `&noshop`), `&view=coins`, `&view=admin` (logged in as an admin; `&tab=maps|players|bans|abuse`), and `&solo=0` for the read-only map list.
 
 ## Ghost
 

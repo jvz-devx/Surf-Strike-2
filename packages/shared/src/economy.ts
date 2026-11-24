@@ -6,6 +6,7 @@
  * Amounts are integers in tenths of a point everywhere (`pts(3)` is 30).
  * Multipliers are integers in tenths too (12 is ×1.2).
  */
+import { getCosmetic } from './cosmetics.ts';
 import type { GameModeId } from './modes/index.ts';
 
 /** Tenths of a point in one point. */
@@ -227,7 +228,9 @@ export const AWARDS: Readonly<Record<AwardReason, AwardDef>> = Object.freeze(def
 /** Display label of a logged reason (also shop purchases and ids from a newer server). */
 export function awardLabel(reason: string): string {
 	if (Object.hasOwn(AWARDS, reason)) return AWARDS[reason as AwardReason].label;
-	return reason.startsWith('shop:') ? `Shop: ${reason.slice(5)}` : reason;
+	if (!reason.startsWith('shop:')) return reason;
+	const id = reason.slice(5);
+	return `Shop: ${getCosmetic(id)?.name ?? id}`;
 }
 
 // ---------------------------------------------------------------------------

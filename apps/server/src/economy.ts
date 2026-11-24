@@ -5,13 +5,14 @@
  *
  * Amounts are tenths of a point. Guests earn nothing.
  */
-import type { AbuseSignal, AwardDef, AwardReason, GameModeId, MapDef, NetState, PointLogEntry, ServerMessage } from '@surf/shared';
+import type { AbuseSignal, AwardDef, AwardReason, CosmeticItem, GameModeId, MapDef, NetState, PointLogEntry, ServerMessage } from '@surf/shared';
 import {
 	ABUSE,
 	applyMultiplier,
 	AWARDS,
 	awardLabel,
 	BACKSTOP,
+	cosmeticPrice,
 	formatTenths,
 	MIN_ACTIVE,
 	modeMultiplier,
@@ -416,8 +417,22 @@ export class Economy {
 		const reason = `shop:${item}`;
 		const row = this.host.db.spendPoints({ accountId, at: this.host.now(), reason, label: awardLabel(reason), amount });
 		if (!row) return false;
-		for (const p of this.host.players()) if (p.accountId === accountId) this.sendCoins(p);
+		this.sendCoinsTo(accountId);
 		return true;
+	}
+
+	/** Buy an item (docs/economy.md#shop): deduct, log and grant in one transaction. */
+	buy(accountId: number, item: CosmeticItem): 'ok' | 'owned' | 'poor' | 'unknown' {
+		const price = cosmeticPrice(item);
+		if (price === null || !Number.isInteger(price) || price <= 0) return 'unknown';
+		const reason = `shop:${item.id}`;
+		const r = this.host.db.buyItem({ accountId, at: this.host.now(), reason, label: awardLabel(reason), amount: price }, item.id);
+		if (r === 'ok') this.sendCoinsTo(accountId);
+		return r;
+	}
+
+	private sendCoinsTo(accountId: number): void {
+		for (const p of this.host.players()) if (p.accountId === accountId) this.sendCoins(p);
 	}
 
 	private sendCoins(p: EconomyPlayer): void {

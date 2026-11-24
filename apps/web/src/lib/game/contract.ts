@@ -17,11 +17,14 @@ import type {
 	InfPerkId,
 	InfPhase,
 	InfTeam,
+	CosmeticSlot,
+	Loadout,
 	ModeFamily,
 	ModeState,
 	PointLogEntry,
 	RecordEntry,
 	ScoreRow,
+	ShopOffer,
 	TagPhase,
 	WeaponId,
 	ZmPhase,
@@ -311,6 +314,27 @@ export interface CoinsView {
 	recent: readonly PointLogEntry[];
 }
 
+/** The shop (docs/ui.md#shop); prices in tenths of a coin. */
+export interface ShopView {
+	/** What the server sells; may hold items this client does not know. */
+	items: readonly ShopOffer[];
+	owned: readonly string[];
+	/** Worn items (sanitized). */
+	loadout: Loadout;
+	/** A request waits for the server's reply. */
+	busy: boolean;
+	/** Last result, shown in the shop. */
+	notice: { ok: boolean; text: string } | null;
+}
+
+/** A live character turntable on a canvas of the UI. */
+export interface CharacterPreviewHandle {
+	setLoadout(loadout: Loadout): void;
+	/** Small pictures of items (data URLs), one per frame. */
+	thumbnails(ids: readonly string[], ready: (id: string, url: string) => void): void;
+	dispose(): void;
+}
+
 export interface BanView {
 	reason: string | null;
 	/** performance.now() when it lifts by itself; null = permanent. */
@@ -363,6 +387,8 @@ export interface HudStateShape {
 	account: { username: string; admin?: boolean } | null;
 	/** Coins of the account; null for guests, offline and on servers without coins. */
 	coins: CoinsView | null;
+	/** The shop; null offline and on servers without one. */
+	shop: ShopView | null;
 	/** Coins multiplier (tenths), active players and how many this mode needs; null offline and on servers without coins. */
 	multiplier: { mult: number; active: number; need: number } | null;
 	/** Award popups, oldest first. */
@@ -454,6 +480,12 @@ export interface GameApi {
 	changeMap(id: string): void;
 	/** Ban screen: play solo until the ban is over (or go back to the screen). */
 	minimizeBan(minimized: boolean): void;
+	/** Shop (docs/ui.md#shop): buy an item; the reply lands in `shop`. */
+	shopBuy(item: string): void;
+	/** Wear an owned item, or `null` for the slot's default. */
+	shopEquip(slot: CosmeticSlot, item: string | null): void;
+	/** Turntable of the local player's character; null without WebGL. Dispose it. */
+	createPreview(canvas: HTMLCanvasElement): CharacterPreviewHandle | null;
 	/** Admin menu request (re-checked by the server); replies land in adminState / adminNotice. */
 	admin(action: AdminAction): void;
 }

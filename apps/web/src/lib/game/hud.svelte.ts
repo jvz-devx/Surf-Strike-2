@@ -9,6 +9,7 @@ import type {
 	BanView,
 	ChatLine,
 	CoinsView,
+	ShopView,
 	ConsoleLine,
 	HnsView,
 	HudStateShape,
@@ -57,6 +58,7 @@ export class HudState implements HudStateShape {
 
 	account = $state.raw<{ username: string; admin?: boolean } | null>(null);
 	coins = $state.raw<CoinsView | null>(null);
+	shop = $state.raw<ShopView | null>(null);
 	multiplier = $state.raw<{ mult: number; active: number; need: number } | null>(null);
 	awardPopups = $state.raw<readonly AwardPopup[]>([]);
 	ban = $state.raw<BanView | null>(null);

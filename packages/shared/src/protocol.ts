@@ -2,6 +2,7 @@
  * Wire protocol (docs/architecture.md#protocol-sketch).
  * JSON text frames for reliable events, binary frames for state/snapshots.
  */
+import type { CosmeticSlot, Loadout } from './cosmetics.ts';
 import type { Cvars } from './cvars.ts';
 import type { MapDef } from './maps/types.ts';
 import type { GameModeId } from './modes/index.ts';
@@ -58,6 +59,8 @@ export interface PlayerInfo {
 	id: number;
 	name: string;
 	spectating: boolean;
+	/** Equipped cosmetics; absent when nothing is equipped (and on older servers). Use `sanitizeLoadout`. */
+	loadout?: Loadout;
 }
 
 export interface ScoreRow {
@@ -193,6 +196,10 @@ export type ClientMessage =
 	 * (lag-compensated against the hiders' recent positions).
 	 */
 	| { type: 'knife'; origin: Vec3; dir: Vec3 }
+	/** Shop (docs/economy.md#shop): answered with `shopResult` and, on success, a fresh `shop`. */
+	| { type: 'shopBuy'; item: string }
+	/** Wear an owned item, or `null` for the slot's default. */
+	| { type: 'shopEquip'; slot: CosmeticSlot; item: string | null }
 	/** Admin menu (docs/gameplay.md#admin): re-checked on the server, ignored for non-admins. */
 	| { type: 'admin'; action: AdminAction };
 
@@ -397,7 +404,23 @@ export type ServerMessage =
 	/** Current multiplier (tenths), active players and the number this mode needs to pay (0: none). On join and every change. */
 	| { type: 'multiplier'; mult: number; active: number; need: number }
 	/** Private notice about coins (guest hint, abuse warning), shown with the award popups. */
-	| { type: 'coinsNotice'; text: string; tone: 'info' | 'warn' };
+	| { type: 'coinsNotice'; text: string; tone: 'info' | 'warn' }
+	/**
+	 * Shop (docs/economy.md#shop), optional like the coins messages: what the
+	 * server sells (tenths of a coin), and what this account owns and wears
+	 * (empty for guests). After `welcome`, `auth` and every change.
+	 */
+	| { type: 'shop'; items: ShopOffer[]; owned: string[]; loadout: Loadout }
+	/** Reply to `shopBuy` (`item` bought) and `shopEquip`; `error` is for display. */
+	| { type: 'shopResult'; action: 'buy' | 'equip'; item: string | null; ok: boolean; error?: string }
+	/** A player's equipped cosmetics changed (to everyone, the player included). Use `sanitizeLoadout`. */
+	| { type: 'cosmetics'; id: number; loadout: Loadout };
+
+export interface ShopOffer {
+	id: string;
+	/** Tenths of a coin. */
+	price: number;
+}
 
 export interface AccountInfo {
 	username: string;

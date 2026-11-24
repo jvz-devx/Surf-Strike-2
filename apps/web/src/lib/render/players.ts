@@ -359,6 +359,11 @@ export class GhostAvatar {
 		this.group.visible = false;
 	}
 
+	/** Cosmetics of the run's player (your own ghost). */
+	setLoadout(loadout: Loadout | null): void {
+		applyLoadout(this.model, loadout ?? emptyLoadout());
+	}
+
 	setLabel(label: string): void {
 		if (label === this.label) return;
 		this.label = label;

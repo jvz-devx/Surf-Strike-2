@@ -7,7 +7,7 @@ import type { MapListEntry } from '#lib/game/contract.js';
 import { CLIENT_CVARS, type CvarDef } from '#lib/game/cvars.js';
 
 /** Menu pages; 'main' is the top level. */
-export type MenuView = 'main' | 'maps' | 'settings' | 'coins' | 'account' | 'admin';
+export type MenuView = 'main' | 'maps' | 'settings' | 'shop' | 'coins' | 'account' | 'admin';
 
 export interface MapGroup {
 	/** Gamemode id (or the raw map kind for a kind not in the registry). */

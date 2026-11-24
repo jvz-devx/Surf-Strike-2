@@ -17,10 +17,12 @@ export interface LookSpec {
 	/** Item id per slot. */
 	items: Record<CosmeticSlot, string | null>;
 	claws: boolean;
+	/** Keeps the geometry apart from other users of the same look (a second WebGL context). */
+	tag?: string;
 }
 
 export function lookKey(l: LookSpec): string {
-	return `${l.hair}|${COSMETIC_SLOTS.map((s) => l.items[s] ?? '').join('|')}|${l.claws ? 'c' : ''}`;
+	return `${l.hair}|${COSMETIC_SLOTS.map((s) => l.items[s] ?? '').join('|')}|${l.claws ? 'c' : ''}${l.tag ? `|${l.tag}` : ''}`;
 }
 
 const REGION_BUILD: Record<Exclude<BodyRegion, 'hair'>, (b: PartBuilder) => void> = {

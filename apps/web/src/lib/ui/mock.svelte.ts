@@ -9,9 +9,10 @@
  * Scores: `&mode=<gamemode>` (its score panel and scoreboard), `&players=<n>` (default 5),
  * `&self=<n>` your position, `&old=1` an older server (no leaderboard top, no totals),
  * `&novote=1` without the map vote. Coins: `&coins=<n>` n award popups, `&coins=0` a guest,
- * `&view=coins` the Coins submenu, `&ban=<seconds>` the ban screen (`&ban=0` permanent).
+ * `&view=coins` the Coins submenu, `&view=shop` the Shop (`&balance=<coins>`, `&noshop` a server without it), `&ban=<seconds>` the ban screen (`&ban=0` permanent).
  */
-import { gameMode, isGameModeId, Status, TICK_RATE, type GameModeId, type ModeState, type ScoreRow } from '@surf/shared';
+import { cosmeticPrice, emptyLoadout, gameMode, isGameModeId, shopItems, Status, TICK_RATE, type GameModeId, type ModeState, type ScoreRow } from '@surf/shared';
+import { CharacterPreview } from '#lib/render/character/preview.js';
 import { awardPopup, noticePopup } from '#lib/game/coins.js';
 import type { GameApi, GameHandle, HudStateShape } from '#lib/game/contract.js';
 
@@ -138,7 +139,17 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 					}))
 				: null,
 		account: open === 'auth' || coinsN === 0 ? null : asAdmin ? { username: 'Tim', admin: true } : { username: 'you' },
-		coins: coinsN === 0 || old ? null : { total: 123_456, balance: 7_459, recent: mockAwards(14) },
+		coins: coinsN === 0 || old ? null : { total: 123_456, balance: params.has('balance') ? Number(params.get('balance')) * 10 : 7_459, recent: mockAwards(14) },
+		shop:
+			old || params.has('noshop')
+				? null
+				: {
+						items: shopItems().map((i) => ({ id: i.id, price: cosmeticPrice(i)! })),
+						owned: coinsN === 0 ? [] : ['hat_cap', 'top_sunset', 'shoes_slides'],
+						loadout: coinsN === 0 ? emptyLoadout() : { ...emptyLoadout(), hat: 'hat_cap', shoes: 'shoes_slides' },
+						busy: false,
+						notice: null
+					},
 		multiplier: old ? null : race ? { mult: 10, active: 5, need: 0 } : { mult: 15, active: 6, need: 5 },
 		awardPopups: [
 			...mockAwards(coinsN ?? 0).map((e) => awardPopup({ type: 'award', base: 30, total: 0, balance: 0, ...e }, t0 + 60_000)),
@@ -327,6 +338,20 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 				no: r.no + (yes ? 0 : 1) - (r.myChoice === 'no' ? 1 : 0)
 			};
 		},
+		shopBuy(item) {
+			const price = hud.shop?.items.find((i) => i.id === item)?.price ?? 0;
+			if (!hud.shop || !hud.coins) return;
+			if (hud.coins.balance < price) {
+				hud.shop = { ...hud.shop, notice: { ok: false, text: 'Not enough coins.' } };
+				return;
+			}
+			hud.coins = { ...hud.coins, balance: hud.coins.balance - price };
+			hud.shop = { ...hud.shop, owned: [...hud.shop.owned, item], notice: { ok: true, text: 'Item bought.' } };
+		},
+		shopEquip(slot, item) {
+			if (hud.shop) hud.shop = { ...hud.shop, loadout: { ...hud.shop.loadout, [slot]: item }, notice: null };
+		},
+		createPreview: (c) => new CharacterPreview(c, 2),
 		minimizeBan(minimized) {
 			if (hud.ban) hud.ban = { ...hud.ban, minimized };
 		},

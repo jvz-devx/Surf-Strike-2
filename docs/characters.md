@@ -9,6 +9,8 @@ Every humanoid in the game (remote players, turned players, infected, AI zombies
 | `body.ts` | Head, face, 5 hair styles, neck, arms, hands, claws, shins (body regions) |
 | `outfit.ts` | Default tee, trousers, sneakers, plus reusable torso, sleeve, leg and seat builders |
 | `items.ts` | Client item meshes: `registerItemMesh`, `ItemMesh` |
+| `shop-items.ts` | Meshes of the shop's items |
+| `preview.ts` | Shop turntable and item pictures (own small WebGL context) |
 | `geometry.ts` | Merges the parts of a look into one shared, reference-counted geometry per LOD |
 | `material.ts` | One Lambert-based material per character: palette, baked shade, rim light |
 | `animator.ts` | Procedural animation |
@@ -24,14 +26,26 @@ Data, shared by server and client (`packages/shared/src/cosmetics.ts`):
 ```ts
 COSMETIC_SLOTS                 // ['hat', 'glasses', 'top', 'bottom', 'shoes']
 type Loadout                   // Record<CosmeticSlot, string | null>; null = the slot's default
-interface CosmeticItem         // { id, slot, name, isDefault? }
+interface CosmeticItem         // { id, slot, name, isDefault?, rarity? }
+RARITIES                       // { basic: { name, color, price } }; price in tenths of a coin
+shopItems(), cosmeticPrice(i)  // items with a rarity are for sale
 registerCosmetic(item)         // add an item (throws on a duplicate id)
 getCosmetic(id), listCosmetics(slot?), defaultItem(slot)
 emptyLoadout()                 // the default look
 sanitizeLoadout(untrusted)     // always a valid Loadout; use it on everything received or stored
 ```
 
-The registry holds only `top_default`, `bottom_default` and `shoes_default`. Hat and glasses are empty by default. Nothing is networked, stored or sold yet.
+The registry holds `top_default`, `bottom_default`, `shoes_default` and the shop's items (`SHOP_ITEMS`). Hat and glasses are empty by default. Buying, storage and messages: [economy.md](economy.md#shop). Guests wear the default look. Both ends run `sanitizeLoadout` on everything received or stored, so an item the other side does not know is simply not worn.
+
+| Slot | Items (all Basic, 75 coins) |
+| --- | --- |
+| hat | Breakline cap, Pom beanie, Straw hat |
+| glasses | Glare shades |
+| top | Sunset tee, Half-and-half tee, Checker tee |
+| bottom | Boardshorts, Joggers, Cargo pants |
+| shoes | High-tops, Beach slides, Trail boots |
+
+The own player is never drawn in the game, except as the shop preview and as the race ghost of an own run (your PB, or your record), which wears what you wear now.
 
 Drawing (`apps/web/src/lib/render/character/`):
 
@@ -43,8 +57,12 @@ registerItemMesh(id, { hides?, colors, build })  // items.ts
 
 ### Adding an item
 
-1. `registerCosmetic({ id, slot, name })` in `cosmetics.ts`.
-2. `registerItemMesh(id, mesh)` in a client file that the game imports.
+1. One line in `SHOP_ITEMS` in `packages/shared/src/cosmetics.ts`: `{ id, slot, name, rarity }`. The id is stored in players' databases: never rename, reuse or remove one. For a new rarity, add it to `RARITIES` (name, colour, price).
+2. `registerItemMesh(id, mesh)` in `apps/web/src/lib/render/character/shop-items.ts`.
+3. Look at it in the [gallery](#dev-gallery) from the front and back, crouched, running, surfing, with every hair style (hats) and with every other bottom or pair of shoes, and as IT, infected and zombie.
+4. Update the counts in `cosmetics.test.ts` and `character.test.ts` (they also check the mesh, its budget, its winding and its palette), and the table above.
+
+The shop lists, sells, previews and syncs the item without further changes. A client that does not know an item draws the default; a server that does not know it does not sell it.
 
 ```ts
 registerItemMesh('cap_red', {
@@ -62,6 +80,8 @@ registerItemMesh('cap_red', {
 - **`colors`** are up to four colours, or a function of the player's tint. Geometry stores a palette index per vertex (`PAL.hatA` … `PAL.glassesD`); use the four of your own slot, or `PAL.skin`.
 - **`build`** runs once per LOD (`b.lod` 0, 1, 2). Use `b.pick(near, mid, far)` for segment counts and drop small details at LOD 1 and 2. The result is cached and shared by everyone wearing the item. It is merged into the body, so an item adds no draw call.
 - **Rigid items** (hat, glasses) go inside `b.socket(name, fn)`: coordinates are then local to the socket and move with its bone. **Clothes** use model coordinates of the bind pose and skin weights: `torsoRings`/`torsoWeights`, `buildSleeve`/`armWeights`, `buildSeat` and `buildLeg`/`legWeights` in `outfit.ts` and `body.ts` follow the joints without gaps.
+- **Shoes and trousers** overlap: shafts use `legWeights` like the trousers and stay inside them (radius at most 2.9; joggers are the tightest). `buildShoeBase`, `buildLaces`, `buildLeg` (`fit`, `stripe`) and `buildCollar` in `outfit.ts` are shared with the default clothes.
+- Patterns are per quad (`palAt`): put rings on the edges of stripes. Capped lofts need `pal`, or the cap gets the skin colour.
 - `samples.ts` has a worked example for every slot (cap, sunglasses, long sleeve, shorts, boots).
 
 ### Sockets
@@ -92,7 +112,7 @@ Computed every frame from velocity, view angles, ground and duck flags; nothing 
 
 ## Cost
 
-One draw call per character (plus the name tag, and one for a held item). About 7,200 / 2,700 / 1,100 triangles at LOD 0 / 1 / 2 (switch at about 700 and 1,950 units, closer in a crowd: `crowdScale`). Far characters animate on every 2nd to 4th frame and off-screen ones not at all. Bones are not scene objects. Geometry is shared per look and freed with its last user.
+One draw call per character (plus the name tag, and one for a held item). About 7,200 / 2,700 / 1,100 triangles at LOD 0 / 1 / 2, up to 9,750 / 3,700 / 1,800 fully dressed in shop items (switch at about 700 and 1,950 units, closer in a crowd: `crowdScale`). Far characters animate on every 2nd to 4th frame and off-screen ones not at all. Bones are not scene objects. Geometry is shared per look and freed with its last user.
 
 ## Dev gallery
 
@@ -100,6 +120,7 @@ One draw call per character (plus the name tag, and one for a held item). About 
 
 ```js
 __gallery.show([{ id: 1, samples: true }, { id: 2, z: 36, role: 'it', held: 'knife', motion: { vx: 250 } }]);
+__gallery.show([{ id: 3, loadout: { hat: 'hat_cap', shoes: 'shoes_boots' }, motion: { ducked: true } }]);
 __gallery.view(20, 40, 200); // orbit angle, look-at height, distance
 __gallery.pause(); __gallery.step(1 / 60, 30);
 ```

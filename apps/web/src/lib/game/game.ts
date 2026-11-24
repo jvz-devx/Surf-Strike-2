@@ -41,6 +41,7 @@ import {
 	randomSpawn,
 	mapTitle,
 	RunTracker,
+	sanitizeLoadout,
 	sanitizeText,
 	Status,
 	SURF_CVARS,
@@ -84,9 +85,11 @@ import { GameRenderer } from '../render/renderer.js';
 import { Binds } from './binds.js';
 import { CHAT_HELP, parseChatCommand } from './chat.js';
 import { cvarFallback, HOLD_ACTIONS, registerCommands, type CommandContext, type HoldAction } from './commands.js';
+import { parseShop, shopNotice } from './shop.js';
+import { CharacterPreview } from '../render/character/preview.js';
 import { applyAward, awardPopup, countdown, noticePopup, pushPopup } from './coins.js';
 import { DevConsole, type PrintKind } from './console.js';
-import type { ChatLine, ConsoleLine, GameApi, TagView } from './contract.js';
+import type { CharacterPreviewHandle, ChatLine, ConsoleLine, GameApi, TagView } from './contract.js';
 import { ClientCvars } from './cvars.js';
 import { HudState } from './hud.svelte.js';
 import {
@@ -123,6 +126,8 @@ const SOLO_ROW_ID = 0;
 const FULL_HOLDOFF_MS = 60_000;
 /** Reconnect this long after a temporary ban lifted (clock and timer slack). */
 const BAN_RECONNECT_MS = 1_000;
+/** The shop stops waiting for a reply after this long. */
+const SHOP_TIMEOUT_MS = 6_000;
 const SV_NAMES = Object.keys(SURF_CVARS) as Array<keyof Cvars>;
 const SV_BOOL = SV_BOOL_CVARS;
 
@@ -253,6 +258,7 @@ export class Game implements CommandContext {
 	private mode: 'solo' | 'online' = 'solo';
 	private net: NetClient | null = null;
 	private selfId = -1;
+	private shopTimer: ReturnType<typeof setTimeout> | undefined;
 	private remotes = new Map<number, Remote>();
 	/** Scratch pose for `players.setPose`. */
 	private readonly avatarPose = emptyPose();
@@ -392,6 +398,9 @@ export class Game implements CommandContext {
 			changeMap: (id) => this.changeMap(id),
 			rtvVote: (yes) => this.rtvVote(yes),
 			minimizeBan: (minimized) => this.minimizeBan(minimized),
+			shopBuy: (item) => this.shopRequest({ type: 'shopBuy', item }),
+			shopEquip: (slot, item) => this.shopRequest({ type: 'shopEquip', slot, item }),
+			createPreview: (canvas) => this.createPreview(canvas),
 			admin: (a) => this.adminAction(a)
 		};
 
@@ -929,6 +938,35 @@ export class Game implements CommandContext {
 	}
 
 	// -----------------------------------------------------------------------
+	// Shop (docs/ui.md#shop): the server decides; the menu shows its replies.
+
+	private shopRequest(msg: Extract<ClientMessage, { type: 'shopBuy' | 'shopEquip' }>): void {
+		const s = this.hud.shop;
+		if (!s || s.busy || this.mode !== 'online') return;
+		this.hud.shop = { ...s, busy: true, notice: null };
+		this.send(msg);
+		clearTimeout(this.shopTimer);
+		this.shopTimer = setTimeout(() => {
+			if (this.hud.shop?.busy) this.hud.shop = { ...this.hud.shop, busy: false, notice: { ok: false, text: 'No answer from the server. Try again.' } };
+		}, SHOP_TIMEOUT_MS);
+	}
+
+	private createPreview(canvas: HTMLCanvasElement): CharacterPreviewHandle | null {
+		try {
+			return new CharacterPreview(canvas, this.selfId);
+		} catch {
+			return null; // no second WebGL context
+		}
+	}
+
+	/** Own cosmetics on the ghost, when it replays a run of this player. */
+	private dressGhost(): void {
+		const g = this.ghost.source;
+		const own = g !== null && (g.kind === 'pb' || (this.hud.account !== null && g.name === this.hud.account.username));
+		this.renderer?.ghost.setLoadout(own ? (this.hud.shop?.loadout ?? null) : null);
+	}
+
+	// -----------------------------------------------------------------------
 	// Admin (docs/ui.md#admin): the server decides who is admin and re-checks every request.
 
 	private adminAction(action: AdminAction): void {
@@ -1349,6 +1387,7 @@ export class Game implements CommandContext {
 		const g = chooseGhost(this.mode === 'online', this.recordGhost, this.localGhost, this.map.id);
 		this.ghost.set(g);
 		if (g) this.renderer?.ghost.setLabel(ghostLabel(g));
+		this.dressGhost();
 	}
 
 	private onGhostFrame(f: GhostFrame): void {
@@ -2171,6 +2210,7 @@ export class Game implements CommandContext {
 			case 'join':
 				if (m.player.id !== this.selfId) {
 					this.remote(m.player.id, m.player.name).spectating = m.player.spectating;
+					this.renderer?.players.setLoadout(m.player.id, sanitizeLoadout(m.player.loadout));
 					this.updatePlayerCount();
 				}
 				break;
@@ -2291,6 +2331,18 @@ export class Game implements CommandContext {
 			case 'coinsNotice':
 				this.hud.awardPopups = pushPopup(this.hud.awardPopups, noticePopup(m, now));
 				break;
+			case 'cosmetics':
+				// The own items come with `shop`.
+				if (typeof m.id === 'number' && m.id !== this.selfId) this.renderer?.players.setLoadout(m.id, sanitizeLoadout(m.loadout));
+				break;
+			case 'shop':
+				this.hud.shop = { busy: this.hud.shop?.busy ?? false, notice: this.hud.shop?.notice ?? null, ...parseShop(m) };
+				this.dressGhost();
+				break;
+			case 'shopResult':
+				clearTimeout(this.shopTimer);
+				if (this.hud.shop) this.hud.shop = { ...this.hud.shop, busy: false, notice: shopNotice(m) };
+				break;
 			case 'multiplier':
 				this.hud.multiplier = { mult: m.mult, active: m.active, need: m.need };
 				break;
@@ -2314,7 +2366,12 @@ export class Game implements CommandContext {
 		this.hud.ban = null;
 		this.hud.coins = null;
 		this.hud.multiplier = null;
-		for (const p of m.players) if (p.id !== m.selfId) this.remote(p.id, p.name).spectating = p.spectating;
+		this.hud.shop = null;
+		for (const p of m.players) {
+			if (p.id === m.selfId) continue;
+			this.remote(p.id, p.name).spectating = p.spectating;
+			this.renderer?.players.setLoadout(p.id, sanitizeLoadout(p.loadout));
+		}
 		this.applyWelcomeAccount(m.account);
 		this.loadMap(m.map, m.cvars, m.records);
 		this.mapEndsAt = now + m.mapTimeLeft * 1000;
@@ -2393,6 +2450,7 @@ export class Game implements CommandContext {
 		this.records = null;
 		this.hud.adminState = null;
 		this.hud.coins = null;
+		this.hud.shop = null;
 		this.hud.multiplier = null;
 		this.applyEnabledMaps(null);
 		this.tagState = null;
@@ -2416,6 +2474,7 @@ export class Game implements CommandContext {
 		if (this.disposed) return;
 		this.disposed = true;
 		cancelAnimationFrame(this.raf);
+		clearTimeout(this.shopTimer);
 		this.offCvars();
 		this.zm?.dispose();
 		this.zm = null;

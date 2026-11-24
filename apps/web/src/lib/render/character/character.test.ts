@@ -5,8 +5,8 @@ import { CharacterAnimator, cycleDistance, emptyMotion, footOffset, gaitShape, t
 import { crowdScale } from './crowd.js';
 import { acquireLook, liveLooks, lookParts, mergeParts, type LookSpec } from './geometry.js';
 import { HELD, HeldAssets, type HeldItem } from './held.js';
-import { drawnItems } from './items.js';
-import { PAL, PAL_SIZE, type Lod } from './mesh-kit.js';
+import { drawnItems, itemMesh } from './items.js';
+import { PAL, PAL_SIZE, PartBuilder, type Lod } from './mesh-kit.js';
 import { applyLoadout, CharacterModel, personOf, pickLod, type CharacterRole } from './model.js';
 import { VelocityTracker } from './motion.js';
 import { registerSamples, SAMPLE_IDS } from './samples.js';
@@ -259,6 +259,50 @@ describe('cosmetics', () => {
 	afterAll(() => assets.dispose());
 
 	const wear = (l: Partial<Loadout>): Loadout => ({ ...emptyLoadout(), ...l });
+
+	it('every shop item has a mesh in its slot that builds at every LOD, within budget, in its own colours', () => {
+		const budget = [2600, 800, 420];
+		const items = [...ids].map((id) => getCosmetic(id)!).filter((i) => !i.isDefault);
+		expect(items).toHaveLength(13);
+		for (const item of items) {
+			const mesh = itemMesh(item.id)!;
+			expect(mesh, item.id).toBeDefined();
+			expect(mesh.colors, item.id).toHaveLength(4);
+			expect(drawnItems(wear({ [item.slot]: item.id }))[item.slot]).toBe(item.id);
+			const own = { hat: PAL.hatA, glasses: PAL.glassesA, top: PAL.topA, bottom: PAL.bottomA, shoes: PAL.shoesA }[item.slot];
+			for (const lod of [0, 1, 2] as Lod[]) {
+				const b = new PartBuilder(lod);
+				mesh.build(b);
+				const { idx, pos, pal } = b.data;
+				expect(idx.length / 3, `${item.id} lod ${lod}`).toBeGreaterThan(0);
+				expect(idx.length / 3, `${item.id} lod ${lod}`).toBeLessThan(budget[lod]!);
+				expect(pos.every(Number.isFinite), item.id).toBe(true);
+				// Roles recolour a slot's palette: nothing may use another slot's.
+				expect(pal.every((p) => p === PAL.skin || (p >= own && p < own + 4)), item.id).toBe(true);
+				// Only the slides show skin.
+				if (item.id !== 'shoes_slides') expect(pal, item.id).not.toContain(PAL.skin);
+				let vol = 0;
+				const v = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()] as const;
+				for (let i = 0; i < idx.length; i += 3) {
+					for (let k = 0; k < 3; k++) v[k as 0 | 1 | 2].fromArray(pos, idx[i + k]! * 3);
+					vol += v[0].dot(v[1].clone().cross(v[2])) / 6;
+				}
+				expect(vol, `${item.id} faces outwards`).toBeGreaterThan(0);
+				mergeParts(lookParts({ ...LOOK, items: drawnItems(wear({ [item.slot]: item.id })) }, lod)).dispose();
+			}
+			if (item.slot === 'hat') expect(mesh.hides).toContain('hair');
+		}
+	});
+
+	it('a tagged look has its own geometry (second WebGL context)', () => {
+		const a = new CharacterModel(personOf(1), assets);
+		const b = new CharacterModel(personOf(1), assets, { tag: 'preview' });
+		expect(b.mesh.geometry).not.toBe(a.mesh.geometry);
+		const before = liveLooks();
+		b.dispose();
+		expect(liveLooks()).toBe(before - 1);
+		a.dispose();
+	});
 
 	it('samples are not part of the shipped registry', () => {
 		for (const id of Object.values(SAMPLE_IDS)) {

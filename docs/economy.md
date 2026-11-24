@@ -1,6 +1,6 @@
 # Points and coins
 
-Status: the core is implemented (ledger, activity, playtime points, abuse detection, client views, the API for modes), and the awards of every mode. The shop is not. The owner asked for a balanced point system and left the final numbers to us. Change the numbers here first, then in `packages/shared/src/economy.ts`, which holds all of them.
+Status: the core is implemented (ledger, activity, playtime points, abuse detection, client views, the API for modes), the awards of every mode, and the [shop](#shop). The owner asked for a balanced point system and left the final numbers to us. Change the numbers here first, then in `packages/shared/src/economy.ts`, which holds all of them.
 
 ## Terms
 
@@ -211,6 +211,7 @@ Additive; older clients ignore the messages, newer clients show nothing without 
 | S→C | `multiplier { mult, active, need }`: on join and every change, to everyone; `need` = active players this mode needs to pay |
 | S→C | `coinsNotice { text, tone: info\|warn }`: guest hint, abuse warning (also sent as a chat line for older clients) |
 | S→C | `banned { reason, seconds? }`: `seconds` until the ban lifts by itself; absent = permanent |
+| C→S, S→C | Shop messages: see [Shop](#shop) |
 | S→C | `adminState`: `bans[].secondsLeft?`, `abuse[]?` |
 
 <a id="paying-from-a-mode"></a>
@@ -270,6 +271,30 @@ this.chased.reset();
 
 `s.chasing` is the same per hunter and `s.seen` the targets in view. A target with several hunters is credited once, by the nearest. `HuntTracker` samples 4 times per second, uses at most 96 traces per sample, and measures speed from positions. The line of sight treats fake walls (`solid: false`) as opaque and glass as transparent.
 
-### For the shop
+<a id="shop"></a>
 
-`Economy.spend(accountId, amount, item)` (`lobby.economy`) takes tenths from the balance in one transaction, never below zero, logs `shop:<item>` and sends `coins`. It returns false when the balance is too low. The Coins view is `apps/web/src/lib/ui/menu/CoinsMenu.svelte`.
+## Shop
+
+Cosmetics only. The stock, the rarities and their prices are data in `packages/shared/src/cosmetics.ts` ([how to add an item](characters.md#adding-an-item)); the rules are in `apps/server/src/shop.ts`. Menu: [ui.md](ui.md#shop).
+
+- **Rarity** sets the price. Only `basic` exists: 75 coins (750 tenths).
+- **Buying** (`Db.buyItem`) is one transaction that takes the write lock first: not owned yet, balance suffices, deduct, log `shop:<id>` (label `Shop: <name>`), grant. A second click, tab or process gets "You already own this item". No refunds.
+- **Wearing**: owned items only, one per slot, in the item's own slot; `null` takes it off. Kept across sessions, maps and modes.
+- **Guests** see the stock and can try items on, but not buy or wear them.
+- At most 8 requests per second and connection; more are refused, above 100 the client is kicked.
+- **Storage** (new tables, nothing else changes): `owned_items (account_id, item_id, bought_at, price)` and `equipped (account_id, slot, item_id)`, which references `owned_items`. Rows of items this version does not know are kept and ignored.
+
+| Direction | Message |
+| --- | --- |
+| C→S | `shopBuy { item }` |
+| C→S | `shopEquip { slot, item \| null }` |
+| S→C | `shop { items[{ id, price }], owned[], loadout }`: after `welcome`, `auth` and every change; guests get it with nothing owned |
+| S→C | `shopResult { action: buy\|equip, item, ok, error? }`: to the requester |
+| S→C | `cosmetics { id, loadout }`: to everyone when a player's worn items change (also on login and logout) |
+| S→C | `welcome.players[]` and `join.player` carry `loadout?` (absent: default look) |
+
+All of it is optional: older clients ignore it, and without `shop` a newer client says the shop is not available on this server. The server's prices are the ones shown and charged.
+
+### Spending from code
+
+`Economy.spend(accountId, amount, item)` (`lobby.economy`) takes tenths from the balance in one transaction, never below zero, logs `shop:<item>` and sends `coins`. It returns false when the balance is too low. `Economy.buy(accountId, item)` is the same for a shop item, with the grant in the same transaction. The Coins view is `apps/web/src/lib/ui/menu/CoinsMenu.svelte`.

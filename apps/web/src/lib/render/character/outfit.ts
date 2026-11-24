@@ -74,21 +74,24 @@ export function buildDefaultTop(b: PartBuilder): void {
 		},
 		shadeAt: (p) => lerp(0.84, 1, smooth(37, 44, p.y)) * (Math.abs(p.z) > 6.6 && p.y > 46 && p.y < 54 ? 0.9 : 1)
 	});
-	// Collar rim: same weights as the neckline it sits on.
-	if (b.lod < 2) {
-		const w = torsoWeights(58.5);
-		b.loft(
-			[
-				{ c: [-0.4, 57.9, 0], f: 3.0, b: 3.5, s: 4.2, w },
-				{ c: [-0.4, 58.5, 0], f: 3.0, b: 3.35, s: 3.55, w },
-				{ c: [-0.4, 59, 0], f: 2.9, b: 3.1, s: 3.1, w },
-				{ c: [-0.4, 59.1, 0], f: 2.5, b: 2.7, s: 2.65, w, shade: 0.85 },
-				{ c: [-0.4, 58.2, 0], f: 2.2, b: 2.4, s: 2.4, w, shade: 0.6 }
-			],
-			{ seg: b.pick(16, 9, 6), pal: PAL.topC }
-		);
-	}
+	buildCollar(b);
 	for (const s of SIDES) buildSleeve(b, s, 7.4);
+}
+
+/** Collar rim: same weights as the neckline it sits on. */
+export function buildCollar(b: PartBuilder, pal: number = PAL.topC): void {
+	if (b.lod === 2) return;
+	const w = torsoWeights(58.5);
+	b.loft(
+		[
+			{ c: [-0.4, 57.9, 0], f: 3.0, b: 3.5, s: 4.2, w },
+			{ c: [-0.4, 58.5, 0], f: 3.0, b: 3.35, s: 3.55, w },
+			{ c: [-0.4, 59, 0], f: 2.9, b: 3.1, s: 3.1, w },
+			{ c: [-0.4, 59.1, 0], f: 2.5, b: 2.7, s: 2.65, w, shade: 0.85 },
+			{ c: [-0.4, 58.2, 0], f: 2.2, b: 2.4, s: 2.4, w, shade: 0.6 }
+		],
+		{ seg: b.pick(16, 9, 6), pal }
+	);
 }
 
 /** Short or long sleeve ending `end` units from the shoulder, with a cuff band. */
@@ -139,12 +142,20 @@ const LEG_TABLE: readonly (readonly number[])[] = [
 	[37, 3.2, 3.6, 2.2]
 ];
 
-/** One trouser leg ending at bind height `end`. */
-export function buildLeg(b: PartBuilder, s: Side, end: number, pals: { leg: number; cuff: number; stripe: number } = { leg: PAL.bottomA, cuff: PAL.bottomB, stripe: PAL.bottomB }): void {
+/** One trouser leg ending at bind height `end`. `fit`: extra radius at a height; `stripe`: sine of the side stripe's edge, `stripeTop`: where it starts. */
+export function buildLeg(
+	b: PartBuilder,
+	s: Side,
+	end: number,
+	pals: { leg: number; cuff: number; stripe: number } = { leg: PAL.bottomA, cuff: PAL.bottomB, stripe: PAL.bottomB },
+	o: { fit?: (y: number) => number; stripe?: number; stripeTop?: number } = {}
+): void {
+	const edge = o.stripe ?? 0.93;
 	const z = BIND[`thigh${s}`][2];
 	const out = sideSign(s);
 	const ring = (y: number, d = 0, pal?: number, shade = 1): Ring => {
 		const r = sample(LEG_TABLE, y);
+		d += o.fit?.(y) ?? 0;
 		return { c: [-0.2, y, z], f: r[1]! + d, b: r[2]! + d, s: r[3]! + d, n: y > 28 ? 2.5 : 2.15, w: legWeights(s, y), pal, shade };
 	};
 	const ys = b
@@ -158,7 +169,7 @@ export function buildLeg(b: PartBuilder, s: Side, end: number, pals: { leg: numb
 		palAt: (i, a) => {
 			if (rows[i]!.pal !== undefined) return rows[i]!.pal;
 			// Side stripe down the outside.
-			return b.lod < 2 && Math.sin(a) * out > 0.93 && rows[i]!.c[1] < 37 ? pals.stripe : pals.leg;
+			return b.lod < 2 && Math.sin(a) * out > edge && rows[i]!.c[1] < (o.stripeTop ?? 37) ? pals.stripe : pals.leg;
 		},
 		deform:
 			b.lod > 0
@@ -208,57 +219,82 @@ export function buildDefaultBottom(b: PartBuilder): void {
 	for (const s of SIDES) buildLeg(b, s, 3.1);
 }
 
+/** Sneaker outline: x, sole half width, upper top y, centre shift (the big toe side is fuller). */
+export const SHOE_TABLE: readonly (readonly number[])[] = [
+	[-4.4, 1.2, 3.2, 0],
+	[-4.0, 1.9, 4.6, 0],
+	[-2.6, 2.35, 5.3, 0],
+	[-0.6, 2.35, 5.4, 0],
+	[1.2, 2.3, 4.6, -0.05],
+	[3, 2.5, 3.7, -0.15],
+	[4.8, 2.7, 3.05, -0.25],
+	[6.4, 2.45, 2.6, -0.35],
+	[7.5, 1.8, 2.1, -0.45],
+	[8.1, 0.9, 1.6, -0.5]
+];
+
+/** Weights along a shoe: the sole bends at the ball of the foot. */
+export const shoeWeights = (s: Side, x: number): Weights => mix(`foot${s}`, `toe${s}`, smooth(2.6, 5.4, x));
+
+/** Upper and sole of a shoe. `palAt(x)`: palette of the upper; `sole`: its height and how far it stands out. */
+export function buildShoeBase(
+	b: PartBuilder,
+	s: Side,
+	o: { table?: readonly (readonly number[])[]; palAt: (x: number) => number; solePal?: number; soleHeight?: (x: number) => number; soleGrow?: number }
+): void {
+	const z0 = BIND[`foot${s}`][2] + sideSign(s) * 0.15;
+	const T = o.table ?? SHOE_TABLE;
+	const height = o.soleHeight ?? ((x: number) => lerp(1.5, 1.1, smooth(-2, 4, x)));
+	const xs = b.pick([-4.4, -4.0, -2.6, -0.6, 1.2, 3, 4.8, 6.4, 7.5, 8.1], [-4.4, -3.2, -0.6, 2, 4.8, 7, 8.1], [-4.3, 0, 5, 8]);
+	const row = (x: number) => {
+		const r = sample(T, x);
+		return { hw: r[1]!, top: r[2]!, z: z0 + sideSign(s) * r[3]! };
+	};
+	b.loft(
+		xs.map((x): Ring => {
+			const r = row(x);
+			const lo = 0.9;
+			return { c: [x, (r.top + lo) / 2, r.z], f: (r.top - lo) / 2, s: r.hw * 0.97, n: 2.5, w: shoeWeights(s, x) };
+		}),
+		{
+			seg: b.pick(11, 7, 5),
+			u: [0, 1, 0],
+			v: [0, 0, 1],
+			pal: PAL.shoesA,
+			capStart: true,
+			capEnd: true,
+			palAt: (i) => o.palAt(xs[i]!),
+			shadeAt: (p) => lerp(0.8, 1, smooth(0.8, 2.4, p.y))
+		}
+	);
+	// Sole: a thicker heel, the toe curls up slightly.
+	b.loft(
+		xs.map((x): Ring => {
+			const r = row(x);
+			const lift = x > 6 ? (x - 6) * 0.22 : 0;
+			const h = height(x);
+			return { c: [x < -4 ? x - 0.2 : x > 7.8 ? x + 0.15 : x, h / 2 + lift, r.z], f: h / 2, s: r.hw + (o.soleGrow ?? 0.22), n: 5, w: shoeWeights(s, x) };
+		}),
+		{ seg: b.pick(10, 6, 4), u: [0, 1, 0], v: [0, 0, 1], pal: o.solePal ?? PAL.shoesB, capStart: true, capEnd: true }
+	);
+}
+
+/** Laces across the instep. */
+export function buildLaces(b: PartBuilder, s: Side, table = SHOE_TABLE, pal: number = PAL.shoesD, n = 4): void {
+	if (b.lod > 0) return;
+	const side = sideSign(s);
+	const z0 = BIND[`foot${s}`][2] + side * 0.15;
+	for (let i = 0; i < n; i++) {
+		const x = 1.2 + i * 0.95;
+		const y = sample(table, x)[2]! - 0.02;
+		b.box([x, y, z0 - side * 0.1], [0.36, 0.3, 2.3], { w: shoeWeights(s, x), pal, rot: [0, 0, -0.45] });
+	}
+}
+
 export function buildDefaultShoes(b: PartBuilder): void {
 	for (const s of SIDES) {
 		const z0 = BIND[`foot${s}`][2] + sideSign(s) * 0.15;
-		const side = sideSign(s);
-		const w = (x: number): Weights => mix(`foot${s}`, `toe${s}`, smooth(2.6, 5.4, x));
-		// x, sole half width, upper top y, centre shift (the big toe side is fuller)
-		const T: readonly (readonly number[])[] = [
-			[-4.4, 1.2, 3.2, 0],
-			[-4.0, 1.9, 4.6, 0],
-			[-2.6, 2.35, 5.3, 0],
-			[-0.6, 2.35, 5.4, 0],
-			[1.2, 2.3, 4.6, -0.05],
-			[3, 2.5, 3.7, -0.15],
-			[4.8, 2.7, 3.05, -0.25],
-			[6.4, 2.45, 2.6, -0.35],
-			[7.5, 1.8, 2.1, -0.45],
-			[8.1, 0.9, 1.6, -0.5]
-		];
-		const xs = b.pick([-4.4, -4.0, -2.6, -0.6, 1.2, 3, 4.8, 6.4, 7.5, 8.1], [-4.4, -3.2, -0.6, 2, 4.8, 7, 8.1], [-4.3, 0, 5, 8]);
-		const row = (x: number) => {
-			const r = sample(T, x);
-			return { hw: r[1]!, top: r[2]!, z: z0 + side * r[3]! };
-		};
-		// Upper.
-		b.loft(
-			xs.map((x): Ring => {
-				const r = row(x);
-				const lo = 0.9;
-				return { c: [x, (r.top + lo) / 2, r.z], f: (r.top - lo) / 2, s: r.hw * 0.97, n: 2.5, w: w(x) };
-			}),
-			{
-				seg: b.pick(11, 7, 5),
-				u: [0, 1, 0],
-				v: [0, 0, 1],
-				pal: PAL.shoesA,
-				capStart: true,
-				capEnd: true,
-				palAt: (i) => (xs[i]! >= 4.8 || (b.lod < 2 && xs[i]! < -2.6 && xs[i]! > -4.3) ? PAL.shoesC : PAL.shoesA),
-				shadeAt: (p) => lerp(0.8, 1, smooth(0.8, 2.4, p.y))
-			}
-		);
-		// Sole: a thicker heel, the toe curls up slightly.
-		b.loft(
-			xs.map((x): Ring => {
-				const r = row(x);
-				const lift = x > 6 ? (x - 6) * 0.22 : 0;
-				const h = lerp(1.5, 1.1, smooth(-2, 4, x));
-				return { c: [x < -4 ? x - 0.2 : x > 7.8 ? x + 0.15 : x, h / 2 + lift, r.z], f: h / 2, s: r.hw + 0.22, n: 5, w: w(x) };
-			}),
-			{ seg: b.pick(10, 6, 4), u: [0, 1, 0], v: [0, 0, 1], pal: PAL.shoesB, capStart: true, capEnd: true }
-		);
+		buildShoeBase(b, s, { palAt: (x) => (x >= 4.8 || (b.lod < 2 && x < -2.6 && x > -4.3) ? PAL.shoesC : PAL.shoesA) });
 		// Ankle collar and sock.
 		const foot = bone(`foot${s}`);
 		b.loft(
@@ -271,12 +307,6 @@ export function buildDefaultShoes(b: PartBuilder): void {
 			],
 			{ seg: b.pick(10, 6, 4), pal: PAL.shoesA }
 		);
-		if (b.lod === 0) {
-			for (let i = 0; i < 4; i++) {
-				const x = 1.2 + i * 0.95;
-				const y = sample(T, x)[2]! - 0.02;
-				b.box([x, y, z0 - side * 0.1], [0.36, 0.3, 2.3], { w: w(x), pal: PAL.shoesD, rot: [0, 0, -0.45] });
-			}
-		}
+		buildLaces(b, s);
 	}
 }

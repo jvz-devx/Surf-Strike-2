@@ -18,6 +18,8 @@
  * - `point_log`: every award and purchase of the last POINT_LOG_DAYS days;
  *   older rows are summed up in `point_rollup` (docs/economy.md#storage).
  * - `abuse_log`: automatic warnings and bans.
+ * - `owned_items`, `equipped`: cosmetics bought in the shop and worn, one item
+ *   per slot (docs/economy.md#shop).
  *
  * Every table is created with CREATE TABLE IF NOT EXISTS and new columns are
  * added with a default, so an existing database migrates in place on start-up
@@ -246,6 +248,20 @@ export class Db {
 				strikes INTEGER NOT NULL,
 				evidence TEXT NOT NULL
 			);
+			CREATE TABLE IF NOT EXISTS owned_items (
+				account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+				item_id TEXT NOT NULL,
+				bought_at INTEGER NOT NULL,
+				price INTEGER NOT NULL,
+				PRIMARY KEY (account_id, item_id)
+			);
+			CREATE TABLE IF NOT EXISTS equipped (
+				account_id INTEGER NOT NULL,
+				slot TEXT NOT NULL,
+				item_id TEXT NOT NULL,
+				PRIMARY KEY (account_id, slot),
+				FOREIGN KEY (account_id, item_id) REFERENCES owned_items (account_id, item_id) ON DELETE CASCADE
+			);
 		`);
 		// Missing = permanent ban / no active time yet.
 		this.addColumn('bans', 'expires_at', 'INTEGER');
@@ -361,6 +377,18 @@ export class Db {
 			),
 			pruneAbuse: d.prepare(`DELETE FROM abuse_log WHERE id <= (SELECT MAX(id) FROM abuse_log) - ?`),
 			listAbuse: d.prepare(`SELECT * FROM abuse_log ORDER BY id DESC LIMIT ?`),
+
+			ownedItems: d.prepare(`SELECT item_id FROM owned_items WHERE account_id = ? ORDER BY bought_at, item_id`).pluck(),
+			grantItem: d.prepare(
+				`INSERT INTO owned_items (account_id, item_id, bought_at, price) VALUES (?, ?, ?, ?) ON CONFLICT(account_id, item_id) DO NOTHING`
+			),
+			equippedItems: d.prepare(`SELECT slot, item_id FROM equipped WHERE account_id = ?`),
+			// From `owned_items`: an item that is not owned changes nothing.
+			equipItem: d.prepare(
+				`INSERT INTO equipped (account_id, slot, item_id) SELECT account_id, ?, item_id FROM owned_items WHERE account_id = ? AND item_id = ?
+				 ON CONFLICT(account_id, slot) DO UPDATE SET item_id = excluded.item_id`
+			),
+			unequipSlot: d.prepare(`DELETE FROM equipped WHERE account_id = ? AND slot = ?`),
 
 			disabledMaps: d.prepare(`SELECT map_id FROM map_settings WHERE enabled = 0`),
 			setMapEnabled: d.prepare(
@@ -502,6 +530,40 @@ export class Db {
 			this.st.logPoints.run({ ...e, mode: 'shop', map: '', base: 0, counted: 0, mult: 10, amount: -e.amount });
 			return this.accountStats(e.accountId);
 		})();
+	}
+
+	/**
+	 * Buy an item: take the price, log it and grant the item, all or nothing.
+	 * The write lock is taken first, so two buyers (connections, processes)
+	 * can never both pass the checks.
+	 */
+	buyItem(e: Pick<PointEntry, 'accountId' | 'at' | 'reason' | 'label' | 'amount'>, itemId: string): 'ok' | 'owned' | 'poor' {
+		return this.db
+			.transaction((): 'ok' | 'owned' | 'poor' => {
+				if (this.ownedItems(e.accountId).includes(itemId)) return 'owned';
+				if (!this.spendPoints(e)) return 'poor';
+				this.st.grantItem.run(e.accountId, itemId, e.at, e.amount);
+				return 'ok';
+			})
+			.immediate();
+	}
+
+	/** Item ids, oldest first (also items this version does not know). */
+	ownedItems(accountId: number): string[] {
+		return this.st.ownedItems.all(accountId) as string[];
+	}
+
+	/** Slot to item id as stored: pass it through `sanitizeLoadout`. */
+	equipped(accountId: number): Record<string, string> {
+		const rows = this.st.equippedItems.all(accountId) as { slot: string; item_id: string }[];
+		return Object.fromEntries(rows.map((r) => [r.slot, r.item_id]));
+	}
+
+	/** Wear an owned item (`null`: the slot's default). False when it is not owned. */
+	equip(accountId: number, slot: string, itemId: string | null): boolean {
+		if (itemId !== null) return this.st.equipItem.run(slot, accountId, itemId).changes > 0;
+		this.st.unequipSlot.run(accountId, slot);
+		return true;
 	}
 
 	/** Base points counted towards the backstop after `since`. */

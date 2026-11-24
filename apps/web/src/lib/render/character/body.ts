@@ -202,11 +202,13 @@ export function buildHair(b: PartBuilder, style: HairStyle, flat: boolean): void
 
 	if (style === 'ponytail') {
 		const seg2 = b.pick(10, 6, 4);
-		b.ball([-5.6, 67.2, 0], [0.7, 1.2, 1.2], { w: HEAD, pal: PAL.brow, seg: seg2, rings: b.pick(6, 4, 3) });
+		// Lower under a hat.
+		const d = flat ? 1.3 : 0;
+		b.ball([-5.6, 67.2 - d, 0], [0.7, 1.2, 1.2], { w: HEAD, pal: PAL.brow, seg: seg2, rings: b.pick(6, 4, 3) });
 		b.loft(
 			[
-				{ c: [-5.6, 67.5, 0], f: 0.6, s: 0.6, w: HEAD },
-				{ c: [-7.0, 67.0, 0], f: 1.2, s: 1.5, w: HEAD },
+				{ c: [-5.6, 67.5 - d, 0], f: 0.6, s: 0.6, w: HEAD },
+				{ c: [-7.0, 67.0 - d, 0], f: 1.2, s: 1.5, w: HEAD },
 				{ c: [-7.6, 64.6, 0], f: 1.3, s: 1.7, w: HEAD },
 				{ c: [-7.4, 61.6, 0], f: 1.0, s: 1.4, w: mix('head', 'neck', 0.4) },
 				{ c: [-6.9, 59.2, 0], f: 0.3, s: 0.5, w: mix('head', 'neck', 0.6) }

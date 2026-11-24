@@ -1,17 +1,18 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { mapTitle, type AdminState } from '@surf/shared';
-	import type { CoinsView, GameApi, MapListEntry } from '#lib/game/contract.js';
+	import type { CoinsView, GameApi, MapListEntry, ShopView } from '#lib/game/contract.js';
 	import SettingsMenu from '#lib/ui/menu/SettingsMenu.svelte';
 	import MapMenu from '#lib/ui/menu/MapMenu.svelte';
 	import CoinsMenu from '#lib/ui/menu/CoinsMenu.svelte';
+	import ShopMenu from '#lib/ui/menu/ShopMenu.svelte';
 	import AccountMenu from '#lib/ui/menu/AccountMenu.svelte';
 	import AdminMenu from '#lib/ui/menu/AdminMenu.svelte';
 	import { isSettingsSection, modeLabel, wrapIndex, type MenuView, type SettingsSectionId } from '#lib/ui/menu/menu.js';
 
 	/**
 	 * Esc menu (docs/ui.md#esc-menu): main entries on the left, the open
-	 * submenu (Change map, Settings, Coins, Account) beside them. Esc goes back one
+	 * submenu (Change map, Settings, Shop, Coins, Account) beside them. Esc goes back one
 	 * level, then resumes.
 	 */
 	let {
@@ -27,6 +28,7 @@
 		account = null,
 		online = false,
 		coins = null,
+		shop = null,
 		multiplier = null,
 		adminState = null,
 		adminNotice = null,
@@ -47,6 +49,8 @@
 		online?: boolean;
 		/** Coins submenu (null: guest, offline or a server without coins). */
 		coins?: CoinsView | null;
+		/** Shop submenu (null: offline or a server without a shop). */
+		shop?: ShopView | null;
 		multiplier?: { mult: number; active: number; need: number } | null;
 		/** Admin menu data (server-sent to admin accounts only). */
 		adminState?: AdminState | null;
@@ -66,7 +70,7 @@
 		const v = p.get('open') === 'maps' ? 'maps' : p.get('view');
 		const tab = p.get('tab');
 		return {
-			view: v === 'maps' || v === 'settings' || v === 'coins' || v === 'account' || v === 'admin' ? v : 'main',
+			view: v === 'maps' || v === 'settings' || v === 'shop' || v === 'coins' || v === 'account' || v === 'admin' ? v : 'main',
 			section: isSettingsSection(tab) ? tab : 'mouse'
 		};
 	}
@@ -81,6 +85,7 @@
 		{ id: 'resume', label: 'Resume' },
 		{ id: 'maps', label: 'Change map' },
 		{ id: 'settings', label: 'Settings' },
+		{ id: 'shop', label: 'Shop' },
 		{ id: 'coins', label: 'Coins' },
 		{ id: 'account', label: 'Account' },
 		...(account?.admin ? [{ id: 'admin', label: 'Admin' } as Entry] : [])
@@ -202,6 +207,7 @@
 		<div
 			class="content ss-panel"
 			class:compact={view === 'account'}
+			class:wide={view === 'shop'}
 			id="ss-menu-content"
 			role="dialog"
 			aria-modal="false"
@@ -222,6 +228,8 @@
 					admin={account?.admin === true}
 					onpick={pickMap}
 				/>
+			{:else if view === 'shop'}
+				<ShopMenu {api} {shop} balance={coins?.balance ?? 0} loggedIn={account !== null} {online} />
 			{:else if view === 'coins'}
 				<CoinsMenu {api} {coins} {multiplier} loggedIn={account !== null} {online} />
 			{:else if view === 'admin'}
@@ -355,6 +363,10 @@
 	.content.compact {
 		height: auto;
 		flex-basis: 440px;
+	}
+	.content.wide {
+		flex-basis: 1020px;
+		height: min(720px, calc(100vh - 64px));
 	}
 	@keyframes slide-in {
 		from {

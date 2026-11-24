@@ -12,6 +12,7 @@ import { HeldAssets, type HeldItem } from './held.js';
 import { drawnItems, itemMesh, type PlayerTint } from './items.js';
 import { CharacterMaterial } from './material.js';
 import { PAL, type Lod } from './mesh-kit.js';
+import './shop-items.js';
 import { commitPose, createSkeleton, type CharacterSkeleton, type SocketName } from './skeleton.js';
 
 /** Gameplay looks. They override clothing colours, so they read at any distance. */
@@ -165,7 +166,7 @@ export class CharacterModel {
 	constructor(
 		person: Person,
 		private readonly assets: HeldAssets,
-		opts: { ghost?: boolean } = {}
+		private readonly opts: { ghost?: boolean; tag?: string } = {}
 	) {
 		this.person = person;
 		this.material = new CharacterMaterial(opts.ghost);
@@ -189,7 +190,7 @@ export class CharacterModel {
 	private spec(): LookSpec {
 		const items = drawnItems(this.loadout);
 		if (ROLES[this.role].bareEyes) items.glasses = null;
-		return { hair: this.person.style, items, claws: this.claws };
+		return { hair: this.person.style, items, claws: this.claws, ...(this.opts.tag ? { tag: this.opts.tag } : {}) };
 	}
 
 	private rebuild(): void {

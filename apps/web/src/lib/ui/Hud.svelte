@@ -153,6 +153,7 @@
 			account={hud.account}
 			online={hud.online}
 			coins={hud.coins}
+			shop={hud.shop}
 			multiplier={hud.multiplier}
 			maps={hud.maps}
 			mapId={hud.mapId}
