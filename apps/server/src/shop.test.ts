@@ -12,7 +12,7 @@ import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
 import { sleep, TestClient, testMap } from './test-helpers.ts';
 
-const PRICE = pts(75);
+const PRICE = pts(30);
 const give = (db: Db, accountId: number, tenths: number) =>
 	db.payPoints({ accountId, at: 1, mode: 'surf', map: 'm', reason: 'playtime', label: 'x', base: tenths, counted: 0, mult: 10, amount: tenths });
 const buyArgs = (accountId: number, item: string, amount = PRICE) => ({ accountId, at: 5, reason: `shop:${item}`, label: 'x', amount });

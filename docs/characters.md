@@ -38,7 +38,7 @@ sanitizeLoadout(untrusted)     // always a valid Loadout; use it on everything r
 
 The registry holds `top_default`, `bottom_default`, `shoes_default` and the shop's items (`SHOP_ITEMS`). Hat and glasses are empty by default. Buying, storage and messages: [economy.md](economy.md#shop). Guests wear the default look. Both ends run `sanitizeLoadout` on everything received or stored, so an item the other side does not know is simply not worn.
 
-| Slot | Items (Basic, 75 coins, unless noted) |
+| Slot | Items (Basic, 30 coins, unless noted) |
 | --- | --- |
 | hat | Breakline cap, Pom beanie, Straw hat, Fry cook hat (Common, not in the shop) |
 | glasses | Glare shades |

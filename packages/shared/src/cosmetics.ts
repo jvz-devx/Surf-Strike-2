@@ -25,7 +25,7 @@ export interface Rarity {
 
 /** Rarity levels, most common first. */
 export const RARITIES = Object.freeze({
-	basic: { name: 'Basic', color: '#9fc3dc', price: 750 },
+	basic: { name: 'Basic', color: '#9fc3dc', price: 300 },
 	common: { name: 'Common', color: '#b9c2c9', price: null },
 	uncommon: { name: 'Uncommon', color: '#6fcf7f', price: null },
 	rare: { name: 'Rare', color: '#4f9bff', price: null },
@@ -42,7 +42,7 @@ export const LOOTBOX = Object.freeze({
 	id: 'lootbox',
 	name: 'Loot box',
 	/** Tenths of a coin. */
-	price: 1200,
+	price: 800,
 	available: false,
 	odds: Object.freeze({ common: 80, uncommon: 10, rare: 5, epic: 1 }) satisfies Partial<Record<RarityId, number>>
 });
