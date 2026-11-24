@@ -19,16 +19,33 @@ export interface Rarity {
 	name: string;
 	/** CSS colour of the label. */
 	color: string;
-	/** Tenths of a coin (docs/economy.md). */
-	price: number;
+	/** Price in the shop in tenths of a coin (docs/economy.md); null = not sold, only found in loot boxes. */
+	price: number | null;
 }
 
-/** Rarity levels, cheapest first. */
+/** Rarity levels, most common first. */
 export const RARITIES = Object.freeze({
 	basic: { name: 'Basic', color: '#9fc3dc', price: 750 },
-	common: { name: 'Common', color: '#7fd08a', price: 2000 }
+	common: { name: 'Common', color: '#b9c2c9', price: null },
+	uncommon: { name: 'Uncommon', color: '#6fcf7f', price: null },
+	rare: { name: 'Rare', color: '#4f9bff', price: null },
+	epic: { name: 'Epic', color: '#b36bff', price: null }
 }) satisfies Readonly<Record<string, Rarity>>;
 export type RarityId = keyof typeof RARITIES;
+
+/**
+ * Loot box (docs/economy.md#loot-box). Shown in the shop but not usable yet.
+ * `odds` are the owner's percentages; they add up to 96, so a future roll must
+ * treat them as weights or the missing 4 must be assigned first.
+ */
+export const LOOTBOX = Object.freeze({
+	id: 'lootbox',
+	name: 'Loot box',
+	/** Tenths of a coin. */
+	price: 1200,
+	available: false,
+	odds: Object.freeze({ common: 80, uncommon: 10, rare: 5, epic: 1 }) satisfies Partial<Record<RarityId, number>>
+});
 
 export interface CosmeticItem {
 	/** Unique and stable: it is what gets stored and sent. */
@@ -38,7 +55,7 @@ export interface CosmeticItem {
 	name: string;
 	/** Worn when the slot is `null`; never sold. */
 	isDefault?: boolean;
-	/** Sold in the shop at this rarity's price; absent = not for sale. */
+	/** Sold in the shop if this rarity has a price; absent = not for sale. */
 	rarity?: RarityId;
 }
 
@@ -106,7 +123,7 @@ registerCosmetic({ id: 'top_default', slot: 'top', name: 'Surf tee', isDefault: 
 registerCosmetic({ id: 'bottom_default', slot: 'bottom', name: 'Trousers', isDefault: true });
 registerCosmetic({ id: 'shoes_default', slot: 'shoes', name: 'Sneakers', isDefault: true });
 
-/** The shop's stock: 13 basic items. Ids are stored in the database: never rename or reuse one. */
+/** The items: 13 basic ones in the shop, the others for loot boxes. Ids are stored in the database: never rename or reuse one. */
 const SHOP_ITEMS: readonly Required<Omit<CosmeticItem, 'isDefault'>>[] = [
 	{ id: 'hat_cap', slot: 'hat', name: 'Breakline cap', rarity: 'basic' },
 	{ id: 'hat_beanie', slot: 'hat', name: 'Pom beanie', rarity: 'basic' },

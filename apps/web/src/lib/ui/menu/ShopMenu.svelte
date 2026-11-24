@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { emptyLoadout, formatTenths, formatWhole, RARITIES, type CosmeticSlot, type Loadout } from '@surf/shared';
+	import { emptyLoadout, formatTenths, formatWhole, LOOTBOX, RARITIES, type CosmeticSlot, type Loadout, type RarityId } from '@surf/shared';
 	import type { CharacterPreviewHandle, GameApi, ShopView } from '#lib/game/contract.js';
 	import { itemState, missingCoins, SHOP_CATEGORIES, shopEntries, type ItemState, type ShopEntry } from '#lib/game/shop.js';
 
@@ -48,7 +48,7 @@
 		preview = p;
 		noPreview = p === null;
 		// The list does not change while the shop is open.
-		const ids = untrack(() => entries.map((e) => e.item.id));
+		const ids = untrack(() => [LOOTBOX.id, ...entries.map((e) => e.item.id)]);
 		p?.thumbnails(ids, (id, url) => (thumbs[id] = url));
 		return () => {
 			preview = null;
@@ -93,6 +93,7 @@
 		api.shopBuy(e.item.id);
 	}
 
+	const LOOT_RARITIES = Object.keys(LOOTBOX.odds) as RarityId[];
 	const STATE_LABEL: Record<ItemState, string> = { equipped: 'Equipped', owned: 'Owned', buy: '', poor: '', guest: '' };
 </script>
 
@@ -147,6 +148,20 @@
 			</section>
 
 			<div class="list">
+				<section>
+					<h3 class="ss-label">Loot boxes</h3>
+					<button type="button" class="card lootbox" disabled aria-label="{LOOTBOX.name}, {formatTenths(LOOTBOX.price)} coins, coming soon">
+						<span class="thumb">{#if thumbs[LOOTBOX.id]}<img src={thumbs[LOOTBOX.id]} alt="" />{/if}</span>
+						<span class="name">{LOOTBOX.name}</span>
+						<span class="meta">
+							<span class="price ss-num">{formatTenths(LOOTBOX.price)}<span class="unit">coins</span></span>
+							<span class="soon">Coming soon</span>
+						</span>
+						<span class="odds">
+							{#each LOOT_RARITIES as r (r)}<span style:color={RARITIES[r].color}>{RARITIES[r].name}</span>{/each}
+						</span>
+					</button>
+				</section>
 				{#each groups as g (g.slot)}
 					<section>
 						<h3 class="ss-label">{g.label}</h3>
@@ -329,6 +344,34 @@
 		display: block;
 		width: 100%;
 		height: 100%;
+	}
+	.lootbox {
+		width: 100%;
+		grid-template-columns: 96px 1fr;
+		grid-template-rows: auto auto auto;
+		--rarity: var(--panel-border-strong);
+		filter: grayscale(0.85);
+		opacity: 0.55;
+		cursor: not-allowed;
+	}
+	.card.lootbox:hover {
+		background: rgba(255, 255, 255, 0.03);
+	}
+	.lootbox .thumb {
+		grid-row: 1 / 4;
+		width: 96px;
+		height: 96px;
+	}
+	.soon {
+		color: var(--text);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+	}
+	.odds {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 2px 10px;
+		font-size: 13px;
 	}
 	.name {
 		align-self: end;

@@ -27,7 +27,8 @@ Data, shared by server and client (`packages/shared/src/cosmetics.ts`):
 COSMETIC_SLOTS                 // ['hat', 'glasses', 'top', 'bottom', 'shoes']
 type Loadout                   // Record<CosmeticSlot, string | null>; null = the slot's default
 interface CosmeticItem         // { id, slot, name, isDefault?, rarity? }
-RARITIES                       // { basic, common: { name, color, price } }; price in tenths of a coin
+RARITIES                       // { basic, common, uncommon, rare, epic: { name, color, price } }; price null = loot only
+LOOTBOX                        // name, price, odds, available; price in tenths of a coin
 shopItems(), cosmeticPrice(i)  // items with a rarity are for sale
 registerCosmetic(item)         // add an item (throws on a duplicate id)
 getCosmetic(id), listCosmetics(slot?), defaultItem(slot)
@@ -39,7 +40,7 @@ The registry holds `top_default`, `bottom_default`, `shoes_default` and the shop
 
 | Slot | Items (Basic, 75 coins, unless noted) |
 | --- | --- |
-| hat | Breakline cap, Pom beanie, Straw hat, Fry cook hat (Common, 200 coins) |
+| hat | Breakline cap, Pom beanie, Straw hat, Fry cook hat (Common, not in the shop) |
 | glasses | Glare shades |
 | top | Sunset tee, Half-and-half tee, Checker tee |
 | bottom | Boardshorts, Joggers, Cargo pants |

@@ -3,10 +3,11 @@
  * second WebGL context that exists only while the shop is open: nothing of it
  * runs or stays allocated after `dispose`.
  */
-import { emptyLoadout, getCosmetic, type CosmeticSlot, type Loadout } from '@surf/shared';
+import { emptyLoadout, getCosmetic, LOOTBOX, type CosmeticSlot, type Loadout } from '@surf/shared';
 import * as THREE from 'three';
 import { emptyMotion } from './animator.js';
 import { HeldAssets } from './held.js';
+import { createLootbox } from '../lootbox.js';
 import { applyLoadout, CharacterModel, personOf } from './model.js';
 
 /** Degrees per second. */
@@ -21,7 +22,8 @@ const THUMB: Record<CosmeticSlot, readonly [number, number, number]> = {
 	bottom: [21, 46, -38],
 	shoes: [4.6, 20, -48]
 };
-const THUMB_PX = 128;
+const BOX_THUMB = [9, 30, -35] as const;
+const THUMB_PX = 192;
 let opened = 0;
 
 export class CharacterPreview {
@@ -74,13 +76,19 @@ export class CharacterPreview {
 	/** Draw one item on this canvas and copy it; the caller redraws before the browser shows it. */
 	private thumbnail(id: string, ready: (id: string, url: string) => void): void {
 		const item = getCosmetic(id);
-		if (!item) return;
-		const [y, height, turn] = THUMB[item.slot];
-		applyLoadout(this.model, { ...emptyLoadout(), [item.slot]: id });
+		const box = id === LOOTBOX.id ? createLootbox() : null;
+		if (!item && !box) return;
+		const [y, height, turn] = item ? THUMB[item.slot] : BOX_THUMB;
+		if (item) applyLoadout(this.model, { ...emptyLoadout(), [item.slot]: id });
+		const subject = box?.group ?? this.model.group;
+		if (box) {
+			this.model.group.visible = false;
+			this.scene.add(box.group);
+		}
 		const dist = height / 2 / Math.tan((this.thumbCam.fov * Math.PI) / 360);
-		this.thumbCam.position.set(dist, y + dist * 0.12, 0);
+		this.thumbCam.position.set(dist, y + dist * (box ? 0.35 : 0.12), 0);
 		this.thumbCam.lookAt(0, y, 0);
-		this.model.group.rotation.y = (turn * Math.PI) / 180;
+		subject.rotation.y = (turn * Math.PI) / 180;
 		// Into a corner of the canvas, without resizing it.
 		const r = this.renderer;
 		const c = this.canvas;
@@ -93,6 +101,11 @@ export class CharacterPreview {
 		out.width = out.height = THUMB_PX;
 		out.getContext('2d')?.drawImage(c, 0, c.height - px, px, px, 0, 0, THUMB_PX, THUMB_PX);
 		const url = out.toDataURL();
+		if (box) {
+			this.scene.remove(box.group);
+			box.dispose();
+			this.model.group.visible = true;
+		}
 		applyLoadout(this.model, this.loadout);
 		ready(id, url);
 	}

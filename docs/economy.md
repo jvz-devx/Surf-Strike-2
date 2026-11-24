@@ -277,7 +277,8 @@ this.chased.reset();
 
 Cosmetics only. The stock, the rarities and their prices are data in `packages/shared/src/cosmetics.ts` ([how to add an item](characters.md#adding-an-item)); the rules are in `apps/server/src/shop.ts`. Menu: [ui.md](ui.md#shop).
 
-- **Rarity** sets the price. `basic` is 75 coins (750 tenths), `common` is 200.
+- **Rarity** sets the price. `basic` is 75 coins (750 tenths). `common`, `uncommon`, `rare` and `epic` have no price: not in the shop, only meant for loot boxes. An owned one is listed so it can be worn.
+- <a id="loot-box"></a>**Loot box** (`LOOTBOX`, 120 coins): shown greyed out as "Coming soon"; nothing can be bought or opened yet (the server knows no such request). Planned odds from the owner: common 80 %, uncommon 10 %, rare 5 %, epic 1 %. They add up to 96 %; the missing 4 % must be assigned before it opens. Model: `apps/web/src/lib/render/lootbox.ts`.
 - **Buying** (`Db.buyItem`) is one transaction that takes the write lock first: not owned yet, balance suffices, deduct, log `shop:<id>` (label `Shop: <name>`), grant. A second click, tab or process gets "You already own this item". No refunds.
 - **Wearing**: owned items only, one per slot, in the item's own slot; `null` takes it off. Kept across sessions, maps and modes.
 - **Guests** see the stock and can try items on, but not buy or wear them.

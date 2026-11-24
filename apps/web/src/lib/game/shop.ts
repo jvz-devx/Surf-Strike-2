@@ -1,5 +1,5 @@
 /** Shop state of the client (docs/ui.md#shop), pure: server messages in, what the menu shows out. */
-import { formatTenths, getCosmetic, sanitizeLoadout, shopItems, type CosmeticItem, type CosmeticSlot, type ServerMessage } from '@surf/shared';
+import { cosmeticPrice, formatTenths, getCosmetic, listCosmetics, sanitizeLoadout, type CosmeticItem, type CosmeticSlot, type ServerMessage } from '@surf/shared';
 import type { ShopView } from './contract.js';
 
 /** A `shop` message of any server version: unknown items and malformed entries are dropped. */
@@ -47,10 +47,13 @@ export interface ShopEntry {
 	price: number;
 }
 
-/** What the menu lists: items both sides know, in this client's order, at the server's prices. */
+/**
+ * What the menu lists: items both sides know and sell, in this client's order, at the
+ * server's prices; and owned items that are not for sale (loot), so they can be worn.
+ */
 export function shopEntries(shop: ShopView): ShopEntry[] {
 	const price = new Map(shop.items.map((i) => [i.id, i.price]));
-	return shopItems()
-		.filter((i) => price.has(i.id))
-		.map((item) => ({ item, price: price.get(item.id)! }));
+	return listCosmetics()
+		.filter((i) => !i.isDefault && (shop.owned.includes(i.id) || (cosmeticPrice(i) !== null && price.has(i.id))))
+		.map((item) => ({ item, price: price.get(item.id) ?? 0 }));
 }

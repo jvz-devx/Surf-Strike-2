@@ -129,6 +129,7 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
 
   Each tab has **Reset … to defaults**, which sets that tab's cvars to the engine defaults (`CLIENT_CVARS`); it is disabled when they already are.
 - <a id="shop"></a>**Shop** (`ShopMenu.svelte`; pure helpers in `game/shop.ts`; rules in [economy.md](economy.md#shop)): the balance, the items by category with picture, name, rarity (in its colour) and price or Owned / Equipped (a price you cannot afford is red), and a turntable of your own character.
+  - **Loot boxes** on top: one greyed-out, disabled card with the picture, 120 coins, the possible rarities and "Coming soon".
   - Clicking an item tries it on (one per slot, on top of what you wear); clicking it again or **Reset look** undoes that. Drag turns the character; it stands still with reduced motion.
   - **Buy · 75 coins**, then **Confirm** or **Cancel**; after that **Equip** / **Take off**. Too few coins: the button is disabled and the missing amount is shown. Guests get a login button. Errors and "… bought" show below.
   - Offline, or on a server without a shop: one line says so.
