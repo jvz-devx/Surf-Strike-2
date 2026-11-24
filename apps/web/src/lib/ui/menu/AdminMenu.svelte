@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { formatWhole, mapTitle, type AdminState } from '@surf/shared';
+	import { formatWhole, listCosmetics, mapTitle, RARITIES, type AdminState } from '@surf/shared';
 	import type { GameApi } from '#lib/game/contract.js';
 	import Tabs from '#lib/ui/menu/Tabs.svelte';
 	import Toggle from '#lib/ui/menu/Toggle.svelte';
@@ -30,11 +30,13 @@
 	}
 
 	let tab: AdminTabId = $state(devTab());
-	/** Inline confirm: `force:<mapId>`, `ban:<playerId>`, `offline`, `coins:<playerId>`, `offline-coins`. */
+	/** Inline confirm: `force:<mapId>`, `ban:<playerId>`, `offline`, `coins:<playerId>`, `item:<playerId>`, `offline-coins`. */
 	let confirming: string | null = $state(null);
 	let reason = $state('');
 	let offlineName = $state('');
 	let coins = $state('');
+	let item = $state('');
+	const itemGroups = Object.entries(RARITIES).map(([id, r]) => ({ name: r.name, items: listCosmetics().filter((i) => i.rarity === id && !i.isDefault) }));
 	/** Reset was clicked once and waits for the confirmation. */
 	let resetting = $state(false);
 	const coinAmount = $derived(parseAdminCoins(coins));
@@ -59,6 +61,7 @@
 		confirming = confirming === key ? null : key;
 		reason = '';
 		coins = '';
+		item = '';
 		resetting = false;
 	}
 
@@ -95,6 +98,11 @@
 		}
 		confirming = null;
 		resetting = false;
+	}
+
+	function giveItem(targetId: number) {
+		if (item) api.admin({ action: 'giveItem', targetId, item });
+		confirming = null;
 	}
 
 	function when(t: number): string {
@@ -174,13 +182,26 @@
 			{#each players as p (p.id)}
 				<li class="row player">
 					<span class="name">{p.name}</span>
-					{#if confirming !== `coins:${p.id}`}
+					{#if confirming !== `coins:${p.id}` && confirming !== `item:${p.id}`}
 						<span class="badge" class:admin={p.admin}>{p.admin ? 'Admin' : p.guest ? 'Guest' : 'Account'}</span>
 					{/if}
 					{#if p.coins !== undefined}<span class="muted balance ss-num">{formatWhole(p.coins)} coins</span>{/if}
 					<span class="grow"></span>
 					{#if p.account && confirming === `coins:${p.id}`}
 						{@render coinEditor(p.account)}
+					{:else if p.account && confirming === `item:${p.id}`}
+						<span class="confirm" role="group" aria-label="Give an item to {p.name}">
+							<select class="ss-input item" aria-label="Item" bind:value={item}>
+								<option value="">Pick an item</option>
+								{#each itemGroups as g (g.name)}
+									<optgroup label={g.name}>
+										{#each g.items as i (i.id)}<option value={i.id}>{i.name}</option>{/each}
+									</optgroup>
+								{/each}
+							</select>
+							<button type="button" class="ss-button small" disabled={!item} onclick={() => giveItem(p.id)}>Give</button>
+							<button type="button" class="ss-button ghost small" onclick={() => (confirming = null)}>Cancel</button>
+						</span>
 					{:else if confirming === `ban:${p.id}`}
 						<span class="confirm" role="group" aria-label="Confirm ban">
 							<input
@@ -197,6 +218,7 @@
 					{:else}
 						{#if p.account}
 							<button type="button" class="ss-button ghost small" onclick={() => ask(`coins:${p.id}`)}>Coins</button>
+							<button type="button" class="ss-button ghost small" onclick={() => ask(`item:${p.id}`)}>Item</button>
 						{/if}
 						{#if !p.admin}
 							<button type="button" class="ss-button ghost small" onclick={() => ask(`ban:${p.id}`)}>Ban</button>
@@ -417,6 +439,16 @@
 		width: 70px;
 		padding: 5px 8px;
 		font-size: 14px;
+	}
+	.item {
+		width: 190px;
+		padding: 5px 8px;
+		font-size: 14px;
+	}
+	.item option,
+	.item optgroup {
+		color: #eee;
+		background: #14171c;
 	}
 	.balance {
 		flex-shrink: 0;

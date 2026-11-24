@@ -511,6 +511,8 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 				});
 				hud.adminState = { ...st, players };
 				done(`${a.username}: coins changed.`);
+			} else if (a.action === 'giveItem') {
+				done(`${st.players.find((x) => x.id === a.targetId)?.name} got ${getCosmetic(a.item)?.name}.`);
 			} else if (a.action === 'extend') {
 				done('Extended by 10 minutes.');
 			}

@@ -340,6 +340,22 @@ describe('admin', () => {
 		assert.equal((await admin(tim, { action: 'coins', username: 'Tim', op: 'add', amount: 1 })).ok, true);
 	});
 
+	it('gives an item to a connected account, once; not to guests, nothing unknown', async () => {
+		const { c: eve } = await join('Eve0');
+		const id = server.lobby.scoreRows().find((r) => r.name === 'Eve0')!.id;
+		assert.match(String(((await admin(tim, { action: 'giveItem', targetId: id, item: 'hat_joker' })) as { error?: string }).error), /Guests/);
+		assert.ok((await eve.auth('register', 'Eve', 'secret1')).ok);
+		const n = eve.messages.length;
+		assert.deepEqual(await admin(tim, { action: 'giveItem', targetId: id, item: 'hat_joker' }), { type: 'adminResult', ok: true, message: 'Eve got Clown prince mask.' });
+		assert.deepEqual((await eve.waitFor('shop', () => true, n)).owned, ['hat_joker']);
+		assert.match((await eve.waitFor('coinsNotice', (m) => /gave you/.test(m.text), n)).text, /Clown prince mask/);
+		for (const bad of [{ targetId: id, item: 'hat_joker' }, { targetId: id, item: 'nope' }, { targetId: id, item: 'top_default' }, { targetId: 9999, item: 'hat_cap' }]) {
+			assert.equal((await admin(tim, { action: 'giveItem', ...bad })).ok, false);
+		}
+		assert.equal((await admin(eve, { action: 'giveItem', targetId: id, item: 'hat_cap' })).ok, false, 'no admin');
+		eve.close();
+	});
+
 	it('writes admin_log rows', () => {
 		const rows = server.db.db.prepare('SELECT admin_username, action, target FROM admin_log ORDER BY id').all() as {
 			admin_username: string;

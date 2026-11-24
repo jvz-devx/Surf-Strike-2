@@ -755,6 +755,17 @@ export class Db {
 		return this.st.recentCasino.all(accountId, limit) as CasinoRow[];
 	}
 
+	/** Give an item for free. False when it is already owned. */
+	giveItem(accountId: number, itemId: string, at: number): boolean {
+		return this.db
+			.transaction(() => {
+				if (this.ownedItems(accountId).includes(itemId)) return false;
+				this.st.grantItem.run(accountId, itemId, at, 0);
+				return true;
+			})
+			.immediate();
+	}
+
 	/** Item ids, oldest first (also items this version does not know). */
 	ownedItems(accountId: number): string[] {
 		return this.st.ownedItems.all(accountId) as string[];

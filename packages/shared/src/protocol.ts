@@ -241,6 +241,8 @@ export type AdminAction =
 	| { action: 'extend' }
 	/** Change an account's coin balance (docs/economy.md#admin-changes); `amount` is whole coins, not used by `reset`. */
 	| { action: 'coins'; username: string; op: 'add' | 'subtract' | 'reset'; amount?: number }
+	/** Give a cosmetic item to a connected account (`targetId` = lobby id). */
+	| { action: 'giveItem'; targetId: number; item: string }
 	/** Just ask for a fresh `adminState`. */
 	| { action: 'listBans' };
 

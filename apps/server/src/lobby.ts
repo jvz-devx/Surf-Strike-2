@@ -345,6 +345,7 @@ export class Lobby {
 					return null;
 				},
 				adjustCoins: (accountId, amount) => this.economy.adjust(accountId, amount),
+				giveItem: (c, item) => this.shop.give(c, item, Date.now()),
 				kickBanned: (c, ban) => this.kickBanned(c, ban)
 			},
 			usernames,

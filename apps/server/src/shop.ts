@@ -148,6 +148,14 @@ export class Shop<P extends ShopPlayer> {
 		for (const [p, r] of this.unseen) if (now - r.at >= BOX_NEWS_MS) this.announce(p);
 	}
 
+	/** Give an item for free (admin). False when it is already owned. */
+	give(p: P, itemId: string, at: number): boolean {
+		if (p.accountId === null || !this.host.db.giveItem(p.accountId, itemId, at)) return false;
+		this.send(p);
+		this.host.send(p, { type: 'coinsNotice', text: `An admin gave you an item: ${getCosmetic(itemId)?.name ?? itemId}.`, tone: 'info' });
+		return true;
+	}
+
 	private buy(accountId: number, id: string | null): string | null {
 		const item = id === null ? undefined : getCosmetic(id);
 		if (!item) return ERRORS.unknown;
