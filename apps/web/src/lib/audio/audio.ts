@@ -271,12 +271,23 @@ export class GameAudio {
 		this.play(name, eventDb(name) + falloff, true);
 	}
 
-	/** Loot box (docs/ui.md#lootbox): lid, one reel tick, and the reveal. */
-	box(name: 'open' | 'tick' | 'reveal' | 'rare'): void {
+	/** Loot box (docs/ui.md#lootbox): lid, one reel tick, and the reveal; `news`: someone else's, quieter. */
+	box(name: 'open' | 'tick' | 'reveal' | 'rare' | 'news' | 'newsRare'): void {
 		if (name === 'open') this.play('swing', eventDb('swing'), true);
 		else if (name === 'tick') this.play('tick', eventDb('tick'), true);
 		else if (name === 'reveal') this.zoneBeep();
+		else if (name === 'news') this.play('zone', eventDb('zone') - 10, false);
+		else if (name === 'newsRare') this.play('record', eventDb('record') - 8, false);
 		else this.recordChime();
+	}
+
+	/** Casino (docs/ui.md#casino): the same real recordings as elsewhere. */
+	casino(name: 'bet' | 'flip' | 'tick' | 'stop' | 'crash' | 'win' | 'big'): void {
+		if (name === 'bet' || name === 'stop') this.play('click', eventDb('click'), false);
+		else if (name === 'tick') this.play('tick', eventDb('tick'), true);
+		else if (name === 'win') this.zoneBeep();
+		else if (name === 'big') this.recordChime();
+		else this.play('swing', eventDb('swing'), true);
 	}
 
 	/** The one click voice (chat messages). */

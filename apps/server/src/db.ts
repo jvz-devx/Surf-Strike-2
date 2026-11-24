@@ -20,6 +20,9 @@
  * - `abuse_log`: automatic warnings and bans.
  * - `owned_items`, `equipped`: cosmetics bought in the shop and worn, one item
  *   per slot (docs/economy.md#shop).
+ * - `casino_log`, `casino_stats`, `casino_crash`: casino bets of the last
+ *   CASINO_LOG_DAYS days, their sums per account, and the open crash bets
+ *   (docs/economy.md#casino).
  *
  * Every table is created with CREATE TABLE IF NOT EXISTS and new columns are
  * added with a default, so an existing database migrates in place on start-up
@@ -103,6 +106,8 @@ export interface AbuseRow {
 
 /** Days a point_log row is kept before it is summed up. */
 export const POINT_LOG_DAYS = 30;
+/** Days a casino_log row is kept; the sums are in casino_stats. */
+export const CASINO_LOG_DAYS = 30;
 /** abuse_log rows kept. */
 export const ABUSE_LOG_MAX = 2000;
 
@@ -116,6 +121,14 @@ export interface AccountStatsRow {
 	pointsTotal: number;
 	/** Spendable points (coins). */
 	pointsBalance: number;
+}
+
+/** One settled casino bet; tenths. */
+export interface CasinoRow {
+	at: number;
+	game: string;
+	bet: number;
+	payout: number;
 }
 
 export interface AccountRow {
@@ -262,6 +275,28 @@ export class Db {
 				PRIMARY KEY (account_id, slot),
 				FOREIGN KEY (account_id, item_id) REFERENCES owned_items (account_id, item_id) ON DELETE CASCADE
 			);
+			CREATE TABLE IF NOT EXISTS casino_log (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+				created_at INTEGER NOT NULL,
+				game TEXT NOT NULL,
+				bet INTEGER NOT NULL,
+				payout INTEGER NOT NULL
+			);
+			CREATE INDEX IF NOT EXISTS casino_log_account ON casino_log (account_id, id);
+			CREATE INDEX IF NOT EXISTS casino_log_time ON casino_log (created_at);
+			CREATE TABLE IF NOT EXISTS casino_stats (
+				account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+				plays INTEGER NOT NULL,
+				bet INTEGER NOT NULL,
+				payout INTEGER NOT NULL
+			);
+			CREATE TABLE IF NOT EXISTS casino_crash (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				account_id INTEGER NOT NULL UNIQUE REFERENCES accounts(id) ON DELETE CASCADE,
+				created_at INTEGER NOT NULL,
+				bet INTEGER NOT NULL
+			);
 		`);
 		// Missing = permanent ban / no active time yet.
 		this.addColumn('bans', 'expires_at', 'INTEGER');
@@ -362,6 +397,7 @@ export class Db {
 				 VALUES (@accountId, @at, @mode, @map, @reason, @label, @base, @counted, @mult, @amount)`
 			),
 			countedSince: d.prepare(`SELECT COALESCE(SUM(counted), 0) AS n FROM point_log WHERE account_id = ? AND created_at > ?`),
+			firstCounted: d.prepare(`SELECT MIN(created_at) AS at FROM point_log WHERE account_id = ? AND created_at > ? AND counted > 0`),
 			lastPaid: d.prepare(`SELECT MAX(created_at) AS at FROM point_log WHERE account_id = ? AND reason = ? AND (? IS NULL OR map = ?)`),
 			countPaid: d.prepare(
 				`SELECT COUNT(*) AS n FROM point_log WHERE account_id = ? AND created_at > ? AND reason = ? AND map = ? AND (? IS NULL OR label = ?)`
@@ -393,6 +429,19 @@ export class Db {
 				 ON CONFLICT(account_id, slot) DO UPDATE SET item_id = excluded.item_id`
 			),
 			unequipSlot: d.prepare(`DELETE FROM equipped WHERE account_id = ? AND slot = ?`),
+
+			credit: d.prepare(`UPDATE account_stats SET points_balance = points_balance + ? WHERE account_id = ?`),
+			logCasino: d.prepare(`INSERT INTO casino_log (account_id, created_at, game, bet, payout) VALUES (?, ?, ?, ?, ?)`),
+			addCasino: d.prepare(
+				`INSERT INTO casino_stats (account_id, plays, bet, payout) VALUES (?, 1, ?, ?)
+				 ON CONFLICT(account_id) DO UPDATE SET plays = plays + 1, bet = bet + excluded.bet, payout = payout + excluded.payout`
+			),
+			casinoNet: d.prepare(`SELECT payout - bet FROM casino_stats WHERE account_id = ?`).pluck(),
+			recentCasino: d.prepare(`SELECT created_at AS at, game, bet, payout FROM casino_log WHERE account_id = ? ORDER BY id DESC LIMIT ?`),
+			pruneCasino: d.prepare(`DELETE FROM casino_log WHERE created_at < ?`),
+			openCrash: d.prepare(`INSERT INTO casino_crash (account_id, created_at, bet) VALUES (?, ?, ?) ON CONFLICT(account_id) DO NOTHING`),
+			closeCrash: d.prepare(`DELETE FROM casino_crash WHERE id = ? RETURNING account_id AS accountId, bet`),
+			openCrashes: d.prepare(`SELECT id FROM casino_crash ORDER BY id`).pluck(),
 
 			disabledMaps: d.prepare(`SELECT map_id FROM map_settings WHERE enabled = 0`),
 			setMapEnabled: d.prepare(
@@ -439,11 +488,27 @@ export class Db {
 	// -----------------------------------------------------------------------
 	// Accounts and sessions (validation and hashing live in auth.ts)
 
-	/** Create an account; null if the username is taken (case-insensitive). */
-	createAccount(username: string, passwordHash: string, now = Date.now()): AccountRow | null {
+	/**
+	 * Create an account; null if the username is taken (case-insensitive).
+	 * `welcome`: coins it starts with, logged in the same transaction (balance
+	 * only, no lifetime points).
+	 */
+	createAccount(
+		username: string,
+		passwordHash: string,
+		now = Date.now(),
+		welcome?: Pick<PointEntry, 'reason' | 'label' | 'amount'>
+	): AccountRow | null {
 		try {
-			const r = this.st.insertAccount.run(username, usernameKey(username), passwordHash, now, now);
-			return { id: Number(r.lastInsertRowid), username, passwordHash };
+			return this.db.transaction(() => {
+				const r = this.st.insertAccount.run(username, usernameKey(username), passwordHash, now, now);
+				const id = Number(r.lastInsertRowid);
+				if (welcome && welcome.amount > 0) {
+					this.st.setBalance.run({ id, balance: welcome.amount });
+					this.st.logPoints.run({ accountId: id, at: now, ...welcome, mode: 'bonus', map: '', base: 0, counted: 0, mult: 10 });
+				}
+				return { id, username, passwordHash };
+			})();
 		} catch (err) {
 			if ((err as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE') return null;
 			throw err;
@@ -596,6 +661,81 @@ export class Db {
 			.immediate();
 	}
 
+	// -----------------------------------------------------------------------
+	// Casino (casino.ts); amounts in tenths
+
+	/** A decided bet: take it, pay the result and log it, all or nothing. False when the balance is too low. */
+	casinoPlay(accountId: number, e: CasinoRow): boolean {
+		return this.db
+			.transaction(() => {
+				if (this.st.spendPoints.run({ id: accountId, amount: e.bet }).changes === 0) return false;
+				this.settleCasino(accountId, e);
+				return true;
+			})
+			.immediate();
+	}
+
+	private settleCasino(accountId: number, e: CasinoRow): void {
+		if (e.payout > 0) this.st.credit.run(e.payout, accountId);
+		this.st.logCasino.run(accountId, e.at, e.game, e.bet, e.payout);
+		this.st.addCasino.run(accountId, e.bet, e.payout);
+	}
+
+	/** Take the bet of a crash round, which stays open until `crashClose`. One open round per account. */
+	crashOpen(accountId: number, at: number, bet: number): number | 'poor' | 'open' {
+		return this.db
+			.transaction((): number | 'poor' | 'open' => {
+				if (this.st.spendPoints.run({ id: accountId, amount: bet }).changes === 0) return 'poor';
+				const r = this.st.openCrash.run(accountId, at, bet);
+				if (r.changes > 0) return Number(r.lastInsertRowid);
+				this.st.credit.run(bet, accountId);
+				return 'open';
+			})
+			.immediate();
+	}
+
+	/** End a crash round: pay and log it. False when it is no longer open (nothing is paid). */
+	crashClose(id: number, at: number, payout: number): boolean {
+		return this.db
+			.transaction(() => {
+				const r = this.st.closeCrash.get(id) as { accountId: number; bet: number } | undefined;
+				if (!r) return false;
+				this.settleCasino(r.accountId, { at, game: 'crash', bet: r.bet, payout });
+				return true;
+			})
+			.immediate();
+	}
+
+	/** Give every open crash bet back (server start); tenths per account. */
+	refundCrashes(): Map<number, number> {
+		return this.db
+			.transaction(() => {
+				const out = new Map<number, number>();
+				for (const id of this.st.openCrashes.all() as number[]) {
+					const r = this.st.closeCrash.get(id) as { accountId: number; bet: number };
+					this.st.credit.run(r.bet, r.accountId);
+					out.set(r.accountId, r.bet);
+				}
+				return out;
+			})
+			.immediate();
+	}
+
+	/** Won minus bet, of all settled bets ever. */
+	casinoNet(accountId: number): number {
+		return (this.st.casinoNet.get(accountId) as number | undefined) ?? 0;
+	}
+
+	/** Newest first. */
+	recentCasino(accountId: number, limit: number): CasinoRow[] {
+		return this.st.recentCasino.all(accountId, limit) as CasinoRow[];
+	}
+
+	/** Delete log rows older than `before`; returns how many. */
+	pruneCasino(before: number): number {
+		return this.st.pruneCasino.run(before).changes;
+	}
+
 	/** Item ids, oldest first (also items this version does not know). */
 	ownedItems(accountId: number): string[] {
 		return this.st.ownedItems.all(accountId) as string[];
@@ -612,6 +752,11 @@ export class Db {
 		if (itemId !== null) return this.st.equipItem.run(slot, accountId, itemId).changes > 0;
 		this.st.unequipSlot.run(accountId, slot);
 		return true;
+	}
+
+	/** When the oldest award that counts towards the backstop after `since` was paid; null: none. */
+	firstCountedSince(accountId: number, since: number): number | null {
+		return (this.st.firstCounted.get(accountId, since) as { at: number | null }).at;
 	}
 
 	/** Base points counted towards the backstop after `since`. */

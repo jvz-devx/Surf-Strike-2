@@ -36,6 +36,7 @@ export class CharacterPreview {
 	private readonly model: CharacterModel;
 	private readonly motion = emptyMotion();
 	private readonly still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+	private spare: CharacterModel | null = null;
 	private raf = 0;
 	private last = 0;
 	private drag: number | null = null;
@@ -49,7 +50,9 @@ export class CharacterPreview {
 	/** `playerId` gives the person (skin, hair, tint) the others see. */
 	constructor(
 		private readonly canvas: HTMLCanvasElement,
-		playerId: number
+		playerId: number,
+		/** Only single pictures (`picture`): the canvas need not be in the page. */
+		picturesOnly = false
 	) {
 		this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -63,7 +66,29 @@ export class CharacterPreview {
 		canvas.addEventListener('pointermove', this.onMove);
 		canvas.addEventListener('pointerup', this.onUp);
 		canvas.addEventListener('pointercancel', this.onUp);
-		this.raf = requestAnimationFrame(this.frame);
+		if (picturesOnly) {
+			this.renderer.setPixelRatio(1);
+			this.renderer.setSize(THUMB_PX, THUMB_PX, false);
+			// three.js frees a shader with its last material: a spare wearer out of sight keeps those of effects.
+			this.spare = new CharacterModel(personOf(playerId), this.assets, { tag: `spare${opened}` });
+			applyLoadout(this.spare, { ...emptyLoadout(), effect: 'effect_fire' });
+			this.spare.group.position.set(-5000, 0, 0);
+			this.scene.add(this.spare.group);
+			// Into its resting pose.
+			for (let i = 0; i < 20; i++) this.model.update(0.1, this.motion, 0);
+		} else this.raf = requestAnimationFrame(this.frame);
+	}
+
+	/** One picture. The shaders are compiled beforehand, off the main thread where the browser can. */
+	async picture(id: string): Promise<string | null> {
+		const item = getCosmetic(id);
+		if (!item) return null;
+		applyLoadout(this.model, { ...emptyLoadout(), [item.slot]: id });
+		await Promise.race([this.renderer.compileAsync(this.scene, this.thumbCam), new Promise((ok) => setTimeout(ok, COMPILE_MS))]);
+		await idle();
+		let url: string | null = null;
+		this.thumbnail(id, (_, u) => (url = u));
+		return url;
 	}
 
 	setLoadout(loadout: Loadout): void {
@@ -164,8 +189,52 @@ export class CharacterPreview {
 		this.canvas.removeEventListener('pointerup', this.onUp);
 		this.canvas.removeEventListener('pointercancel', this.onUp);
 		this.model.dispose();
+		this.spare?.dispose();
 		this.assets.dispose();
 		this.renderer.dispose();
 		this.renderer.forceContextLoss();
 	}
+}
+
+const COMPILE_MS = 3000;
+let shared: CharacterPreview | null = null;
+let last: Promise<unknown> = Promise.resolve();
+
+const idle = () =>
+	new Promise<void>((ok) => {
+		if (typeof requestIdleCallback === 'function') requestIdleCallback(() => ok(), { timeout: 800 });
+		else setTimeout(ok, 50);
+	});
+
+/**
+ * Picture of one item in the middle of a game (docs/ui.md#box-news), on a small
+ * context of its own. Creating it and compiling its shaders costs a long frame, so
+ * `warmItemPictures` does that while joining, and it stays until the game ends.
+ * One picture after the other, in idle time. null without WebGL.
+ */
+export function itemPicture(playerId: number, id: string): Promise<string | null> {
+	const job = last.then(async () => {
+		try {
+			await idle();
+			shared ??= new CharacterPreview(document.createElement('canvas'), playerId, true);
+			await idle();
+			return await shared.picture(id);
+		} catch {
+			return null;
+		}
+	});
+	last = job;
+	return job;
+}
+
+/** Get ready while a freeze does not hurt: an item and an effect compile every shader. */
+export function warmItemPictures(playerId: number): void {
+	if (shared) return;
+	void itemPicture(playerId, 'hat_frycook');
+	void itemPicture(playerId, 'effect_fire');
+}
+
+export function disposeItemPictures(): void {
+	shared?.dispose();
+	shared = null;
 }

@@ -58,6 +58,11 @@ export function decayed(base: number, percents: readonly number[], repeats: numb
 // Payouts
 // ---------------------------------------------------------------------------
 
+/** Balance of a newly registered account (no lifetime points). */
+export const START_COINS = pts(100);
+/** point_log reason of it. */
+export const WELCOME_REASON = 'welcome';
+
 /**
  * Finishes, gates and evacs of the same map decay over this time too, not only
  * within a map session: a lone player can change the map at any time.
@@ -73,9 +78,11 @@ export const RACE_PAY = Object.freeze({
 		surf: Object.freeze({ easy: pts(4), hard: pts(15) }),
 		bhop: Object.freeze({ easy: pts(5), hard: pts(12) })
 	}),
-	/** Finishes of the same map in one map session, and within `REPEAT_MS`, percent. */
-	repeat: Object.freeze([100, 50, 25, 0]),
+	/** Finishes of the same map in one map session, and within `REPEAT_MS`, percent (stays at the last). */
+	repeat: Object.freeze([100, 50, 25, 10]),
 	personalBest: pts(2),
+	/** Personal bests on the same map in one map session, and within `REPEAT_MS`, percent (stays at the last). */
+	personalBestRepeat: Object.freeze([100, 10]),
 	record: Object.freeze({ easy: pts(5), hard: pts(15) }),
 	/** One record award per map and account in this time. */
 	recordEveryMs: 24 * 3600_000
@@ -158,6 +165,8 @@ export const INFECTED_PAY = Object.freeze({
 	specialist: pts(2),
 	specialistVictims: 2,
 	moab: pts(8),
+	/** M.O.A.B.s of one player in one map session, percent (stays at the last). */
+	moabRepeat: Object.freeze([100, 10]),
 	beacon: pts(1),
 	winPatientZero: pts(2),
 	winInfected: pts(1),
@@ -192,7 +201,7 @@ const defs = {
 
 	raceFinish: { label: 'Map finished' },
 	raceFirst: { label: 'First finish', exempt: true },
-	racePb: { label: 'Personal best', perSession: RACE_PAY.personalBest },
+	racePb: { label: 'Personal best' },
 	raceRecord: { label: 'Server record', exempt: true },
 
 	zombiesGate: { label: 'Gate passed' },
@@ -217,7 +226,7 @@ const defs = {
 	infSurvive: { label: 'Survived', perRound: INFECTED_PAY.survive },
 	infLast: { label: 'Last survivor', perRound: INFECTED_PAY.lastSurvivor },
 	infSpecialist: { label: 'Specialist', perRound: INFECTED_PAY.specialist },
-	infMoab: { label: 'M.O.A.B.', perSession: INFECTED_PAY.moab },
+	infMoab: { label: 'M.O.A.B.' },
 	infBeacon: { label: 'Beacon smashed', perRound: INFECTED_PAY.beacon },
 	infWin: { label: 'Infected win', perRound: INFECTED_PAY.winPatientZero }
 } satisfies Record<string, AwardDef>;
@@ -228,6 +237,7 @@ export const AWARDS: Readonly<Record<AwardReason, AwardDef>> = Object.freeze(def
 /** Display label of a logged reason (also shop purchases and ids from a newer server). */
 export function awardLabel(reason: string): string {
 	if (Object.hasOwn(AWARDS, reason)) return AWARDS[reason as AwardReason].label;
+	if (reason === WELCOME_REASON) return 'Welcome bonus';
 	if (!reason.startsWith('shop:')) return reason;
 	const id = reason.slice(5);
 	return `Shop: ${getCosmetic(id)?.name ?? id}`;

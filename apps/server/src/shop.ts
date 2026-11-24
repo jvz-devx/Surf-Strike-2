@@ -3,28 +3,31 @@
  * prices and the stock are in `packages/shared/src/cosmetics.ts`, the coins in
  * `economy.ts`.
  */
-import { randomInt } from 'node:crypto';
 import {
 	COSMETIC_SLOTS,
 	cosmeticPrice,
 	emptyLoadout,
 	getCosmetic,
 	LOOTBOX,
+	RARITIES,
 	lootItems,
 	rollLoot,
 	sanitizeLoadout,
 	shopItems,
 	type ClientMessage,
+	type CosmeticItem,
 	type CosmeticSlot,
 	type Loadout,
 	type ServerMessage,
 	type ShopOffer
 } from '@surf/shared';
+import { secureRandom } from './casino.ts';
 import type { Db } from './db.ts';
 import type { Economy } from './economy.ts';
 
 export interface ShopPlayer {
 	readonly id: number;
+	readonly name: string;
 	readonly accountId: number | null;
 	loadout: Loadout;
 }
@@ -34,13 +37,17 @@ export interface ShopHost<P extends ShopPlayer> {
 	economy(): Economy;
 	send(p: P, msg: ServerMessage): void;
 	broadcast(msg: ServerMessage): void;
+	/** Chat line to everyone. */
+	system(text: string): void;
+	/** ms, for the fallback of the box announcement. */
+	now(): number;
 	log(msg: string): void;
 }
 
 export type ShopRequest = Extract<ClientMessage, { type: 'shopBuy' | 'shopEquip' }>;
 
-/** Unpredictable, uniform in [0, 1). */
-const secureRandom = () => randomInt(2 ** 40) / 2 ** 40;
+/** A result the opener never reported as seen is announced after this long (the reel takes about 7 s). */
+export const BOX_NEWS_MS = 12_000;
 
 const ERRORS = {
 	guest: 'Log in to buy and wear items.',
@@ -54,6 +61,9 @@ const ERRORS = {
 };
 
 export class Shop<P extends ShopPlayer> {
+	/** Results of opened boxes that were not announced yet, one per connection. */
+	private readonly unseen = new Map<P, { name: string; item: CosmeticItem; duplicate: boolean; at: number }>();
+
 	constructor(private readonly host: ShopHost<P>) {}
 
 	/** Worn items of an account: only known items the account owns (the default look for guests). */
@@ -114,9 +124,28 @@ export class Shop<P extends ShopPlayer> {
 		if (!item) return fail(ERRORS.unknown);
 		const r = this.host.economy().openBox(p.accountId, item);
 		if (r === 'poor') return fail(ERRORS.poor);
+		this.announce(p);
+		this.unseen.set(p, { name: p.name, item, duplicate: r.duplicate, at: this.host.now() });
 		this.host.log(`shop: account ${p.accountId} opened a loot box: ${item.id}${r.duplicate ? ' (duplicate)' : ''}`);
 		this.send(p);
 		this.host.send(p, { type: 'boxResult', ok: true, item: item.id, ...r });
+	}
+
+	/** Tell everyone what this player got, once: they have seen it, left, or opened another box. Without a result: nothing. */
+	announce(p: P): void {
+		const r = this.unseen.get(p);
+		if (!r) return;
+		this.unseen.delete(p);
+		this.host.broadcast({ type: 'boxNews', id: p.id, name: r.name, item: r.item.id, duplicate: r.duplicate });
+		const rarity = r.item.rarity;
+		if (rarity === 'rare' || rarity === 'epic') this.host.system(`${r.name} found ${r.item.name} (${RARITIES[rarity].name}) in a loot box.`);
+	}
+
+	/** Announce results whose opener stayed silent for too long (older clients, hidden tabs). */
+	tick(): void {
+		if (this.unseen.size === 0) return;
+		const now = this.host.now();
+		for (const [p, r] of this.unseen) if (now - r.at >= BOX_NEWS_MS) this.announce(p);
 	}
 
 	private buy(accountId: number, id: string | null): string | null {

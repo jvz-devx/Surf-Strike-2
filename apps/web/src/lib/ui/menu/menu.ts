@@ -7,7 +7,7 @@ import type { MapListEntry } from '#lib/game/contract.js';
 import { CLIENT_CVARS, type CvarDef } from '#lib/game/cvars.js';
 
 /** Menu pages; 'main' is the top level. */
-export type MenuView = 'main' | 'maps' | 'settings' | 'shop' | 'inventory' | 'coins' | 'account' | 'admin';
+export type MenuView = 'main' | 'maps' | 'settings' | 'shop' | 'inventory' | 'coins' | 'casino' | 'account' | 'admin';
 
 export interface MapGroup {
 	/** Gamemode id (or the raw map kind for a kind not in the registry). */
@@ -209,6 +209,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 			'cl_crosshairdot',
 			'cl_showkeys',
 			'cl_scorepanel',
+			'cl_boxnews',
 			'cl_ghost',
 			'cl_hideplayers'
 		]

@@ -1,12 +1,14 @@
 # Points and coins
 
-Status: the core is implemented (ledger, activity, playtime points, abuse detection, client views, the API for modes), the awards of every mode, and the [shop](#shop). The owner asked for a balanced point system and left the final numbers to us. Change the numbers here first, then in `packages/shared/src/economy.ts`, which holds all of them.
+Status: the core is implemented (ledger, activity, playtime points, abuse detection, client views, the API for modes), the awards of every mode, the [shop](#shop) and the [casino](#casino). The owner asked for a balanced point system and left the final numbers to us. Change the numbers here first, then in `packages/shared/src/economy.ts`, which holds all of them.
 
 ## Terms
 
 - **Points** are what you earn. "Total points" on the scoreboard is the lifetime sum and never goes down.
 - **Coins** are the spendable balance. Every point earned adds 1 coin. Buying in the shop lowers the coins only.
 - Accounts only. Guests play everything but earn nothing.
+- <a id="start-bonus"></a>**Start bonus.** A newly registered account starts with 100 coins (`START_COINS`): balance only, no lifetime points, written in the transaction that creates the account with one log row (`welcome`, "Welcome bonus", not counted towards the backstop). The player gets a notice. Accounts of before are unchanged.
+- Repeating something never drops its award to nothing: the repeat decays end at 10 %, rounded up to whole points. Only missing conditions, caps per round, AFK, the backstop and the abuse rules pay nothing.
 - All base awards are whole numbers, decided by the server. The multiplier makes fractions, so amounts are stored in tenths of a point (integers). Popups show one decimal when needed (`+1.2`); totals and the balance are shown rounded down.
 
 ## Target rates
@@ -59,9 +61,9 @@ Only validated runs count.
 | Hard bhop | 12 |
 | Hard surf | 15 |
 
-- **Repeats** on the same map within one map session (until the map changes), and within 60 minutes whatever the sessions: 100 %, 50 %, 25 %, then 0, rounded up. The hour is there because a lone player can change the map at any time: two hard maps in turn would pay over 600 points per hour.
+- **Repeats** on the same map within one map session (until the map changes), and within 60 minutes whatever the sessions: 100 %, 50 %, 25 %, then 10 %, rounded up to whole points, so a finish never pays less than 1 (hard maps 2). The hour is there because a lone player can change the map at any time: two hard maps in turn would pay over 600 points per hour.
 - **First finish ever** of a map: a bonus equal to the finish award. "Ever" means there was no stored run of the account on the map before this one, so maps finished before coins existed do not pay it.
-- **Personal best** beaten: +2, once per map session and at most once per map in 60 minutes. The first run is not a PB, an equal time neither.
+- **Personal best** beaten: +2 once per map session and at most once per map in 60 minutes, after that +1. The first run is not a PB, an equal time neither.
 - **Server record** beaten: +5 easy, +15 hard. Only when it beats another account's record, at most once per map per account per 24 hours. The first time on a map beats nobody. Of two equal times the older one holds the record.
 - Guests' finishes only show the login hint.
 
@@ -122,7 +124,7 @@ Needs at least 4 active players. Rounds are 2–4 minutes.
 - **Survive the round:** 4 points when at least half of the first survivors were infected and you killed at least one infected, else 2.
 - **Last survivor alive when the survivors win:** +3, with the same conditions as the 4 points.
 - **Specialist (7-kill streak):** 2 points, once per round, when the streak has kills of at least 2 different infected.
-- **M.O.A.B. detonated:** 8 points to the caller, once per map session. Its victims count for nothing else. Surviving pays only when the normal clock (2 minutes) was played, so not after an earlier M.O.A.B.
+- **M.O.A.B. detonated:** 8 points to the caller once per map session, after that 1. Its victims count for nothing else. Surviving pays only when the normal clock (2 minutes) was played, so not after an earlier M.O.A.B.
 - **Beacon smashed:** 1 point, once per round, for somebody else's beacon.
 - **Infected win:** 2 points for Patient Zero, 1 point for every other infected who infected someone, when at least half of the normal clock was played.
 - **Survivor first, infected later in the same round:** both halves pay. Kills, specialist, beacon and a called M.O.A.B. stay; from then on infections and the infected win count; surviving does not. Late joiners start as infected and are paid like the others.
@@ -142,7 +144,7 @@ Detection must not be sensitive. Friends who play together, a bad seeker, a luck
 - AFK players do not count towards minimum player counts and earn nothing.
 - At most 3 connections per IP address in production, and one count per account.
 - Caps and decay as listed per mode.
-- A backstop of 250 points per rolling hour per account, counted before the multiplier, playtime included, excluding first-finish and record bonuses. What is left of it is paid.
+- A backstop of 250 points per rolling hour per account, counted before the multiplier, playtime included, excluding first-finish and record bonuses. What is left of it is paid. When it cuts or refuses an award, the player is told once per hour, with the minutes until more is paid.
 - Awards are rejected for 5 seconds after a horizontal speed above the mode's sanity limit, or a jump in position faster than that limit that is not a respawn by the mode, a map spawn or a teleport destination. The limits (`SPEED_LIMIT`, units/s) are well above normal play, they are not the movement caps: hide and seek 600, Infected and Zombie Run 1000, tag 3500, surf and bhop 16384 (runs are validated anyway).
 
 **Signals** (each adds strike weight):
@@ -177,6 +179,7 @@ Guests see "Log in or register to earn coins for this." once per session, the fi
 
 | File | Job |
 | --- | --- |
+| `packages/shared/src/casino.ts`, `apps/server/src/casino.ts` | [Casino](#casino): odds and rules / rolls, bets, crash rounds |
 | `packages/shared/src/economy.ts` | All numbers, the reasons (`AWARDS`), multiplier, decay and formatting |
 | `packages/shared/src/modes/hunt.ts` | `HuntTracker` (chase, view, shadow), `buildSight`, `TimeMeter` |
 | `apps/server/src/economy.ts` | `Economy`: the only place that pays; `ModeEconomy` for the modes; finds the abuse signals |
@@ -195,6 +198,9 @@ All in the game server's SQLite, amounts in tenths. Migrations are additive: new
 | `account_stats` | as before, plus `active_ms` (active time towards the next playtime points) |
 | `bans` | as before, plus `expires_at` (wall clock ms; null = permanent) |
 | `point_log` | `account_id`, `created_at`, `mode`, `map`, `reason`, `label`, `base`, `counted` (towards the backstop), `multiplier`, `amount` (negative for purchases and admin removals) |
+| `casino_log` | `account_id`, `created_at`, `game`, `bet`, `payout`: settled casino bets of the last 30 days |
+| `casino_stats` | `account_id`, `plays`, `bet`, `payout`: sums of all bets ever (the net result) |
+| `casino_crash` | `id`, `account_id` (unique), `created_at`, `bet`: open crash bets |
 | `point_rollup` | `account_id`, `mode`, `reason`, `entries`, `base`, `amount`: sums of log rows older than 30 days, which are deleted |
 | `abuse_log` | `created_at`, `account_id`, `username`, `action` (`warning`, `ban`, `exempt`), `strikes`, `evidence`; the latest 2000 rows. No IP addresses |
 
@@ -213,9 +219,9 @@ Additive; older clients ignore the messages, newer clients show nothing without 
 | S→C | `coins { total, balance, recent[{ at, reason, label, amount, mult }] }`: after `welcome`, `auth` and purchases; the latest 20 entries |
 | S→C | `award { at, reason, label, base, mult, amount, total, balance }`: to the player who earned it |
 | S→C | `multiplier { mult, active, need }`: on join and every change, to everyone; `need` = active players this mode needs to pay |
-| S→C | `coinsNotice { text, tone: info\|warn }`: guest hint, abuse warning (also sent as a chat line for older clients) |
+| S→C | `coinsNotice { text, tone: info\|warn }`: guest hint and abuse warning (also sent as a chat line for older clients), welcome bonus, hourly limit, refunded crash bet |
 | S→C | `banned { reason, seconds? }`: `seconds` until the ban lifts by itself; absent = permanent |
-| C→S, S→C | Shop messages: see [Shop](#shop) |
+| C→S, S→C | Shop messages: see [Shop](#shop); casino messages: see [Casino](#casino) |
 | S→C | `adminState`: `bans[].secondsLeft?`, `abuse[]?`, `players[].coins?` |
 
 <a id="paying-from-a-mode"></a>
@@ -282,9 +288,10 @@ this.chased.reset();
 Cosmetics only. The stock, the rarities and their prices are data in `packages/shared/src/cosmetics.ts` ([how to add an item](characters.md#adding-an-item)); the rules are in `apps/server/src/shop.ts`. Menu: [ui.md](ui.md#shop).
 
 - **Rarity** sets the price. `basic` is 30 coins (300 tenths). `common`, `uncommon`, `rare` and `epic` have no price: not in the shop, only meant for loot boxes.
-- <a id="loot-box"></a>**Loot box** (`LOOTBOX`, 80 coins): holds every item of common rarity or better. `rollLoot` picks the rarity by weight (common 80, uncommon 10, rare 5, epic 1; they add up to 96, so with all four present the real chances are 83.3 / 10.4 / 5.2 / 1.0 %), then any of its items equally. Rarities without items would drop out (`lootChances`). The menu shows the real chances and everything inside: 25 common, 6 uncommon, 14 rare (4 suit pieces, 10 auras) and 3 epic items.
+- <a id="loot-box"></a>**Loot box** (`LOOTBOX`, 80 coins): holds every item of common rarity or better. `rollLoot` picks the rarity by weight (common 80, uncommon 10, rare 5, epic 1; they add up to 96, so with all four present the real chances are 83.3 / 10.4 / 5.2 / 1.0 %), then any of its items equally. Rarities without items would drop out (`lootChances`). The menu shows the real chances and everything inside: 31 common, 10 uncommon, 14 rare (4 suit pieces, 10 auras) and 3 epic items.
   - The server rolls (`Shop.openBox`, `node:crypto`), and `Db.openBox` takes the price and grants the item in one transaction. The client's reel only shows the result, so closing it early loses nothing.
   - **Duplicates** can come up, and give coins back instead: common 20, uncommon 40, rare 60, epic 80 (`LOOTBOX.refund`; logged as `Duplicate: <name>`, no lifetime points). Once an account owns everything in the box, opening is refused and nothing is charged.
+  - **News**: everyone on the server hears what came out, but only after the opener has seen it. The opener's client sends `boxRevealed` when the result shows (end of the reel, skip, or leaving the screen). `Shop.announce` then broadcasts the result the server kept for that connection, once, so the client never says what it got. It announces by itself after 12 s (`BOX_NEWS_MS`, older clients), on disconnect and when the next box is opened. Rare and epic items are also said in chat. Shown as in [ui.md](ui.md#box-news).
   - Model: `apps/web/src/lib/render/lootbox.ts`; menu: [ui.md](ui.md#lootbox).
 - **Buying** (`Db.buyItem`) is one transaction that takes the write lock first: not owned yet, balance suffices, deduct, log `shop:<id>` (label `Shop: <name>`), grant. A second click, tab or process gets "You already own this item". No refunds.
 - **Shop and inventory** are two menus on the same messages. The shop lists only what has a price (owned items last, marked "Owned") and never changes what you wear, except through "Wear it" right after a purchase. The [inventory](ui.md#inventory) lists everything the account owns, of any rarity, also what the server no longer sells, plus the default look of each slot; wearing and taking off happen there.
@@ -299,12 +306,55 @@ Cosmetics only. The stock, the rarities and their prices are data in `packages/s
 | C→S | `shopEquip { slot, item \| null }` |
 | C→S | `boxOpen {}` |
 | S→C | `boxResult { ok: true, item, duplicate, refund }` (tenths) or `{ ok: false, error }`: to the requester |
+| C→S | `boxRevealed {}`: the opener has seen the result; ignored without one waiting |
+| S→C | `boxNews { id, name, item, duplicate }`: to everyone, the opener included |
 | S→C | `shop { items[{ id, price }], owned[], loadout, box?: { price, odds, items[] } }` (no `box`: no loot box shown): after `welcome`, `auth` and every change; guests get it with nothing owned |
 | S→C | `shopResult { action: buy\|equip, item, ok, error? }`: to the requester |
 | S→C | `cosmetics { id, loadout }`: to everyone when a player's worn items change (also on login and logout) |
 | S→C | `welcome.players[]` and `join.player` carry `loadout?` (absent: default look) |
 
 All of it is optional: older clients ignore it, and without `shop` a newer client says the shop and the inventory are not available on this server. The server's prices are the ones shown and charged.
+
+<a id="casino"></a>
+
+## Casino
+
+Three games in the Esc menu, for logged-in accounts; guests can look. Coins are virtual, earned by playing and never bought. Odds and rules: `packages/shared/src/casino.ts`; server: `apps/server/src/casino.ts`; menu: [ui.md](ui.md#casino). The owner set the chances as the chance to win.
+
+| Game | Bet | Odds |
+| --- | --- | --- |
+| Coinflip | 10–500 | Exactly 50 %, a win pays 2×. Payback 100 % |
+| Crash | 5–500 | P(reaching *m*) = 1/*m* (2×: 50 %), capped at 100×. Payback 100 % before rounding |
+| Slots | 1–500 | 48.95 % of spins pay something, 20.7 % more than the bet. Payback 97.86 %, counted exactly over all 32³ combinations in `casino.test.ts` |
+
+- **Crash:** the multiplier doubles every 6 s (`crashCurve`). The crash point is rolled at the bet, in hundredths, and sent only at the end. A cash-out counts at the multiplier when the server receives it, rounded down to 0.01×; the optional automatic cash-out (1.01×–100×) pays exactly its value and wins a tie with the crash. At 100× it is paid out by itself. Payouts are rounded down to 0.1 coin. One round per account, across tabs and reconnects.
+- **Disconnect:** the round goes on; the automatic cash-out still counts, without one the bet is lost at the crash.
+- **Restart:** open crash bets are in `casino_crash` and are given back when the server starts, with a notice. A round can only be paid while its row exists, so never twice.
+- **Slots:** three equal, independent reels of 32 stops. Two or three equal symbols anywhere on the line pay a multiple of the bet:
+
+| Symbol | Stops | Two | Three |
+| --- | --- | --- | --- |
+| Wave | 9 | 1× | 4× |
+| Shell | 7 | 1× | 6× |
+| Palm | 6 | 2× | 10× |
+| Fin | 4 | 2× | 15× |
+| Board | 3 | 3× | 25× |
+| Sun | 2 | 5× | 50× |
+| Pearl | 1 | 10× | 250× |
+
+- **Rules:** bets are whole coins; `CASINO_MIN` and `CASINO_MAX_BET` (500). Every outcome is rolled with `node:crypto` (`secureRandom`); the roll functions take the random source, so tests and the dev mock use the same code. Taking the bet, paying and logging are one transaction (`Db.casinoPlay`); for crash the bet is taken at the start (`crashOpen`) and the payout is paid at the end (`crashClose`). The balance never goes below zero.
+- **Only the balance changes:** no lifetime points, no `point_log` row, nothing towards playtime, backstop or abuse detection. `casino_log` keeps 30 days, `casino_stats` the sums for the net result.
+- At most 5 requests per second and connection; more are refused, above 100 the client is kicked.
+
+| Direction | Message |
+| --- | --- |
+| C→S | `casinoBet { game, bet }`, whole coins; coinflip also `side: heads\|tails`, crash also `auto` (hundredths or null) |
+| C→S | `crashCashout {}` |
+| S→C | `casino { min, max, net, recent[{ at, game, bet, payout }], crash?: { bet, auto, elapsed } }`: after `welcome` and `auth`. `min` and `max` in whole coins; the rest in tenths; `crash`: the running round |
+| S→C | `crashStart { bet, auto }`: the bet is taken, the curve starts |
+| S→C | `casinoResult { ok: true, game, bet, payout, net, … }` (`picked`, `side` / `reels` / `at`, `crash`) or `{ ok: false, game, error }` |
+
+All of it is optional: older clients ignore it, and without `casino` a newer client says the casino is not available on this server. The new balance comes as `coins`.
 
 ### Spending from code
 

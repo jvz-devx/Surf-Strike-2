@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { mapTitle, type AdminState } from '@surf/shared';
-	import type { CoinsView, GameApi, MapListEntry, ShopView } from '#lib/game/contract.js';
+	import type { CasinoView, CoinsView, GameApi, MapListEntry, ShopView } from '#lib/game/contract.js';
 	import SettingsMenu from '#lib/ui/menu/SettingsMenu.svelte';
 	import MapMenu from '#lib/ui/menu/MapMenu.svelte';
 	import CoinsMenu from '#lib/ui/menu/CoinsMenu.svelte';
+	import CasinoMenu from '#lib/ui/menu/casino/CasinoMenu.svelte';
 	import ShopMenu from '#lib/ui/menu/ShopMenu.svelte';
 	import InventoryMenu from '#lib/ui/menu/InventoryMenu.svelte';
 	import AccountMenu from '#lib/ui/menu/AccountMenu.svelte';
@@ -13,7 +14,7 @@
 
 	/**
 	 * Esc menu (docs/ui.md#esc-menu): main entries on the left, the open
-	 * submenu (Change map, Settings, Shop, Inventory, Coins, Account) beside them. Esc goes back one
+	 * submenu (Change map, Settings, Shop, Inventory, Coins, Casino, Account) beside them. Esc goes back one
 	 * level, then resumes.
 	 */
 	let {
@@ -30,6 +31,7 @@
 		online = false,
 		coins = null,
 		shop = null,
+		casino = null,
 		multiplier = null,
 		adminState = null,
 		adminNotice = null,
@@ -52,6 +54,8 @@
 		coins?: CoinsView | null;
 		/** Shop and Inventory submenus (null: offline or a server without a shop). */
 		shop?: ShopView | null;
+		/** Casino submenu (null: offline or a server without one). */
+		casino?: CasinoView | null;
 		multiplier?: { mult: number; active: number; need: number } | null;
 		/** Admin menu data (server-sent to admin accounts only). */
 		adminState?: AdminState | null;
@@ -71,7 +75,7 @@
 		const v = p.get('open') === 'maps' ? 'maps' : p.get('view');
 		const tab = p.get('tab');
 		return {
-			view: v === 'maps' || v === 'settings' || v === 'shop' || v === 'inventory' || v === 'coins' || v === 'account' || v === 'admin' ? v : 'main',
+			view: v === 'maps' || v === 'settings' || v === 'shop' || v === 'inventory' || v === 'coins' || v === 'casino' || v === 'account' || v === 'admin' ? v : 'main',
 			section: isSettingsSection(tab) ? tab : 'mouse'
 		};
 	}
@@ -90,6 +94,7 @@
 		{ id: 'shop', label: 'Shop' },
 		{ id: 'inventory', label: 'Inventory' },
 		{ id: 'coins', label: 'Coins' },
+		{ id: 'casino', label: 'Casino' },
 		{ id: 'account', label: 'Account' },
 		...(account?.admin ? [{ id: 'admin', label: 'Admin' } as Entry] : [])
 	]);
@@ -217,7 +222,7 @@
 		<div
 			class="content ss-panel"
 			class:compact={view === 'account'}
-			class:wide={view === 'shop' || view === 'inventory'}
+			class:wide={view === 'shop' || view === 'inventory' || view === 'casino'}
 			id="ss-menu-content"
 			role="dialog"
 			aria-modal="false"
@@ -244,6 +249,8 @@
 				<InventoryMenu {api} {shop} loggedIn={account !== null} {online} initial={shownItem} onshop={() => go('shop')} />
 			{:else if view === 'coins'}
 				<CoinsMenu {api} {coins} {multiplier} loggedIn={account !== null} {online} />
+			{:else if view === 'casino'}
+				<CasinoMenu {api} {casino} balance={coins?.balance ?? 0} loggedIn={account !== null} {online} />
 			{:else if view === 'admin'}
 				<AdminMenu {api} data={adminState} {mapId} notice={adminNotice} />
 			{:else}

@@ -19,3 +19,4 @@ export * from './modes/index.ts';
 export * from './economy.ts';
 export * from './modes/hunt.ts';
 export * from './cosmetics.ts';
+export * from './casino.ts';

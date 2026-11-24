@@ -15,6 +15,7 @@ The HUD is Svelte components layered over the Three.js canvas.
 | Bottom left | Chat (fades after 8 s; full history while typing) |
 | Left middle | Vote panel (up to 7 options "Surf · Kessler" … "Extend 10 min" with key numbers and live vote counts, countdown bar) |
 | Top centre, below map name | RTV request modal (see [RTV request](#rtv-request)) |
+| Top centre, below all of that | [Loot box news](#box-news) |
 | Top left | Award popups ([Award popups](#award-popups)), below the position readout |
 | Right middle | Score panel: map records, PB and gap, or the current standing ([Score panel](#score-panel)) |
 | Centre | Crosshair (configurable) |
@@ -40,6 +41,21 @@ Dev preview: `/?mockhud&novote&mode=<gamemode>&players=<n>&self=<position>`, `&o
 ## Award popups
 
 `AwardPopups.svelte`, pure helpers in `game/coins.ts`. Every award shows its amount, reason and multiplier (`+4.5 coins  Found a hider  ×1.5`) at the top left for 4.5 s, newest at the bottom, at most 5 (2 while a map vote is open, so they stay above its panel). Notices (guest hint, abuse warning) use the same stack for 10 s. They take no input, play no sound, and their width keeps clear of the banners at the top centre in every mode.
+
+<a id="box-news"></a>
+
+## Loot box news
+
+`BoxNews.svelte`, pure queue in `game/box-news.ts`. When someone opens a [loot box](economy.md#loot-box), every player sees a card at the top centre once the opener has seen the result: picture, "Ana opened a loot box", item and rarity in its colour, and a small "New" or "Duplicate".
+
+- Common is small and short (4 s), uncommon a bit larger (5 s), rare glows (6 s), epic is the biggest with a pulsing glow (8 s). Cards slide in and out; with reduced motion nothing moves.
+- At most 3 at a time and only as many as fit between the HUD and the crosshair. The stack starts below everything marked `data-top-hud` (map name, spectator bar, round banners, RTV request). While others wait, cards stay shorter, further common ones are merged ("+2 more"), and what waited more than 10 s (rare, epic: 20 s) is dropped.
+- It takes no input and stays visible above the Esc menu. It is hidden under the console and the ban screen. The opener does not get their own card while the loot box screen is open.
+- The picture comes from the pictures the shop keeps. Otherwise `itemPicture` (`render/character/preview.ts`) draws that one item in idle time on a small offscreen WebGL context. Creating it costs a long frame, so that happens while joining a server (`warmItemPictures`), and it stays until the game ends. The card shows at once, the picture when it is ready; without WebGL there is only the text.
+- Sound: the zone bell, the record bell for rare and epic, 8 to 10 dB below the opener's own.
+- `cl_boxnews 0` (Settings › HUD › "Show loot box news") turns cards and sound off. The chat line for rare and epic items stays.
+
+Dev preview: `/?mockhud&novote&boxnews` (one of each rarity in turn, `=<rarity or item id>` only that, `=all` a flood).
 
 ## Ban screen
 
@@ -101,6 +117,7 @@ Opened with `` ` `` or `~`. A CS-style panel in the top half of the screen: scro
 | `cl_showkeys` | 0 | Pressed-keys display |
 | `cl_hideplayers` | 0 | Hide other players |
 | `cl_scorepanel` | 1 | Show the score panel ([Score panel](#score-panel)) |
+| `cl_boxnews` | 1 | Show what other players get from loot boxes ([Loot box news](#box-news)) |
 | `cl_ghost` | 1 | Show the race ghost on surf and bhop maps ([Ghost](#ghost)) |
 | `cl_crosshairsize`, `cl_crosshairgap`, `cl_crosshairthickness`, `cl_crosshaircolor_r/g/b`, `cl_crosshairdot` | CS-like | Crosshair |
 | `name <name>` | | Change guest name (logged-in players always show their username) |
@@ -116,7 +133,7 @@ Settings are saved to localStorage on change.
 
 A CS2-style pause menu opened with `Esc` (pointer lock is released). The game stays visible behind a dark gradient; the HUD is hidden while it is open. Components live in `apps/web/src/lib/ui/menu/` (`EscMenu.svelte` and one component per submenu); pure helpers (map grouping, settings sections, cvar defaults) are in `menu.ts` with unit tests.
 
-Main menu (left column): brand, current map and mode, then the entries **Resume**, **Change map**, **Settings**, **Shop**, **Inventory**, **Coins**, **Account** (and **Admin** for admin accounts, see below), and below them the account line ("Logged in as X" or "Guest · runs are not saved") and a key hint. A submenu opens in a panel beside the entries; clicking its entry again folds it.
+Main menu (left column): brand, current map and mode, then the entries **Resume**, **Change map**, **Settings**, **Shop**, **Inventory**, **Coins**, **Casino**, **Account** (and **Admin** for admin accounts, see below), and below them the account line ("Logged in as X" or "Guest · runs are not saved") and a key hint. A submenu opens in a panel beside the entries; clicking its entry again folds it.
 
 Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the open submenu, `←`/`→` (and `Home`/`End`) switch tabs. `Esc` goes back one level (submenu to main menu), then resumes. In the map filter and the item search, `Esc` first clears the text. Focus is always visible.
 
@@ -124,7 +141,7 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
 - **Settings**: tabs
   - Mouse: sensitivity (slider + number), `m_yaw`, `m_pitch`
   - Video: FOV, **Fullscreen (blocks Ctrl+W)** (`cl_fullscreen`; in browsers without the Keyboard Lock API a note instead), show FPS, show position
-  - HUD: crosshair colour, size, gap, thickness, centre dot with a live 1:1 preview; show keys, show score panel (`cl_scorepanel`), show ghost (`cl_ghost`), hide players (`cl_hideplayers`)
+  - HUD: crosshair colour, size, gap, thickness, centre dot with a live 1:1 preview; show keys, show score panel (`cl_scorepanel`), show loot box news (`cl_boxnews`), show ghost (`cl_ghost`), hide players (`cl_hideplayers`)
   - Audio: master volume
 
   Each tab has **Reset … to defaults**, which sets that tab's cvars to the engine defaults (`CLIENT_CVARS`); it is disabled when they already are.
@@ -141,6 +158,12 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
   - Owning nothing: a line and a button to the shop. Guests: a line and a login button. Offline or without a shop on the server: one line.
 - Shop and Inventory share `ItemBrowser.svelte` (turntable, details, toolbar, scrolling list), `ItemCard.svelte` and `item-pictures.svelte.ts`. Narrow panels put the preview on top, sticky, and the list below. The preview (`render/character/preview.ts`, through `GameApi.createPreview`) is a second small WebGL context of at most 45 fps with its own geometry. It exists only while the submenu is open. The item pictures are drawn with it, one per frame, only for cards on screen, and are kept while the page lives (not those of the default look). No sounds.
 - <a id="coins"></a>**Coins** (`CoinsMenu.svelte`): coins, points earned in total (both rounded down), the current multiplier and active players, and the latest 20 awards and purchases. Guests get a login button.
+- <a id="casino"></a>**Casino** (`menu/casino/`; pure helpers in `game/casino.ts`; rules and odds in [economy.md](economy.md#casino)): tabs Coinflip, Crash and Slots. The header shows the net result of this session and of all time, and the coins. `CasinoTable.svelte` frames every game: the game, the bet box (Min, ½, 2×, Max; `Enter` plays), the last 12 results and "How it works" with the true odds and payback.
+  - The server has decided before anything moves: the animation only shows it, and balance, net and results stay hidden until it ends. Closing the menu early loses nothing.
+  - **Coinflip** (`CoinflipGame.svelte`): pick a side (arrow keys), a 3D coin is tossed and lands on the result.
+  - **Crash** (`CrashGame.svelte`): a rising curve with the multiplier; the main button becomes **Cash out · n**. Optional auto cash-out with its chance. A running round is picked up again when the menu is reopened or after a reconnect; one that ends while the menu is closed shows a notice. A click on Cash out just after the crash does not place a bet (1 s).
+  - **Slots** (`SlotsGame.svelte`, symbols in `SlotSymbol.svelte`): three reels stop one after another, the last one later when the first two match; the pay table is below.
+  - With reduced motion there is no spin, toss, shake or count-up. Guests see the games and a login button; offline or on a server without a casino one line says so. Dev preview: `/?mockhud&novote&open=settings&view=casino` (`&tab=coinflip|crash|slots`, `&nocasino`, `&roll=<0..1>` a fixed roll).
 - **Account**: "Logged in as X" with **Log out**, or guest with **Log in / Register** (opens the account panel).
 - <a id="admin"></a>**Admin** (only when the server says the account is admin, [gameplay.md](gameplay.md#admin); `AdminMenu.svelte`): **Extend +10 min** in the header, then tabs
   - Maps: every map grouped by gamemode with an on/off switch (the last enabled map cannot be switched off) and **Force change** with an inline "Change now? Yes / Cancel"; the current map is marked.
@@ -188,10 +211,10 @@ All sounds are real recordings released under CC0, sourced from Freesound and li
 | Land | Hitting the ground; louder with fall speed (level only) | Boot landing on rock (same session as jump), pool of 4 |
 | Wind | Continuous loop; gain and a low-pass (400 Hz to 9 kHz) rise with speed, no pitch change | Mountain wind with strong gusts, stereo |
 | Ramp slide | Continuous loop while surfing; gain rises with speed | Snowboard sliding on snow |
-| Zone | Entering start, stage, checkpoint, end; hide and seek cash bag appears | Antique clock bell, one strike |
-| Record | New PB or map record | Large church bell, one strike |
+| Zone | Entering start, stage, checkpoint, end; hide and seek cash bag appears; casino win | Antique clock bell, one strike |
+| Record | New PB or map record; casino win of 10× or more | Large church bell, one strike |
 | Vote | Vote opens; hide and seek seeker release | Two gavel knocks on a wooden desk |
-| Click | New chat message (the only click voice) | Computer mouse button |
+| Click | New chat message (the only click voice); casino: bet, coin lands, reel stops | Computer mouse button |
 | Knife swing | Hide and seek: your knife swing; another seeker's swing within 1024 units (−6 dB per doubling of distance beyond 128) | Bamboo stick whooshes, pool of 4 |
 | Knife hit | Hide and seek: you found a hider, or you were found | Knife stabbing a foam block, pool of 4 |
 

@@ -29,7 +29,7 @@
 	</div>
 {/if}
 
-<div class="round" aria-live="polite">
+<div class="round" data-top-hud aria-live="polite">
 	{#if z.phase === 'countdown'}
 		<div class="banner ss-panel ss-shadow">
 			<span class="role">Round {z.round}</span>

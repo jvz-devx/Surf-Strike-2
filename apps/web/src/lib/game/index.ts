@@ -39,9 +39,15 @@ const inertApi: GameApi = {
 	minimizeBan: noop,
 	shopBuy: noop,
 	boxOpen: noop,
+	boxRevealed: noop,
+	boxScreen: noop,
 	boxSound: noop,
+	casinoBet: noop,
+	crashCashout: noop,
+	casinoSound: noop,
 	shopEquip: noop,
 	createPreview: () => null,
+	itemPicture: () => Promise.resolve(null),
 	rtvVote: noop,
 	admin: noop
 };

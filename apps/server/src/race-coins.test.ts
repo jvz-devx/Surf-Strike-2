@@ -48,23 +48,23 @@ function setup(map: MapDef = EASY) {
 }
 
 describe('race coins', () => {
-	it('first finish ever pays twice; repeats pay 100, 50, 25 %, then nothing', () => {
+	it('first finish ever pays twice; repeats pay 100, 50, 25 %, then 10 %, never below 1', () => {
 		const s = setup();
 		const [a] = s.join(1);
 		assert.deepEqual(s.run(a!, 640), ['raceFinish 4', 'raceFirst 4']);
 		assert.deepEqual(s.run(a!, 640), ['raceFinish 2']);
 		assert.deepEqual(s.run(a!, 640), ['raceFinish 1']);
-		assert.deepEqual(s.run(a!, 640), []);
-		assert.deepEqual(s.run(a!, 640), []);
-		assert.equal(s.w.db.accountStats(a!.accountId!).pointsTotal, pts(11));
+		for (let i = 0; i < 5; i++) assert.deepEqual(s.run(a!, 640), ['raceFinish 1']);
+		assert.equal(s.w.db.accountStats(a!.accountId!).pointsTotal, pts(16));
 	});
 
-	it('hard bhop: 12, 6, 3, never with a multiplier', () => {
+	it('hard bhop: 12, 6, 3, then 2, never with a multiplier', () => {
 		const s = setup(HARD);
 		const [a] = s.join(8);
 		assert.deepEqual(s.run(a!, 640), ['raceFinish 12', 'raceFirst 12']);
 		assert.deepEqual(s.run(a!, 640), ['raceFinish 6']);
 		assert.deepEqual(s.run(a!, 640), ['raceFinish 3']);
+		for (let i = 0; i < 3; i++) assert.deepEqual(s.run(a!, 640), ['raceFinish 2']);
 		assert.equal(s.w.sent(a!, 'award').every((m) => m.mult === 10), true);
 	});
 
@@ -75,13 +75,13 @@ describe('race coins', () => {
 		assert.deepEqual(s.run(a!, 640), ['raceFinish 4', 'racePb 2']);
 	});
 
-	it('personal best: not on the first run, once per map session, not for a tie', () => {
+	it('personal best: not on the first run, then 2, after that 1 in the map session; not for a tie', () => {
 		const s = setup();
 		const [a] = s.join(1);
 		s.run(a!, 704);
 		assert.deepEqual(s.run(a!, 704), ['raceFinish 2']);
 		assert.deepEqual(s.run(a!, 688), ['raceFinish 1', 'racePb 2']);
-		assert.deepEqual(s.run(a!, 640), []);
+		assert.deepEqual(s.run(a!, 640), ['raceFinish 1', 'racePb 1']);
 	});
 
 	it('record: only against another account, first or not', () => {
@@ -91,7 +91,7 @@ describe('race coins', () => {
 		assert.deepEqual(s.run(a!, 688), ['raceFinish 2', 'racePb 2'], 'own record');
 		assert.deepEqual(s.run(b!, 688), ['raceFinish 4', 'raceFirst 4'], 'a tie beats nothing');
 		assert.deepEqual(s.run(b!, 640), ['raceFinish 2', 'racePb 2', 'raceRecord 5'], "the older of two equal times is a's");
-		assert.deepEqual(s.run(a!, 624), ['raceFinish 1', 'raceRecord 5']);
+		assert.deepEqual(s.run(a!, 624), ['raceFinish 1', 'racePb 1', 'raceRecord 5']);
 	});
 
 	it('record: once per map and account in 24 hours, also in a later session; hard pays 15', () => {
@@ -115,8 +115,8 @@ describe('race coins', () => {
 		s.start(HARD);
 		s.run(a!, 704);
 		s.start(EASY);
-		assert.deepEqual(s.run(a!, 672), ['raceFinish 1']);
-		assert.deepEqual(s.run(a!, 656), []);
+		assert.deepEqual(s.run(a!, 672), ['raceFinish 1', 'racePb 1']);
+		assert.deepEqual(s.run(a!, 656), ['raceFinish 1', 'racePb 1']);
 		s.start(EASY);
 		s.w.now += REPEAT_MS;
 		assert.deepEqual(s.run(a!, 640), ['raceFinish 4', 'racePb 2']);
@@ -127,7 +127,7 @@ describe('race coins', () => {
 		const [a] = s.join(1);
 		for (let i = 0; i < 3; i++) s.run(a!, 640);
 		s.w.now += REPEAT_MS;
-		assert.deepEqual(s.run(a!, 640), []);
+		assert.deepEqual(s.run(a!, 640), ['raceFinish 1']);
 	});
 
 	it('reconnecting does not reset the decay', () => {

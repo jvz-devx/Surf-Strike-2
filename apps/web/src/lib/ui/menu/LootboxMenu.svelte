@@ -77,8 +77,12 @@
 	onMount(() => {
 		pictures.want([LOOTBOX.id, ...box.items]);
 		mainButton?.focus();
+		api.boxScreen(true);
 	});
-	onDestroy(stopReel);
+	onDestroy(() => {
+		stopReel();
+		api.boxScreen(false);
+	});
 
 	function open() {
 		if (busy || shop.busy) return;
@@ -92,6 +96,7 @@
 		const item = getCosmetic(o.item);
 		if (!item) {
 			// A newer server: the item exists, this page just cannot draw it.
+			api.boxRevealed();
 			phase = 'contents';
 			return;
 		}
@@ -137,6 +142,7 @@
 		stopReel();
 		settle();
 		phase = 'done';
+		api.boxRevealed();
 		api.boxSound(won?.rarity === 'rare' || won?.rarity === 'epic' ? 'rare' : 'reveal');
 		void tick().then(() => mainButton?.focus());
 	}

@@ -96,7 +96,7 @@
 	</div>
 {/if}
 
-<div class="round" class:watching aria-live="polite">
+<div class="round" data-top-hud class:watching aria-live="polite">
 	{#if inf.phase === 'waiting' || inf.phase === 'solo'}
 		<div class="banner ss-panel ss-shadow">
 			<span class="role">Infected</span>

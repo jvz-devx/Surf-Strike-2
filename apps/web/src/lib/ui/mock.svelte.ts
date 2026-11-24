@@ -10,11 +10,15 @@
  * `&self=<n>` your position, `&old=1` an older server (no leaderboard top, no totals),
  * `&novote=1` without the map vote. Coins: `&coins=<n>` n award popups, `&coins=0` a guest,
  * `&view=coins` the Coins submenu, `&view=shop` the Shop (`&balance=<coins>`, `&noshop` a server without it),
- * `&view=inventory` the Inventory (`&items=<n>` owned items, default 130, with made-up ones; 0 = empty), `&ban=<seconds>` the ban screen (`&ban=0` permanent).
+ * `&view=casino` the Casino, playable (`&tab=coinflip|crash|slots`, `&nocasino` a server without it, `&roll=<0..1>` a fixed roll),
+ * `&view=inventory` the Inventory (`&items=<n>` owned items, default 130, with made-up ones; 0 = empty), `&ban=<seconds>` the ban screen (`&ban=0` permanent),
+ * `&boxnews` loot box news (one of each rarity in turn; `=<rarity or item id>`, `=all` many at once).
  */
-import { cosmeticPrice, COSMETIC_SLOTS, emptyLoadout, gameMode, getCosmetic, isGameModeId, listCosmetics, LOOTBOX, lootItems, registerCosmetic, rollLoot, shopItems, Status, TICK_RATE, type RarityId, type GameModeId, type ModeState, type ScoreRow } from '@surf/shared';
+import { cosmeticPrice, COSMETIC_SLOTS, CASINO_MAX_BET, CASINO_MIN, coinflipPayout, crashPayout, crashState, pts, rollCoin, rollCrash, rollSlots, slotPayout, emptyLoadout, gameMode, getCosmetic, isGameModeId, listCosmetics, LOOTBOX, lootItems, registerCosmetic, rollLoot, shopItems, Status, TICK_RATE, type RarityId, type GameModeId, type LootRarity, type ModeState, type ScoreRow, type CasinoOutcome } from '@surf/shared';
 import { itemMesh, registerItemMesh } from '#lib/render/character/items.js';
-import { CharacterPreview } from '#lib/render/character/preview.js';
+import { CharacterPreview, itemPicture } from '#lib/render/character/preview.js';
+import { parseBoxNews, pushBoxNews } from '#lib/game/box-news.js';
+import { casinoError, casinoResult, crashStarted, parseCasino } from '#lib/game/casino.js';
 import { awardPopup, noticePopup } from '#lib/game/coins.js';
 import type { GameApi, GameHandle, HudStateShape } from '#lib/game/contract.js';
 
@@ -182,11 +186,31 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 						busy: false,
 						notice: null
 					},
+		casino:
+			old || params.has('nocasino')
+				? null
+				: parseCasino(
+						{
+							type: 'casino',
+							min: CASINO_MIN,
+							max: CASINO_MAX_BET,
+							net: coinsN === 0 ? 0 : -340,
+							recent: Array.from({ length: coinsN === 0 ? 0 : 21 }, (_, i) => ({
+								at: Date.now() - i * 60_000,
+								game: (['coinflip', 'crash', 'slots'] as const)[i % 3]!,
+								bet: 100,
+								payout: [200, 0, 100, 0, 153, 500, 0, 420, 0][(i * 4) % 9]!
+							}))
+						},
+						t0,
+						coinsN === 0 ? 0 : -400
+					),
 		multiplier: old ? null : race ? { mult: 10, active: 5, need: 0 } : { mult: 15, active: 6, need: 5 },
 		awardPopups: [
 			...mockAwards(coinsN ?? 0).map((e) => awardPopup({ type: 'award', base: 30, total: 0, balance: 0, ...e }, t0 + 60_000)),
 			...(params.has('warn') ? [noticePopup({ type: 'coinsNotice', tone: 'warn', text: MOCK_WARNING }, t0 + 60_000)] : [])
 		],
+		boxNews: [],
 		ban: params.has('ban')
 			? {
 					reason: 'Point farming (detected automatically)',
@@ -303,6 +327,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			cl_crosshairdot: 0,
 			cl_ghost: 1,
 			cl_scorepanel: 1,
+			cl_boxnews: 1,
 			cl_hideplayers: 0
 		}
 	});
@@ -399,11 +424,41 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 				};
 			}, 250);
 		},
+		boxRevealed() {},
+		boxScreen() {},
 		boxSound() {},
+		casinoSound() {},
+		casinoBet(b) {
+			const c = hud.casino;
+			if (!c || !hud.coins || c.busy) return;
+			hud.casino = { ...c, busy: true, error: null };
+			const stake = pts(b.bet);
+			setTimeout(() => {
+				if (!hud.casino || !hud.coins) return;
+				if (hud.coins.balance < stake) {
+					hud.casino = casinoError(hud.casino, 'Not enough coins.');
+					return;
+				}
+				if (b.game === 'coinflip') {
+					const side = rollCoin(mockRoll);
+					settle({ game: 'coinflip', bet: stake, payout: coinflipPayout(b.bet, b.side, side), picked: b.side, side });
+				} else if (b.game === 'slots') {
+					const reels = rollSlots(mockRoll);
+					settle({ game: 'slots', bet: stake, payout: slotPayout(b.bet, reels), reels });
+				} else {
+					hud.coins = { ...hud.coins, balance: hud.coins.balance - stake };
+					hud.casino = crashStarted(hud.casino, { bet: stake, auto: b.auto }, performance.now());
+					crash = { bet: b.bet, auto: b.auto, crash: rollCrash(mockRoll), startedAt: performance.now() };
+					crashTimer = setInterval(() => crashStep(false), 16);
+				}
+			}, 120);
+		},
+		crashCashout: () => crashStep(true),
 		shopEquip(slot, item) {
 			if (hud.shop) hud.shop = { ...hud.shop, loadout: { ...hud.shop.loadout, [slot]: item }, notice: null };
 		},
 		createPreview: (c) => new CharacterPreview(c, 2),
+		itemPicture: (id) => itemPicture(2, id),
 		minimizeBan(minimized) {
 			if (hud.ban) hud.ban = { ...hud.ban, minimized };
 		},
@@ -459,6 +514,26 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		}
 	};
 
+	// Casino: the server's part, played locally with the shared rules.
+	const mockRoll = () => (params.has('roll') ? Number(params.get('roll')) : Math.random());
+	let crash: { bet: number; auto: number | null; crash: number; startedAt: number } | null = null;
+	let crashTimer: ReturnType<typeof setInterval> | undefined;
+	function settle(o: CasinoOutcome, taken = 0): void {
+		if (!hud.casino || !hud.coins) return;
+		hud.coins = { ...hud.coins, balance: hud.coins.balance + taken + o.payout - o.bet };
+		hud.casino = casinoResult(hud.casino, { net: hud.casino.net + o.payout - o.bet, ...o }, Date.now());
+	}
+	function crashStep(cashout: boolean): void {
+		const r = crash;
+		if (!r) return;
+		const s = crashState(r.crash, r.auto, performance.now() - r.startedAt, cashout);
+		if (s === 'running') return;
+		clearInterval(crashTimer);
+		crash = null;
+		const at = s === 'crashed' ? null : s.at;
+		settle({ game: 'crash', bet: pts(r.bet), payout: at === null ? 0 : crashPayout(r.bet, at), at, crash: r.crash }, pts(r.bet));
+	}
+
 	const overlay = () => hud.chatOpen || hud.consoleOpen || hud.settingsOpen || hud.authPanelOpen;
 	const down = (e: KeyboardEvent) => {
 		if (e.key === '`' && !hud.chatOpen) {
@@ -488,6 +563,26 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 	};
 	window.addEventListener('keydown', down);
 	window.addEventListener('keyup', up);
+
+	// `&boxnews`: one of each rarity in turn; `&boxnews=<rarity or item id>` only that one, `&boxnews=all` many at once.
+	const newsOf = params.get('boxnews');
+	let newsN = 0;
+	const newsNext = () => {
+		const rarities = Object.keys(LOOTBOX.odds) as LootRarity[];
+		const rarity = rarities.find((r) => r === newsOf) ?? rarities[newsN % rarities.length];
+		const of = lootItems().filter((i) => i.rarity === rarity && !i.id.startsWith('mock_'));
+		const item = getCosmetic(newsOf ?? '') ?? of[(newsN * 7) % of.length];
+		const name = MOCK_NAMES[newsN % MOCK_NAMES.length];
+		const n = parseBoxNews({ type: 'boxNews', id: 9, name, item: item.id, duplicate: newsN++ % 3 === 2 }, performance.now());
+		if (n) hud.boxNews = pushBoxNews(hud.boxNews, n);
+	};
+	const newsTimers: ReturnType<typeof setInterval>[] = [];
+	if (newsOf !== null) {
+		setTimeout(() => {
+			for (let i = 0; i < (newsOf === 'all' ? 12 : 1); i++) newsNext();
+		}, 500);
+		newsTimers.push(setInterval(newsNext, newsOf === 'all' ? 700 : 6000));
+	}
 
 	const ctx = canvas.getContext('2d');
 	let raf = 0;
@@ -523,6 +618,8 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		api,
 		destroy() {
 			cancelAnimationFrame(raf);
+			clearInterval(crashTimer);
+			for (const t of newsTimers) clearInterval(t);
 			window.removeEventListener('keydown', down);
 			window.removeEventListener('keyup', up);
 			window.removeEventListener('resize', resize);

@@ -24,6 +24,7 @@
 	import TagHud from '#lib/ui/TagHud.svelte';
 	import ZombiesHud from '#lib/ui/ZombiesHud.svelte';
 	import InfectedHud from '#lib/ui/InfectedHud.svelte';
+	import BoxNews from '#lib/ui/BoxNews.svelte';
 	import AwardPopups from '#lib/ui/AwardPopups.svelte';
 	import BanScreen from '#lib/ui/BanScreen.svelte';
 	import HnsHud from '#lib/ui/HnsHud.svelte';
@@ -72,7 +73,7 @@
 {:else}
 	<div class="hud" class:under-menu={hud.settingsOpen && !hud.authPanelOpen}>
 		{#if hud.hns}<HnsHud h={hud.hns} {now} part="screen" />{/if}
-		<div class="top-centre">
+		<div class="top-centre" data-top-hud>
 			<MapInfo mapId={hud.mapId} timeLeft={hud.mapTimeLeft} />
 			{#if hud.spectating}<SpectatorBar spectating={hud.spectating} />{/if}
 			{#if hud.tag}<TagHud tag={hud.tag} {now} />{/if}
@@ -154,6 +155,7 @@
 			online={hud.online}
 			coins={hud.coins}
 			shop={hud.shop}
+			casino={hud.casino}
 			multiplier={hud.multiplier}
 			maps={hud.maps}
 			mapId={hud.mapId}
@@ -175,6 +177,14 @@
 			busy={hud.authBusy}
 			guestName={String(hud.cvars.name ?? '')}
 		/>{/if}
+	<BoxNews
+		news={hud.boxNews}
+		{now}
+		{api}
+		enabled={cvarNum(hud.cvars, 'cl_boxnews', 1) !== 0}
+		hidden={hud.consoleOpen || (hud.ban !== null && !hud.ban.minimized)}
+		menu={hud.settingsOpen && !hud.authPanelOpen}
+	/>
 	{#if hud.ban && !hud.ban.minimized}<BanScreen ban={hud.ban} {now} {api} />{/if}
 	{#if hud.consoleOpen}<Console lines={hud.consoleLines} {api} isOpen={() => hud.consoleOpen} />{/if}
 {/if}

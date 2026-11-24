@@ -14,6 +14,7 @@ import {
 	FLAG_ON_GROUND,
 	FINISH_RESET_DELAY,
 	FLAG_TELEPORTED,
+	formatTenths,
 	formatTicks,
 	GhostRecorder,
 	inflateGhost,
@@ -85,8 +86,10 @@ import { GameRenderer } from '../render/renderer.js';
 import { Binds } from './binds.js';
 import { CHAT_HELP, parseChatCommand } from './chat.js';
 import { cvarFallback, HOLD_ACTIONS, registerCommands, type CommandContext, type HoldAction } from './commands.js';
+import { casinoError, casinoResult, crashStarted, parseCasino } from './casino.js';
 import { parseShop, shopNotice } from './shop.js';
-import { CharacterPreview } from '../render/character/preview.js';
+import { CharacterPreview, disposeItemPictures, itemPicture, warmItemPictures } from '../render/character/preview.js';
+import { parseBoxNews, pushBoxNews } from './box-news.js';
 import { applyAward, awardPopup, countdown, noticePopup, pushPopup } from './coins.js';
 import { DevConsole, type PrintKind } from './console.js';
 import type { CharacterPreviewHandle, ChatLine, ConsoleLine, GameApi, TagView } from './contract.js';
@@ -259,6 +262,13 @@ export class Game implements CommandContext {
 	private net: NetClient | null = null;
 	private selfId = -1;
 	private shopTimer: ReturnType<typeof setTimeout> | undefined;
+	private casinoTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Account and its casino net when this session began (kept over reconnects). */
+	private casinoSession: { username: string; net: number } | null = null;
+	/** The loot box screen is open. */
+	private boxScreen = false;
+	/** The server holds a result of ours back until it was shown. */
+	private boxUnseen = false;
 	private remotes = new Map<number, Remote>();
 	/** Scratch pose for `players.setPose`. */
 	private readonly avatarPose = emptyPose();
@@ -400,9 +410,18 @@ export class Game implements CommandContext {
 			minimizeBan: (minimized) => this.minimizeBan(minimized),
 			shopBuy: (item) => this.shopRequest({ type: 'shopBuy', item }),
 			boxOpen: () => this.shopRequest({ type: 'boxOpen' }),
+			boxRevealed: () => this.boxRevealed(),
+			boxScreen: (open) => {
+				this.boxScreen = open;
+				if (!open) this.boxRevealed();
+			},
 			boxSound: (name) => this.audio.box(name),
+			casinoBet: (bet) => this.casinoRequest(bet),
+			crashCashout: () => this.casinoRequest({ type: 'crashCashout' }),
+			casinoSound: (name) => this.audio.casino(name),
 			shopEquip: (slot, item) => this.shopRequest({ type: 'shopEquip', slot, item }),
 			createPreview: (canvas) => this.createPreview(canvas),
+			itemPicture: (id) => itemPicture(this.selfId, id),
 			admin: (a) => this.adminAction(a)
 		};
 
@@ -951,6 +970,43 @@ export class Game implements CommandContext {
 		this.shopTimer = setTimeout(() => {
 			if (this.hud.shop?.busy) this.hud.shop = { ...this.hud.shop, busy: false, notice: { ok: false, text: 'No answer from the server. Try again.' } };
 		}, SHOP_TIMEOUT_MS);
+	}
+
+	private boxRevealed(): void {
+		if (!this.boxUnseen) return;
+		this.boxUnseen = false;
+		this.send({ type: 'boxRevealed' });
+	}
+
+	/** Casino (docs/ui.md#casino): the server rolls and pays. */
+	private casinoRequest(msg: Extract<ClientMessage, { type: 'casinoBet' | 'crashCashout' }>): void {
+		const c = this.hud.casino;
+		if (!c || c.busy || this.mode !== 'online') return;
+		this.hud.casino = { ...c, busy: true, error: null };
+		this.send(msg);
+		clearTimeout(this.casinoTimer);
+		this.casinoTimer = setTimeout(() => {
+			if (this.hud.casino?.busy) this.hud.casino = casinoError(this.hud.casino, 'No answer from the server. Try again.');
+		}, SHOP_TIMEOUT_MS);
+	}
+
+	private onCasino(m: Extract<ServerMessage, { type: 'casino' }>, now: number): void {
+		const username = this.hud.account?.username;
+		if (username === undefined) this.casinoSession = null;
+		else if (this.casinoSession?.username !== username) this.casinoSession = { username, net: m.net };
+		this.hud.casino = parseCasino(m, now, this.casinoSession?.net ?? m.net, this.hud.casino);
+	}
+
+	private onCasinoResult(m: Extract<ServerMessage, { type: 'casinoResult' }>, now: number): void {
+		const c = this.hud.casino;
+		if (!c) return;
+		clearTimeout(this.casinoTimer);
+		this.hud.casino = m.ok ? casinoResult(c, m, Date.now()) : casinoError(c, m.error);
+		// A crash round that ends while the menu is closed.
+		if (m.ok && m.game === 'crash' && !this.hud.settingsOpen) {
+			const text = m.payout > 0 ? `Crash: cashed out, ${formatTenths(m.payout)} coins.` : 'Crash: your bet is lost.';
+			this.hud.awardPopups = pushPopup(this.hud.awardPopups, noticePopup({ type: 'coinsNotice', text, tone: 'info' }, now));
+		}
 	}
 
 	private createPreview(canvas: HTMLCanvasElement): CharacterPreviewHandle | null {
@@ -2347,12 +2403,32 @@ export class Game implements CommandContext {
 				break;
 			case 'boxResult': {
 				clearTimeout(this.shopTimer);
+				if (m.ok) {
+					this.boxUnseen = true;
+					if (!this.boxScreen) this.boxRevealed();
+				}
 				const s = this.hud.shop;
 				if (!s) break;
 				if (m.ok) this.hud.shop = { ...s, busy: false, notice: null, opened: { n: (s.opened?.n ?? 0) + 1, item: m.item, duplicate: m.duplicate === true, refund: Number(m.refund) || 0 } };
 				else this.hud.shop = { ...s, busy: false, notice: { ok: false, text: m.error } };
 				break;
 			}
+			case 'boxNews': {
+				const n = parseBoxNews(m, now);
+				// The opener has the loot box screen in front of them.
+				if (n && !(m.id === this.selfId && this.boxScreen)) this.hud.boxNews = pushBoxNews(this.hud.boxNews, n);
+				break;
+			}
+			case 'casino':
+				this.onCasino(m, now);
+				break;
+			case 'crashStart':
+				clearTimeout(this.casinoTimer);
+				if (this.hud.casino) this.hud.casino = crashStarted(this.hud.casino, m, now);
+				break;
+			case 'casinoResult':
+				this.onCasinoResult(m, now);
+				break;
 			case 'multiplier':
 				this.hud.multiplier = { mult: m.mult, active: m.active, need: m.need };
 				break;
@@ -2364,6 +2440,8 @@ export class Game implements CommandContext {
 		if (!client) return;
 		this.net = client;
 		this.mode = 'online';
+		// The loot box pictures get ready now, not in the middle of a run.
+		if (this.cvars.num('cl_boxnews') !== 0) warmItemPictures(m.selfId);
 		this.fullNotified = false;
 		this.selfId = m.selfId;
 		this.rotation = null;
@@ -2377,6 +2455,8 @@ export class Game implements CommandContext {
 		this.hud.coins = null;
 		this.hud.multiplier = null;
 		this.hud.shop = null;
+		this.hud.casino = null;
+		this.boxUnseen = false;
 		for (const p of m.players) {
 			if (p.id === m.selfId) continue;
 			this.remote(p.id, p.name).spectating = p.spectating;
@@ -2461,6 +2541,7 @@ export class Game implements CommandContext {
 		this.hud.adminState = null;
 		this.hud.coins = null;
 		this.hud.shop = null;
+		this.hud.casino = null;
 		this.hud.multiplier = null;
 		this.applyEnabledMaps(null);
 		this.tagState = null;
@@ -2485,6 +2566,7 @@ export class Game implements CommandContext {
 		this.disposed = true;
 		cancelAnimationFrame(this.raf);
 		clearTimeout(this.shopTimer);
+		clearTimeout(this.casinoTimer);
 		this.offCvars();
 		this.zm?.dispose();
 		this.zm = null;
@@ -2495,6 +2577,7 @@ export class Game implements CommandContext {
 		this.fullscreen.dispose();
 		this.audio.dispose();
 		this.renderer?.dispose();
+		disposeItemPictures();
 		this.renderer = null;
 	}
 }

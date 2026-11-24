@@ -102,7 +102,6 @@ describe('ledger', () => {
 		assert.equal(old.award(back.id, pts(1), 'tagTag').refused, 'gone');
 		w.active();
 		assert.equal(w.mode.award(back.id, pts(2), 'racePb').paid, 20);
-		assert.equal(w.mode.award(back.id, pts(2), 'racePb').refused, 'cap', 'once per map session');
 	});
 
 	it('backstop: 250 base points per rolling hour, exempt reasons and other accounts aside', () => {
@@ -113,11 +112,17 @@ describe('ledger', () => {
 		assert.equal(w.db.accountStats(a!.accountId!).pointsTotal, pts(240));
 		assert.equal(w.mode.award(a!.id, pts(15), 'raceFinish').paid, pts(10), 'only the rest');
 		assert.equal(w.mode.award(a!.id, pts(15), 'raceFinish').refused, 'backstop');
+		assert.equal(w.mode.award(a!.id, pts(15), 'raceFinish').refused, 'backstop');
+		const told = () => w.sent(a!, 'coinsNotice').map((m) => m.text);
+		assert.deepEqual(told(), ['Hourly coin limit reached (250 per hour). More is paid in 60 min.'], 'told once per hour');
 		assert.equal(w.mode.award(a!.id, pts(15), 'raceFirst').paid, pts(15));
 		assert.equal(w.mode.award(b!.id, pts(15), 'raceFinish').paid, pts(15));
 		// Counted before the multiplier.
 		w.now += 3600_001;
 		assert.equal(w.mode.award(a!.id, pts(15), 'raceFinish').paid, pts(15));
+		for (let i = 0; i < 17; i++) w.mode.award(a!.id, pts(15), 'raceFinish');
+		assert.equal(told().length, 2, 'and again an hour later');
+		assert.equal(w.sent(b!, 'coinsNotice').length, 0);
 	});
 
 	it('remembers when a reason was last paid on this map (record rule)', () => {

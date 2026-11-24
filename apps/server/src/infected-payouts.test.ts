@@ -128,7 +128,7 @@ describe('infected: survivors', () => {
 		assert.deepEqual(all(t, 'infWin'), [0, 0, 0, 0]);
 	});
 
-	it('M.O.A.B.: 8 to the caller, once per map session; its kills pay nothing else and are no contacts', () => {
+	it('M.O.A.B.: 8 to the caller, the next ones in the map session 1; its kills pay nothing else and are no contacts', () => {
 		const t = round(5, { moabKills: 2, moabCountdownSecs: 1 });
 		for (let i = 0; i < 2; i++) {
 			const [zero, a, b] = t.ps as [SimPlayer, SimPlayer, SimPlayer];
@@ -145,7 +145,7 @@ describe('infected: survivors', () => {
 			toEnd(t);
 			eco.contact = contact;
 			assert.deepEqual(contacts, []);
-			assert.equal(t.s.paid(a, 'infMoab'), pts(8));
+			assert.equal(t.s.paid(a, 'infMoab'), pts(8 + i));
 			assert.equal(t.s.paid(a, 'infKills'), kills);
 			assert.deepEqual(all(t, 'infSurvive'), [0, 0, 0, 0, 0], 'it ended the round before the clock');
 			if (i === 0) start(t);

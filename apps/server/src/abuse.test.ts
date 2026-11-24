@@ -484,7 +484,9 @@ describe('automatic ban (real server)', () => {
 		const auth = await bob.auth('register', 'Bob', 'secret');
 		const token = auth.ok ? auth.token! : '';
 		const id = server.db.accountByName('bob')!.id;
-		assert.deepEqual(bob.of('coins').at(-1), { type: 'coins', total: 0, balance: 0, recent: [] });
+		const welcome = { reason: 'welcome', label: 'Welcome bonus', amount: 1000, mult: 10 };
+		const coins = bob.of('coins').at(-1)!;
+		assert.deepEqual(coins, { type: 'coins', total: 0, balance: 1000, recent: [{ at: coins.recent[0]!.at, ...welcome }] });
 		assert.ok(bob.of('multiplier').length > 0);
 
 		const abuse = server.lobby.economy.abuse;
@@ -496,8 +498,8 @@ describe('automatic ban (real server)', () => {
 			strike(timId, i);
 			clock += 61_000;
 		}
-		const warned = await bob.waitFor('coinsNotice');
-		assert.equal(warned.tone, 'warn');
+		assert.equal(bob.of('coinsNotice')[0]!.tone, 'info', 'welcome bonus');
+		await bob.waitFor('coinsNotice', (m) => m.tone === 'warn');
 		await bob.barrier();
 		assert.equal(bob.closed, false, 'the ban waits for the next tick');
 		server.lobby.tickMode();

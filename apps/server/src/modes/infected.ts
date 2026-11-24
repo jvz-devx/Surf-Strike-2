@@ -8,6 +8,7 @@
 import type { InfEvent, InfPerkId, InfPhase, MapRecordInfo, NetState, ScoreRow, ServerMessage, WeaponId } from '@surf/shared';
 import {
 	buildCollisionWorld,
+	decayed,
 	FLAG_DUCKED,
 	INF_PERK_KILLS,
 	INF_ROUND_SECS,
@@ -340,7 +341,10 @@ export class InfectedMode implements ServerMode {
 				this.moabCaller = this.player(ev.by)?.playerId ?? null;
 				break;
 			case 'moabDetonate':
-				for (const p of this.host.players()) if (p.playerId === this.moabCaller) eco.award(p.id, INFECTED_PAY.moab, 'infMoab');
+				for (const p of this.host.players()) {
+					if (p.playerId !== this.moabCaller) continue;
+					eco.award(p.id, decayed(INFECTED_PAY.moab, INFECTED_PAY.moabRepeat, eco.tally(p.id, 'moab', 'session') - 1), 'infMoab');
+				}
 				this.moabCaller = null;
 				break;
 			case 'end':

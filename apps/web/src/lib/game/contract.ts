@@ -17,6 +17,7 @@ import type {
 	InfPerkId,
 	InfPhase,
 	InfTeam,
+	CosmeticItem,
 	CosmeticSlot,
 	Loadout,
 	ModeFamily,
@@ -25,6 +26,10 @@ import type {
 	RecordEntry,
 	ScoreRow,
 	BoxOffer,
+	CasinoEntry,
+	CasinoGame,
+	CasinoOutcome,
+	ClientMessage,
 	ShopOffer,
 	TagPhase,
 	WeaponId,
@@ -307,6 +312,15 @@ export interface AwardPopup {
 	tone: 'award' | 'info' | 'warn';
 }
 
+/** Someone opened a loot box (docs/ui.md#box-news). */
+export interface BoxNews {
+	id: number;
+	at: number; // performance.now()
+	name: string;
+	item: CosmeticItem;
+	duplicate: boolean;
+}
+
 /** The account's coins (docs/economy.md); amounts in tenths. */
 export interface CoinsView {
 	total: number;
@@ -331,6 +345,28 @@ export interface ShopView {
 	/** Last result, shown in the shop and the inventory; `bought`: the item just bought. */
 	notice: { ok: boolean; text: string; bought?: string } | null;
 }
+
+/** The casino (docs/ui.md#casino); amounts in tenths unless noted. */
+export interface CasinoView {
+	/** Smallest bet per game and largest bet, whole coins. */
+	min: Readonly<Record<CasinoGame, number>>;
+	max: number;
+	/** Won minus bet, all time; and what it was when this session began. */
+	net: number;
+	baseline: number;
+	/** Newest first. */
+	recent: readonly CasinoEntry[];
+	/** The running crash round; `startedAt` is performance.now(). */
+	crash: { bet: number; auto: number | null; startedAt: number } | null;
+	/** Last settled bet; `n` counts up. */
+	last: { n: number; outcome: CasinoOutcome } | null;
+	/** A request waits for the server's reply. */
+	busy: boolean;
+	error: { n: number; text: string } | null;
+}
+
+export type CasinoBet = Extract<ClientMessage, { type: 'casinoBet' }>;
+export type CasinoSound = 'bet' | 'flip' | 'tick' | 'stop' | 'crash' | 'win' | 'big';
 
 /** A live character turntable on a canvas of the UI. */
 export interface CharacterPreviewHandle {
@@ -394,10 +430,14 @@ export interface HudStateShape {
 	coins: CoinsView | null;
 	/** The shop; null offline and on servers without one. */
 	shop: ShopView | null;
+	/** The casino; null offline and on servers without one. */
+	casino: CasinoView | null;
 	/** Coins multiplier (tenths), active players and how many this mode needs; null offline and on servers without coins. */
 	multiplier: { mult: number; active: number; need: number } | null;
 	/** Award popups, oldest first. */
 	awardPopups: readonly AwardPopup[];
+	/** Latest loot box news, oldest first; the HUD queues and shows them. */
+	boxNews: readonly BoxNews[];
 	/** Banned from the server (docs/ui.md#ban-screen). */
 	ban: BanView | null;
 	/** Admin menu data (docs/ui.md#admin); only sent by the server to admin accounts, null otherwise. */
@@ -489,12 +529,23 @@ export interface GameApi {
 	shopBuy(item: string): void;
 	/** Buy and open a loot box; the result lands in `shop.opened`, or an error in `shop.notice`. */
 	boxOpen(): void;
-	/** Loot box sounds. */
-	boxSound(name: 'open' | 'tick' | 'reveal' | 'rare'): void;
+	/** The opener sees the result: the server may tell everyone. */
+	boxRevealed(): void;
+	/** The loot box screen opened or closed (closing it also reveals). */
+	boxScreen(open: boolean): void;
+	/** Loot box sounds; the last two are for the news of others (quieter). */
+	boxSound(name: 'open' | 'tick' | 'reveal' | 'rare' | 'news' | 'newsRare'): void;
+	/** Casino: place a bet; the result lands in `casino.last` (crash: in `casino.crash` first), an error in `casino.error`. */
+	casinoBet(bet: CasinoBet): void;
+	/** Cash out the running crash round. */
+	crashCashout(): void;
+	casinoSound(name: CasinoSound): void;
 	/** Wear an owned item, or `null` for the slot's default. */
 	shopEquip(slot: CosmeticSlot, item: string | null): void;
 	/** Turntable of the local player's character; null without WebGL. Dispose it. */
 	createPreview(canvas: HTMLCanvasElement): CharacterPreviewHandle | null;
+	/** Picture of one item (data URL) without an open shop; null without WebGL. */
+	itemPicture(id: string): Promise<string | null>;
 	/** Admin menu request (re-checked by the server); replies land in adminState / adminNotice. */
 	admin(action: AdminAction): void;
 }

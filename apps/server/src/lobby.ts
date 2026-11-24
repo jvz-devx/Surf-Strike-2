@@ -41,6 +41,7 @@ import {
 import { AccountStats, PLAYTIME_FLUSH_MS } from './account-stats.ts';
 import { AdminController, ipKey, parseAdminUsernames } from './admin.ts';
 import { Accounts, AttemptLimiter, AUTH_LIMITS, TOO_MANY } from './auth.ts';
+import { Casino } from './casino.ts';
 import { HELP_LINES, parseCommand } from './commands.ts';
 import type { AccountRow, BanRow, Db } from './db.ts';
 import { Economy } from './economy.ts';
@@ -62,7 +63,8 @@ export const RATE = {
 	state: { limit: 70, kick: 250 },
 	chat: { limit: 2, kick: 20 },
 	json: { limit: 60, kick: 300 },
-	shop: { limit: 8, kick: 100 }
+	shop: { limit: 8, kick: 100 },
+	casino: { limit: 5, kick: 100 }
 } as const;
 
 export interface LobbyOptions {
@@ -73,6 +75,8 @@ export interface LobbyOptions {
 	/** Wall clock in ms, used for rotation and run timing (injectable for tests). */
 	now?: () => number;
 	rng?: () => number;
+	/** Casino rolls (default node:crypto; tests). */
+	casinoRandom?: () => number;
 	/** Monotonic clock in ms for account playtime (default: `now` when injected, else performance.now). */
 	playClock?: () => number;
 	/** Start interval timers (snapshot, scoreboard, rotation, ping). Default true. */
@@ -132,7 +136,7 @@ interface Client {
 	ping: number;
 	/** Worn cosmetics (docs/economy.md#shop); the default look for guests. */
 	loadout: Loadout;
-	rate: { state: Window; chat: Window; json: Window; shop: Window };
+	rate: { state: Window; chat: Window; json: Window; shop: Window; casino: Window };
 	helloTimer: NodeJS.Timeout | null;
 	closed: boolean;
 }
@@ -166,6 +170,8 @@ export class Lobby {
 	readonly economy: Economy;
 	/** Cosmetics: purchases and worn items (docs/economy.md#shop). */
 	private readonly shop: Shop<Client>;
+	/** Casino: rolls, bets and payouts (docs/economy.md#casino). */
+	readonly casino: Casino<Client>;
 	/** Playtime and points of the accounts online (docs/gameplay.md#points-and-playtime). */
 	readonly stats: AccountStats;
 	readonly admin: AdminController<Client>;
@@ -189,14 +195,32 @@ export class Lobby {
 		this.rng = opts.rng ?? Math.random;
 		this.modeOptions = opts.modes ?? {};
 		this.admin = this.createAdmin(opts.adminUsernames ?? parseAdminUsernames(undefined));
-		this.economy = this.createEconomy(opts.playClock ?? opts.now ?? (() => performance.now()));
+		const clock = opts.playClock ?? opts.now ?? (() => performance.now());
+		this.economy = this.createEconomy(clock);
 		this.shop = new Shop<Client>({
 			db: this.db,
 			economy: () => this.economy,
 			send: (p, m) => this.send(p, m),
 			broadcast: (m) => this.broadcast(m),
+			system: (text) => this.system(text),
+			now: () => this.now(),
 			log: this.log
 		});
+		const lobby = this;
+		this.casino = new Casino<Client>(
+			{
+				db: this.db,
+				now: () => this.now(),
+				clock,
+				*players() {
+					for (const c of lobby.clients) if (c.helloed) yield c;
+				},
+				send: (p, m) => this.send(p, m),
+				balance: (accountId) => this.economy.sendCoinsTo(accountId),
+				log: this.log
+			},
+			opts.casinoRandom
+		);
 		this.mode = this.createMode();
 		this.rotation = new MapRotation({
 			isEnabled: (id) => this.admin.isEnabled(id),
@@ -234,6 +258,8 @@ export class Lobby {
 	tickMode(): void {
 		this.mode.tick();
 		this.economy.tick();
+		this.casino.tick();
+		this.shop.tick();
 	}
 
 	private createEconomy(clock: () => number): Economy {
@@ -406,7 +432,7 @@ export class Lobby {
 			state: null,
 			ping: 0,
 			loadout: emptyLoadout(),
-			rate: { state: new Window(), chat: new Window(), json: new Window(), shop: new Window() },
+			rate: { state: new Window(), chat: new Window(), json: new Window(), shop: new Window(), casino: new Window() },
 			helloTimer: null,
 			closed: false
 		};
@@ -442,6 +468,7 @@ export class Lobby {
 		if (c.accountId !== null) this.economy.leaveAccount(c.accountId, c);
 		this.mode.leave(c);
 		this.economy.leave(c);
+		this.shop.announce(c);
 		this.rotation.removeVoter(String(c.id));
 		this.db.touch(c.playerId, Date.now());
 		this.broadcast({ type: 'leave', id: c.id });
@@ -540,13 +567,22 @@ export class Lobby {
 				if (!c.spectating) this.mode.message?.(c, msg);
 				return;
 			case 'boxOpen':
+			case 'boxRevealed':
 			case 'shopBuy':
 			case 'shopEquip': {
 				const k = c.rate.shop.hit(t);
 				if (k > RATE.shop.kick) return this.kick(c, 'shop flood');
 				if (c.closed) return;
+				if (msg.type === 'boxRevealed') return k > RATE.shop.limit ? undefined : this.shop.announce(c);
 				if (msg.type === 'boxOpen') return this.shop.openBox(c, k > RATE.shop.limit);
 				return this.shop.handle(c, msg, k > RATE.shop.limit);
+			}
+			case 'casinoBet':
+			case 'crashCashout': {
+				const k = c.rate.casino.hit(t);
+				if (k > RATE.casino.kick) return this.kick(c, 'casino flood');
+				if (!c.closed) this.casino.handle(c, msg, k > RATE.casino.limit);
+				return;
 			}
 			case 'admin':
 				return this.admin.handle(c, msg.action);
@@ -627,6 +663,7 @@ export class Lobby {
 		}
 		this.economy.join(c);
 		this.shop.send(c);
+		this.casino.send(c);
 		this.mode.join(c);
 		this.broadcast({ type: 'join', player: info(c) }, c);
 		this.system(`${name} joined.`, c);
@@ -697,7 +734,10 @@ export class Lobby {
 		const session = this.accounts.createSession(outcome.account.id);
 		this.signIn(c, outcome.account, session.hash, session.token);
 		this.log(`${msg.type} #${c.id} account ${outcome.account.id} ${outcome.account.username}`);
-		if (msg.type === 'register') this.releaseName(outcome.account.username, c);
+		if (msg.type === 'register') {
+			this.economy.welcome(outcome.account.id);
+			this.releaseName(outcome.account.username, c);
+		}
 	}
 
 	private signIn(c: Client, account: AccountRow, sessionHash: string, token: string): void {
@@ -712,6 +752,7 @@ export class Lobby {
 		this.send(c, { type: 'auth', ok: true, username: account.username, token, records: this.mode.records(c), admin: c.admin });
 		this.economy.account(c);
 		this.shop.account(c);
+		this.casino.send(c);
 		this.admin.pushState();
 	}
 
@@ -742,6 +783,7 @@ export class Lobby {
 		}
 		this.send(c, { type: 'auth', ok: true, username: null, records: this.mode.records(c), admin: false });
 		this.shop.account(c);
+		this.casino.send(c);
 		this.admin.pushState();
 	}
 

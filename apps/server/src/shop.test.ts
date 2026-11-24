@@ -10,6 +10,7 @@ import { Db } from './db.ts';
 import { world } from './economy-helpers.ts';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
+import { BOX_NEWS_MS, Shop, type ShopPlayer } from './shop.ts';
 import { sleep, TestClient, testMap } from './test-helpers.ts';
 
 const PRICE = pts(30);
@@ -177,6 +178,8 @@ describe('shop on the server', () => {
 		const a = await c.auth('register', name, 'secret1');
 		assert.ok(a.ok);
 		const account = server.db.accountByName(name)!;
+		// Without the welcome bonus.
+		server.db.db.prepare('UPDATE account_stats SET points_balance = 0 WHERE account_id = ?').run(account.id);
 		if (coins) give(server.db, account.id, coins);
 		return { c, id: welcome.selfId, accountId: account.id, token: a.ok ? a.token! : '' };
 	};
@@ -345,6 +348,105 @@ describe('shop on the server', () => {
 		assert.ok(!full.ok && /everything/.test(full.error));
 		assert.equal(server.db.accountStats(accountId).pointsBalance, LOOTBOX.price * 2 + 100);
 		c.close();
+	});
+
+	describe('loot box news', () => {
+		const open = async (c: TestClient) => {
+			const n = c.messages.length;
+			c.send({ type: 'boxOpen' });
+			const r = await c.waitFor('boxResult', () => true, n);
+			assert.ok(r.ok);
+			return r as Extract<typeof r, { ok: true }>;
+		};
+		const reveal = (c: TestClient) => c.send({ type: 'boxRevealed' });
+
+		it('everyone hears it, once, after the opener has seen it; duplicates are marked', async () => {
+			const { c: guest } = await connect('NewsGuest');
+			const { c: spec } = await connect('NewsSpec');
+			spec.send({ type: 'spectate', targetId: -1 });
+			const { c, id, accountId } = await register('NewsOpener', LOOTBOX.price * 2);
+			const all = [guest, spec, c];
+			const quiet = async (n: number) => {
+				for (const x of all) {
+					await x.barrier();
+					assert.equal(x.of('boxNews').length, n);
+				}
+			};
+			const r = await open(c);
+			await quiet(0);
+			// Whatever the client claims, the server announces its own result.
+			c.send({ type: 'boxRevealed', item: 'hat_2030', duplicate: true });
+			for (const x of all) assert.deepEqual(await x.waitFor('boxNews'), { type: 'boxNews', id, name: 'NewsOpener', item: r.item, duplicate: false });
+			const rarity = getCosmetic(r.item)!.rarity;
+			const said = guest.of('chat').some((m) => /found .* in a loot box/.test(m.text));
+			assert.equal(said, rarity === 'rare' || rarity === 'epic');
+			reveal(c);
+			reveal(guest);
+			await quiet(1);
+
+			for (const i of lootItems().slice(1)) server.db.db.prepare('INSERT OR IGNORE INTO owned_items (account_id, item_id, bought_at, price) VALUES (?, ?, 1, 0)').run(accountId, i.id);
+			server.db.db.prepare('DELETE FROM owned_items WHERE account_id = ? AND item_id = ?').run(accountId, lootItems()[0]!.id);
+			const d = await open(c);
+			reveal(c);
+			const m = await guest.waitFor('boxNews', () => true, guest.messages.findIndex((x) => x.type === 'boxNews') + 1);
+			assert.deepEqual([m.item, m.duplicate], [d.item, d.item !== lootItems()[0]!.id]);
+			for (const x of all) x.close();
+		});
+
+		it('another open and a disconnect announce what is left', async () => {
+			const { c: other } = await connect('NewsOther');
+			const { c, id } = await register('NewsTwice', LOOTBOX.price * 2);
+			const a = await open(c);
+			const b = await open(c);
+			const first = await other.waitFor('boxNews');
+			assert.deepEqual([first.id, first.item], [id, a.item]);
+			await other.barrier();
+			assert.equal(other.of('boxNews').length, 1);
+			c.close();
+			const left = await other.waitFor('leave', (m) => m.id === id);
+			assert.deepEqual(other.of('boxNews').slice(1).map((m) => [m.name, m.item]), [['NewsTwice', b.item]]);
+			assert.ok(left);
+			other.close();
+		});
+	});
+
+	it('loot box news: announced by itself when the opener stays silent; rare ones are said in chat', () => {
+		const db = new Db(':memory:');
+		const id = db.createAccount('Silent', 'x')!.id;
+		give(db, id, LOOTBOX.price * 200);
+		let now = 1000;
+		const news: { item: string; duplicate: boolean }[] = [];
+		const lines: string[] = [];
+		const economy = { openBox: (a: number, item: { id: string }) => ({ duplicate: db.openBox({ accountId: a, at: 1, reason: 'x', label: 'x', amount: 1 }, item.id, { amount: 1, label: 'x' }) === 'duplicate', refund: 0 }) };
+		const shop = new Shop<ShopPlayer>({
+			db,
+			economy: () => economy as never,
+			send: () => {},
+			broadcast: (m) => void (m.type === 'boxNews' && news.push(m)),
+			system: (t) => lines.push(t),
+			now: () => now,
+			log: () => {}
+		});
+		const p: ShopPlayer = { id: 7, name: 'Silent', accountId: id, loadout: emptyLoadout() };
+		shop.announce(p);
+		shop.openBox(p);
+		now += BOX_NEWS_MS - 1;
+		shop.tick();
+		assert.equal(news.length, 0);
+		now += 1;
+		shop.tick();
+		shop.tick();
+		assert.equal(news.length, 1);
+		shop.announce(p);
+		assert.equal(news.length, 1);
+
+		for (let i = 0; i < 150; i++) {
+			shop.openBox(p);
+			shop.announce(p);
+		}
+		const rare = news.map((n) => getCosmetic(n.item)!).filter((i) => i.rarity === 'rare' || i.rarity === 'epic');
+		assert.deepEqual(lines, rare.map((i) => `Silent found ${i.name} (${i.rarity === 'epic' ? 'Epic' : 'Rare'}) in a loot box.`));
+		db.close();
 	});
 
 	it('loot box in the database: grant or refund, all or nothing', () => {

@@ -4,7 +4,7 @@
  * logged; only SHA-256 hashes of tokens are stored.
  */
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
-import { normalizeUsername, passwordError, usernameError, usernameKey } from '@surf/shared';
+import { awardLabel, normalizeUsername, passwordError, START_COINS, usernameError, usernameKey, WELCOME_REASON } from '@surf/shared';
 import type { AccountRow, Db } from './db.ts';
 
 /** scrypt cost (N = 2^14, r = 8, p = 1: ~16 MiB, tens of ms per hash). */
@@ -112,7 +112,7 @@ export class Accounts {
 		if (bad) return { ok: false, error: bad };
 		if (this.db.accountByName(u)) return { ok: false, error: 'That username is taken.' };
 		const hash = await hashPassword(password);
-		const account = this.db.createAccount(u, hash, Date.now());
+		const account = this.db.createAccount(u, hash, Date.now(), { reason: WELCOME_REASON, label: awardLabel(WELCOME_REASON), amount: START_COINS });
 		if (!account) return { ok: false, error: 'That username is taken.' };
 		return { ok: true, account };
 	}

@@ -20,12 +20,13 @@ import {
 	MULT_ONE,
 	PLAYTIME,
 	RECENT_AWARDS,
-	SPEED_LIMIT
+	SPEED_LIMIT,
+	START_COINS
 } from '@surf/shared';
 import { AbuseEngine } from './abuse.ts';
 import { knownPoints, PlayerActivity, StepClock, type Stillness } from './activity.ts';
 import { ipKey } from './admin.ts';
-import { type AbuseRow, type Db, POINT_LOG_DAYS } from './db.ts';
+import { type AbuseRow, CASINO_LOG_DAYS, type Db, POINT_LOG_DAYS } from './db.ts';
 
 /** Activity and multiplier are updated this often (ms). */
 export const ECONOMY_TICK_MS = 250;
@@ -166,6 +167,8 @@ export class Economy {
 	/** Active time not written yet, per account online. */
 	private readonly active = new Map<number, { ms: number; dirty: boolean }>();
 	private readonly hinted = new Set<string>();
+	/** Account → when it was told about the hourly limit. */
+	private readonly limitTold = new Map<number, number>();
 	private lastMult = '';
 	private map: MapDef;
 	private speedLimit = Infinity;
@@ -333,10 +336,12 @@ export class Economy {
 		const now = this.host.now();
 		this.abuse.prune();
 		for (const [id, list] of this.paidAt) if (!list.some((e) => now - e.at < ABUSE.macroMs)) this.paidAt.delete(id);
+		for (const [id, at] of this.limitTold) if (now - at >= BACKSTOP.windowMs) this.limitTold.delete(id);
 		if (this.pairRounds.size > 1000) this.pairRounds.clear();
 		try {
 			this.host.db.deleteExpiredBans(now);
 			const n = this.host.db.rollUpPoints(now - POINT_LOG_DAYS * 86_400_000);
+			this.host.db.pruneCasino(now - CASINO_LOG_DAYS * 86_400_000);
 			if (n > 0) this.host.log(`point log: ${n} old entries summed up`);
 		} catch (err) {
 			this.host.log(`housekeeping failed: ${(err as Error).message}`);
@@ -376,6 +381,7 @@ export class Economy {
 		try {
 			if (!def.exempt) {
 				const left = BACKSTOP.points - db.countedSince(accountId, now - BACKSTOP.windowMs);
+				if (left < base) this.tellLimit(accountId, now);
 				if (left <= 0) return { paid: 0, base: 0, refused: 'backstop' };
 				base = Math.min(base, left);
 			}
@@ -407,6 +413,26 @@ export class Economy {
 			this.host.log(`award ${reason} for account ${accountId} failed: ${(err as Error).message}`);
 			return { paid: 0, base: 0, refused: 'error' };
 		}
+	}
+
+	/** The hourly backstop cut or refused an award: say so once per hour, with the time until more is paid. */
+	private tellLimit(accountId: number, now: number): void {
+		const told = this.limitTold.get(accountId);
+		if (told !== undefined && now - told < BACKSTOP.windowMs) return;
+		this.limitTold.set(accountId, now);
+		const first = this.host.db.firstCountedSince(accountId, now - BACKSTOP.windowMs) ?? now;
+		const mins = Math.max(1, Math.ceil((first + BACKSTOP.windowMs - now) / 60_000));
+		const text = `Hourly coin limit reached (${formatTenths(BACKSTOP.points)} per hour). More is paid in ${mins} min.`;
+		this.notify(accountId, text);
+	}
+
+	private notify(accountId: number, text: string): void {
+		for (const p of this.host.players()) if (p.accountId === accountId) this.host.send(p, { type: 'coinsNotice', text, tone: 'info' });
+	}
+
+	/** The player has just registered: say what the new account starts with. */
+	welcome(accountId: number): void {
+		this.notify(accountId, `Welcome! You start with ${formatTenths(START_COINS)} coins. Spend them in the shop (Esc).`);
 	}
 
 	/**
@@ -456,11 +482,12 @@ export class Economy {
 		if (!r || r.delta === 0) return r;
 		this.sendCoinsTo(accountId);
 		const text = r.delta > 0 ? `An admin gave you ${formatTenths(r.delta)} coins.` : `An admin removed ${formatTenths(-r.delta)} of your coins.`;
-		for (const p of this.host.players()) if (p.accountId === accountId) this.host.send(p, { type: 'coinsNotice', text, tone: 'info' });
+		this.notify(accountId, text);
 		return r;
 	}
 
-	private sendCoinsTo(accountId: number): void {
+	/** Send the totals again after the balance changed. */
+	sendCoinsTo(accountId: number): void {
 		for (const p of this.host.players()) if (p.accountId === accountId) this.sendCoins(p);
 	}
 

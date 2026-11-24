@@ -186,6 +186,12 @@
 			checked={on('cl_scorepanel')}
 			onset={flag('cl_scorepanel')}
 		/>
+		<Toggle
+			label="Show loot box news"
+			hint="What other players get from loot boxes, at the top"
+			checked={on('cl_boxnews')}
+			onset={flag('cl_boxnews')}
+		/>
 		<Toggle label="Show ghost" hint="Race ghost on surf and bhop maps" checked={on('cl_ghost')} onset={flag('cl_ghost')} />
 		<Toggle label="Hide players" hint="Hide other players (not the ghost)" checked={on('cl_hideplayers')} onset={flag('cl_hideplayers')} />
 	{:else}

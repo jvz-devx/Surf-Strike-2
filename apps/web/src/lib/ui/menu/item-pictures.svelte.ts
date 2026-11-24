@@ -1,9 +1,20 @@
 /** Pictures of items, drawn by the character preview when their card comes into view (docs/ui.md#shop). */
 import { getCosmetic } from '@surf/shared';
-import type { CharacterPreviewHandle } from '#lib/game/contract.js';
+import type { CharacterPreviewHandle, GameApi } from '#lib/game/contract.js';
 
 /** Kept while the page lives, so opening a menu again is instant. The default look has the player's own colours: not kept. */
 const kept = new Map<string, string>();
+
+/** The picture of one item outside the menus: the kept one at once, else drawn once and kept. Never called without WebGL. */
+export function itemPicture(id: string, api: GameApi, ready: (url: string) => void): void {
+	const url = kept.get(id);
+	if (url !== undefined) return ready(url);
+	void api.itemPicture(id).then((drawn) => {
+		if (drawn === null) return;
+		kept.set(id, drawn);
+		ready(drawn);
+	});
+}
 
 export class ItemPictures {
 	/** Item id to data URL. */

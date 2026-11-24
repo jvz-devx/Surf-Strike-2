@@ -51,7 +51,7 @@
 				<li class="row">
 					<span class="amount ss-num" class:spent={e.amount < 0}>{e.amount < 0 ? '' : '+'}{formatTenths(e.amount)}</span>
 					<span class="what">{e.label}</span>
-					{#if e.amount >= 0 && e.reason !== 'admin' && !e.reason.startsWith('shop:')}<span class="dim ss-num">{formatMultiplier(e.mult)}</span>{/if}
+					{#if e.amount >= 0 && e.reason !== 'admin' && e.reason !== 'welcome' && !e.reason.startsWith('shop:')}<span class="dim ss-num">{formatMultiplier(e.mult)}</span>{/if}
 					<span class="dim time">{when(e.at)}</span>
 				</li>
 			{:else}

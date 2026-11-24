@@ -2,6 +2,7 @@
  * Wire protocol (docs/architecture.md#protocol-sketch).
  * JSON text frames for reliable events, binary frames for state/snapshots.
  */
+import type { CasinoGame, CoinSide, SlotReels } from './casino.ts';
 import type { CosmeticSlot, Loadout, RarityId } from './cosmetics.ts';
 import type { Cvars } from './cvars.ts';
 import type { MapDef } from './maps/types.ts';
@@ -200,8 +201,17 @@ export type ClientMessage =
 	| { type: 'shopBuy'; item: string }
 	/** Buy and open a loot box: answered with `boxResult`. Only when `shop.box` was sent. */
 	| { type: 'boxOpen' }
+	/** The opener has seen the result of the last box: the server tells everyone (`boxNews`). Ignored without one. */
+	| { type: 'boxRevealed' }
 	/** Wear an owned item, or `null` for the slot's default. */
 	| { type: 'shopEquip'; slot: CosmeticSlot; item: string | null }
+	/** Casino (docs/economy.md#casino), only when `casino` was sent; `bet` in whole coins. Answered with `casinoResult` (crash: `crashStart`, then `casinoResult` at its end). */
+	| { type: 'casinoBet'; game: 'coinflip'; bet: number; side: CoinSide }
+	| { type: 'casinoBet'; game: 'slots'; bet: number }
+	/** `auto`: cash out by itself at this multiplier (hundredths); null: only by hand. */
+	| { type: 'casinoBet'; game: 'crash'; bet: number; auto: number | null }
+	/** Cash out the running crash round; counts when the server receives it. */
+	| { type: 'crashCashout' }
 	/** Admin menu (docs/gameplay.md#admin): re-checked on the server, ignored for non-admins. */
 	| { type: 'admin'; action: AdminAction };
 
@@ -424,8 +434,37 @@ export type ServerMessage =
 	/** Reply to `boxOpen`, rolled by the server. `refund`: tenths given back because it was already owned. */
 	| { type: 'boxResult'; ok: true; item: string; duplicate: boolean; refund: number }
 	| { type: 'boxResult'; ok: false; error: string }
+	/** A player opened a loot box and has seen the result (to everyone, the opener included). Item ids may be unknown. */
+	| { type: 'boxNews'; id: number; name: string; item: string; duplicate: boolean }
 	/** A player's equipped cosmetics changed (to everyone, the player included). Use `sanitizeLoadout`. */
-	| { type: 'cosmetics'; id: number; loadout: Loadout };
+	| { type: 'cosmetics'; id: number; loadout: Loadout }
+	/**
+	 * Casino (docs/economy.md#casino), optional like the shop: after `welcome` and
+	 * `auth`. `min` and `max` are whole coins, every other amount is tenths. Guests
+	 * get no results. `crash`: the round that is still running.
+	 */
+	| { type: 'casino'; min: Record<CasinoGame, number>; max: number; net: number; recent: CasinoEntry[]; crash?: { bet: number; auto: number | null; elapsed: number } }
+	/** A crash round has started: the bet is taken, the multiplier climbs from now on. */
+	| { type: 'crashStart'; bet: number; auto: number | null }
+	/** A settled bet. `net`: won minus bet of the account, all time. */
+	| ({ type: 'casinoResult'; ok: true; net: number } & CasinoOutcome)
+	/** `error` is for display. `game` null: an unknown game. */
+	| { type: 'casinoResult'; ok: false; game: CasinoGame | null; error: string };
+
+/** A settled casino bet; tenths. */
+export interface CasinoEntry {
+	at: number;
+	game: CasinoGame;
+	bet: number;
+	payout: number;
+}
+
+export type CasinoOutcome = { bet: number; payout: number } & (
+	| { game: 'coinflip'; picked: CoinSide; side: CoinSide }
+	| { game: 'slots'; reels: SlotReels }
+	/** Hundredths. `at`: where it was cashed out, null when it crashed first; `crash`: where the round ended. */
+	| { game: 'crash'; at: number | null; crash: number }
+);
 
 /** The loot box the server sells (docs/economy.md#loot-box). */
 export interface BoxOffer {

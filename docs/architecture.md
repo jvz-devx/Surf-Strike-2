@@ -97,6 +97,8 @@ Each client simulates its own movement with zero input lag. The server trusts po
 | S→C | `banned { reason, seconds? }`, then close 4009 | JSON |
 | C→S | Shop: `shopBuy { item }`, `shopEquip { slot, item }` ([economy.md](economy.md#shop)) | JSON |
 | S→C | Shop: `shop`, `shopResult`, `cosmetics { id, loadout }`; `loadout?` in `welcome.players[]` and `join.player` ([economy.md](economy.md#shop)) | JSON |
+| C→S | Casino: `casinoBet { game, bet, … }`, `crashCashout` ([economy.md](economy.md#casino)) | JSON |
+| S→C | Casino: `casino`, `crashStart`, `casinoResult` ([economy.md](economy.md#casino)) | JSON |
 | S→C | Coins: `coins`, `award`, `multiplier`, `coinsNotice` ([economy.md](economy.md#wire)) | JSON |
 | C→S | `vote { option }` (1-based, up to 7), `rtv` (= `rtvRequest` without a map), `spectate { targetId }` | JSON |
 | C→S | `rtvRequest { mapId? }`: start an RTV request, optionally nominating a map (on an open request: a yes vote); `rtvVote { yes }`: answer it. Errors come back as system chat | JSON |
@@ -129,6 +131,7 @@ Username + password, no email or verification ([gameplay.md](gameplay.md#account
 | `replays` | `map` (primary key), `account_id`, `time_ticks`, `samples`, `data` (deflate-raw BLOB), `created_at`: one record ghost per map, replaced only by a faster validated account run ([gameplay.md](gameplay.md#ghosts)) |
 | `owned_items` | `account_id`, `item_id` (primary key together), `bought_at`, `price` ([economy.md](economy.md#shop)) |
 | `equipped` | `account_id`, `slot` (primary key together), `item_id`; references `owned_items` |
+| `casino_log`, `casino_stats`, `casino_crash` | Settled bets of 30 days, sums per account, open crash bets ([economy.md](economy.md#storage)) |
 
 ### Account totals
 

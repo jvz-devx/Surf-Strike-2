@@ -34,6 +34,7 @@ export const CLIENT_CVARS: readonly CvarDef[] = [
 	{ name: 'cl_hideplayers', default: 0, bool: true, help: 'Hide other players' },
 	{ name: 'cl_ghost', default: 1, bool: true, help: 'Show the record ghost on surf and bhop maps' },
 	{ name: 'cl_scorepanel', default: 1, bool: true, help: 'Show the score panel on the right (map records or the current standing)' },
+	{ name: 'cl_boxnews', default: 1, bool: true, help: 'Show what other players get from loot boxes' },
 	{ name: 'cl_crosshairsize', default: 5, min: 0, max: 100, help: 'Crosshair line length' },
 	{ name: 'cl_crosshairgap', default: 1, min: -10, max: 100, help: 'Crosshair centre gap' },
 	{ name: 'cl_crosshairthickness', default: 1, min: 0.5, max: 20, help: 'Crosshair line thickness' },

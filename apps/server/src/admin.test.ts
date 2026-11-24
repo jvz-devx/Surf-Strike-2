@@ -289,6 +289,8 @@ describe('admin', () => {
 		const { c: dave } = await join('Dave0');
 		assert.ok((await dave.auth('register', 'Dave', 'secret1')).ok);
 		const id = server.db.accountByName('dave')!.id;
+		server.db.adjustBalance({ accountId: id, at: 1, reason: 'test', label: 'x' }, null); // without the welcome bonus
+		server.db.db.prepare('DELETE FROM point_log WHERE account_id = ?').run(id);
 		const stats = () => server.db.accountStats(id);
 
 		// Non-admins change nothing.

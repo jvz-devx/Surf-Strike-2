@@ -144,8 +144,10 @@ export class RaceMode implements ServerMode {
 		const repeats = Math.max(before, economy.paidWithin(p.id, 'raceFinish', REPEAT_MS));
 		economy.award(p.id, decayed(finish, RACE_PAY.repeat, repeats), 'raceFinish');
 		if (run.firstEver) economy.award(p.id, finish, 'raceFirst');
-		// Once per map session is the cap in AWARDS; a new session does not help within the hour.
-		if (run.pb && economy.paidWithin(p.id, 'racePb', REPEAT_MS) === 0) economy.award(p.id, RACE_PAY.personalBest, 'racePb');
+		if (run.pb) {
+			const n = Math.max(economy.tally(p.id, 'pb', 'session') - 1, economy.paidWithin(p.id, 'racePb', REPEAT_MS));
+			economy.award(p.id, decayed(RACE_PAY.personalBest, RACE_PAY.personalBestRepeat, n), 'racePb');
+		}
 		if (run.beatsOther) {
 			const since = economy.sinceLastPaid(p.id, 'raceRecord');
 			if (since === null || since >= RACE_PAY.recordEveryMs) economy.award(p.id, RACE_PAY.record[map.difficulty], 'raceRecord');
