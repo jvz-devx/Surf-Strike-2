@@ -29,7 +29,8 @@ COSMETIC_SLOTS                 // ['hat', 'glasses', 'top', 'bottom', 'shoes']
 type Loadout                   // Record<CosmeticSlot, string | null>; null = the slot's default
 interface CosmeticItem         // { id, slot, name, isDefault?, rarity? }
 RARITIES                       // { basic, common, uncommon, rare, epic: { name, color, price } }; price null = loot only
-LOOTBOX                        // name, price, odds, available; price in tenths of a coin
+LOOTBOX                        // name, price, odds (weights), refund; amounts in tenths of a coin
+lootItems(), lootChances(), rollLoot(rand)  // what a loot box holds and picks
 shopItems(), cosmeticPrice(i)  // items with a rarity are for sale
 registerCosmetic(item)         // add an item (throws on a duplicate id)
 getCosmetic(id), listCosmetics(slot?), defaultItem(slot)
@@ -39,7 +40,7 @@ sanitizeLoadout(untrusted)     // always a valid Loadout; use it on everything r
 
 The registry holds `top_default`, `bottom_default`, `shoes_default` and the shop's items (`SHOP_ITEMS`). Hat and glasses are empty by default. Buying, storage and messages: [economy.md](economy.md#shop). Guests wear the default look. Both ends run `sanitizeLoadout` on everything received or stored, so an item the other side does not know is simply not worn.
 
-| Slot | Items (Basic, 30 coins; Common ones are loot only, not in the shop) |
+| Slot | Items (Basic, 30 coins; Common ones only come from loot boxes) |
 | --- | --- |
 | hat | Breakline cap, Pom beanie, Straw hat; Common: Fry cook hat, Palm bucket hat, Trilby, Wave bandana |
 | glasses | Glare shades, Round shades; Common: Gold aviators, Sport wraps |

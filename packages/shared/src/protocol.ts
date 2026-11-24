@@ -2,7 +2,7 @@
  * Wire protocol (docs/architecture.md#protocol-sketch).
  * JSON text frames for reliable events, binary frames for state/snapshots.
  */
-import type { CosmeticSlot, Loadout } from './cosmetics.ts';
+import type { CosmeticSlot, Loadout, RarityId } from './cosmetics.ts';
 import type { Cvars } from './cvars.ts';
 import type { MapDef } from './maps/types.ts';
 import type { GameModeId } from './modes/index.ts';
@@ -198,6 +198,8 @@ export type ClientMessage =
 	| { type: 'knife'; origin: Vec3; dir: Vec3 }
 	/** Shop (docs/economy.md#shop): answered with `shopResult` and, on success, a fresh `shop`. */
 	| { type: 'shopBuy'; item: string }
+	/** Buy and open a loot box: answered with `boxResult`. Only when `shop.box` was sent. */
+	| { type: 'boxOpen' }
 	/** Wear an owned item, or `null` for the slot's default. */
 	| { type: 'shopEquip'; slot: CosmeticSlot; item: string | null }
 	/** Admin menu (docs/gameplay.md#admin): re-checked on the server, ignored for non-admins. */
@@ -416,11 +418,24 @@ export type ServerMessage =
 	 * server sells (tenths of a coin), and what this account owns and wears
 	 * (empty for guests). After `welcome`, `auth` and every change.
 	 */
-	| { type: 'shop'; items: ShopOffer[]; owned: string[]; loadout: Loadout }
+	| { type: 'shop'; items: ShopOffer[]; owned: string[]; loadout: Loadout; box?: BoxOffer }
 	/** Reply to `shopBuy` (`item` bought) and `shopEquip`; `error` is for display. */
 	| { type: 'shopResult'; action: 'buy' | 'equip'; item: string | null; ok: boolean; error?: string }
+	/** Reply to `boxOpen`, rolled by the server. `refund`: tenths given back because it was already owned. */
+	| { type: 'boxResult'; ok: true; item: string; duplicate: boolean; refund: number }
+	| { type: 'boxResult'; ok: false; error: string }
 	/** A player's equipped cosmetics changed (to everyone, the player included). Use `sanitizeLoadout`. */
 	| { type: 'cosmetics'; id: number; loadout: Loadout };
+
+/** The loot box the server sells (docs/economy.md#loot-box). */
+export interface BoxOffer {
+	/** Tenths of a coin. */
+	price: number;
+	/** Weight per rarity (lootChances). */
+	odds: Partial<Record<RarityId, number>>;
+	/** Ids of everything it can hold. */
+	items: string[];
+}
 
 export interface ShopOffer {
 	id: string;

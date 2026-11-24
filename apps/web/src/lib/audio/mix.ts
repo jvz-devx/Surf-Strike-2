@@ -25,6 +25,8 @@ export const MIX_LUFS = {
 	record: -24,
 	vote: -27,
 	click: -31,
+	/** Loot box reel. */
+	tick: -33,
 	/** Hide and seek knife swing (own swing, or a seeker right next to you). */
 	swing: -30,
 	/** Hide and seek knife hit (you found someone, or were found). */
@@ -112,7 +114,7 @@ export function stepAdvance(speed: number, dt: number): number {
 }
 
 /** Single-take event level (dB). */
-export function eventDb(group: 'jump' | 'zone' | 'record' | 'vote' | 'click' | 'swing' | 'hit'): number {
+export function eventDb(group: 'jump' | 'zone' | 'record' | 'vote' | 'click' | 'tick' | 'swing' | 'hit'): number {
 	return levelDb(group, MIX_LUFS[group]);
 }
 

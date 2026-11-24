@@ -216,7 +216,7 @@ Additive; older clients ignore the messages, newer clients show nothing without 
 | S→C | `coinsNotice { text, tone: info\|warn }`: guest hint, abuse warning (also sent as a chat line for older clients) |
 | S→C | `banned { reason, seconds? }`: `seconds` until the ban lifts by itself; absent = permanent |
 | C→S, S→C | Shop messages: see [Shop](#shop) |
-| S→C | `adminState`: `bans[].secondsLeft?`, `abuse[]?` |
+| S→C | `adminState`: `bans[].secondsLeft?`, `abuse[]?`, `players[].coins?` |
 
 <a id="paying-from-a-mode"></a>
 
@@ -282,7 +282,10 @@ this.chased.reset();
 Cosmetics only. The stock, the rarities and their prices are data in `packages/shared/src/cosmetics.ts` ([how to add an item](characters.md#adding-an-item)); the rules are in `apps/server/src/shop.ts`. Menu: [ui.md](ui.md#shop).
 
 - **Rarity** sets the price. `basic` is 30 coins (300 tenths). `common`, `uncommon`, `rare` and `epic` have no price: not in the shop, only meant for loot boxes.
-- <a id="loot-box"></a>**Loot box** (`LOOTBOX`, 80 coins): shown greyed out as "Coming soon"; nothing can be bought or opened yet (the server knows no such request). Planned odds from the owner: common 80 %, uncommon 10 %, rare 5 %, epic 1 %. They add up to 96 %; the missing 4 % must be assigned before it opens. Model: `apps/web/src/lib/render/lootbox.ts`.
+- <a id="loot-box"></a>**Loot box** (`LOOTBOX`, 80 coins): holds every item of common rarity or better. `rollLoot` picks the rarity by weight (common 80, uncommon 10, rare 5, epic 1; they add up to 96, so with all four present the real chances are 83.3 / 10.4 / 5.2 / 1.0 %), then any of its items equally. Rarities without items drop out (`lootChances`); while only common items exist, common is certain. The menu shows the real chances.
+  - The server rolls (`Shop.openBox`, `node:crypto`), and `Db.openBox` takes the price and grants the item in one transaction. The client's reel only shows the result, so closing it early loses nothing.
+  - **Duplicates** can come up, and give coins back instead: common 20, uncommon 40, rare 60, epic 80 (`LOOTBOX.refund`; logged as `Duplicate: <name>`, no lifetime points). Once an account owns everything in the box, opening is refused and nothing is charged.
+  - Model: `apps/web/src/lib/render/lootbox.ts`; menu: [ui.md](ui.md#lootbox).
 - **Buying** (`Db.buyItem`) is one transaction that takes the write lock first: not owned yet, balance suffices, deduct, log `shop:<id>` (label `Shop: <name>`), grant. A second click, tab or process gets "You already own this item". No refunds.
 - **Shop and inventory** are two menus on the same messages. The shop lists only what has a price (owned items last, marked "Owned") and never changes what you wear, except through "Wear it" right after a purchase. The [inventory](ui.md#inventory) lists everything the account owns, of any rarity, also what the server no longer sells, plus the default look of each slot; wearing and taking off happen there.
 - **Wearing**: owned items only, one per slot, in the item's own slot; `null` takes it off. Kept across sessions, maps and modes.
@@ -294,7 +297,9 @@ Cosmetics only. The stock, the rarities and their prices are data in `packages/s
 | --- | --- |
 | C→S | `shopBuy { item }` |
 | C→S | `shopEquip { slot, item \| null }` |
-| S→C | `shop { items[{ id, price }], owned[], loadout }`: after `welcome`, `auth` and every change; guests get it with nothing owned |
+| C→S | `boxOpen {}` |
+| S→C | `boxResult { ok: true, item, duplicate, refund }` (tenths) or `{ ok: false, error }`: to the requester |
+| S→C | `shop { items[{ id, price }], owned[], loadout, box?: { price, odds, items[] } }` (no `box`: no loot box shown): after `welcome`, `auth` and every change; guests get it with nothing owned |
 | S→C | `shopResult { action: buy\|equip, item, ok, error? }`: to the requester |
 | S→C | `cosmetics { id, loadout }`: to everyone when a player's worn items change (also on login and logout) |
 | S→C | `welcome.players[]` and `join.player` carry `loadout?` (absent: default look) |

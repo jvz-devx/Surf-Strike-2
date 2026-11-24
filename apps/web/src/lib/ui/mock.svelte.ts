@@ -12,7 +12,7 @@
  * `&view=coins` the Coins submenu, `&view=shop` the Shop (`&balance=<coins>`, `&noshop` a server without it),
  * `&view=inventory` the Inventory (`&items=<n>` owned items, default 130, with made-up ones; 0 = empty), `&ban=<seconds>` the ban screen (`&ban=0` permanent).
  */
-import { cosmeticPrice, COSMETIC_SLOTS, emptyLoadout, gameMode, getCosmetic, isGameModeId, listCosmetics, registerCosmetic, shopItems, Status, TICK_RATE, type RarityId, type GameModeId, type ModeState, type ScoreRow } from '@surf/shared';
+import { cosmeticPrice, COSMETIC_SLOTS, emptyLoadout, gameMode, getCosmetic, isGameModeId, listCosmetics, LOOTBOX, lootItems, registerCosmetic, rollLoot, shopItems, Status, TICK_RATE, type RarityId, type GameModeId, type ModeState, type ScoreRow } from '@surf/shared';
 import { itemMesh, registerItemMesh } from '#lib/render/character/items.js';
 import { CharacterPreview } from '#lib/render/character/preview.js';
 import { awardPopup, noticePopup } from '#lib/game/coins.js';
@@ -118,6 +118,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 	const race = gameMode(mode).family === 'race';
 	const coinsN = params.has('coins') ? Number(params.get('coins')) : null;
 	const asAdmin = params.get('view') === 'admin' || params.has('admin');
+	if (params.has('boxall')) mockOwned(130);
 	const owned = coinsN === 0 ? [] : mockOwned(Number(params.get('items') ?? 130));
 	const hud: HudStateShape = $state({
 		online: true,
@@ -174,6 +175,9 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 						items: MOCK_OFFERS,
 						owned,
 						loadout: owned.length < 3 ? emptyLoadout() : { ...emptyLoadout(), hat: 'hat_cap', shoes: 'shoes_slides' },
+						// `&boxall`: made-up items of every rarity too.
+						box: { price: LOOTBOX.price, odds: LOOTBOX.odds, items: lootItems().filter((i) => params.has('boxall') || !i.id.startsWith('mock_')).map((i) => i.id) },
+						opened: null,
 						busy: false,
 						notice: null
 					},
@@ -375,6 +379,26 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			hud.coins = { ...hud.coins, balance: hud.coins.balance - price };
 			hud.shop = { ...hud.shop, owned: [...hud.shop.owned, item], notice: { ok: true, text: `${getCosmetic(item)?.name} bought.`, bought: item } };
 		},
+		boxOpen() {
+			const s = hud.shop;
+			if (!s?.box || !hud.coins || s.busy) return;
+			const box = s.box;
+			hud.shop = { ...s, busy: true, notice: null };
+			setTimeout(() => {
+				if (!hud.shop || !hud.coins) return;
+				const item = rollLoot(Math.random, box.items.map((id) => getCosmetic(id)!), box.odds)!;
+				const duplicate = hud.shop.owned.includes(item.id);
+				const refund = duplicate ? (LOOTBOX.refund[item.rarity as keyof typeof LOOTBOX.refund] ?? 0) : 0;
+				hud.coins = { ...hud.coins, balance: hud.coins.balance - box.price + refund };
+				hud.shop = {
+					...hud.shop,
+					busy: false,
+					owned: duplicate ? hud.shop.owned : [...hud.shop.owned, item.id],
+					opened: { n: (hud.shop.opened?.n ?? 0) + 1, item: item.id, duplicate, refund }
+				};
+			}, 250);
+		},
+		boxSound() {},
 		shopEquip(slot, item) {
 			if (hud.shop) hud.shop = { ...hud.shop, loadout: { ...hud.shop.loadout, [slot]: item }, notice: null };
 		},

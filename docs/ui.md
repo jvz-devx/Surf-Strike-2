@@ -129,7 +129,8 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
 
   Each tab has **Reset … to defaults**, which sets that tab's cvars to the engine defaults (`CLIENT_CVARS`); it is disabled when they already are.
 - <a id="shop"></a>**Shop** (`ShopMenu.svelte`; pure helpers in `game/shop.ts`; rules in [economy.md](economy.md#shop)): only what can be bought. The balance, category tabs, items with picture, name, rarity (in its colour) and price (red when you cannot afford it), and a turntable of your own character. Owned items are marked "Owned" and come last; loot-only items never appear.
-  - **Loot boxes** on top of All: one greyed-out, disabled card with the picture, 80 coins, the possible rarities and "Coming soon".
+  - **Loot boxes** on top of All: one card with the picture, the price and the rarities that can drop; it opens the loot box.
+  - <a id="lootbox"></a>**Loot box** (`LootboxMenu.svelte`, over the shop): first the box, the real chances, everything inside and **Open · 80 coins** (guests, too few coins and "You already own everything" are explained). Then a reel of items runs past a marker with ticks, slows down for about 6 s and stops on the item the server rolled; Esc or **Skip** ends it early. The result shows the picture, rarity, "New!" or the coins given back, **Wear it** and **Open another**. The balance hides a refund until then. With reduced motion there is no spin. Sounds: CREDITS.md.
   - Clicking an item tries it on (one per slot, on top of what you wear); clicking it again or **Reset look** undoes that. Drag turns the character; it stands still with reduced motion.
   - **Buy · 30 coins**, then **Confirm** or **Cancel**. Too few coins: the button is disabled and "You are X coins short" is shown. Guests get a login button. Errors show below.
   - After a purchase: "… bought." with **Wear it** and **Go to inventory** (opens it on that item). Nothing is worn by itself.
@@ -151,7 +152,7 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
 
 All values are the same cvars as the console and are saved the same way.
 
-Dev preview: `/?mockhud&open=settings` (main menu), `&open=maps` (map submenu), `&open=settings&view=settings&tab=hud` (a settings tab), `&view=account`, `&view=shop` (`&balance=<coins>`, `&coins=0` a guest, `&noshop`), `&view=inventory` (130 items, most of them made up; `&items=<n>`, 0 = empty), `&view=coins`, `&view=admin` (logged in as an admin; `&tab=maps|players|bans|abuse`), and `&solo=0` for the read-only map list.
+Dev preview: `/?mockhud&open=settings` (main menu), `&open=maps` (map submenu), `&open=settings&view=settings&tab=hud` (a settings tab), `&view=account`, `&view=shop` (`&balance=<coins>`, `&boxall` a loot box with every rarity, `&coins=0` a guest, `&noshop`), `&view=inventory` (130 items, most of them made up; `&items=<n>`, 0 = empty), `&view=coins`, `&view=admin` (logged in as an admin; `&tab=maps|players|bans|abuse`), and `&solo=0` for the read-only map list.
 
 ## Ghost
 

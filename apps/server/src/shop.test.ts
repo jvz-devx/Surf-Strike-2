@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { Worker } from 'node:worker_threads';
-import { COSMETIC_SLOTS, cosmeticPrice, emptyLoadout, getCosmetic, pts, shopItems } from '@surf/shared';
+import { COSMETIC_SLOTS, cosmeticPrice, emptyLoadout, getCosmetic, LOOTBOX, lootItems, pts, shopItems } from '@surf/shared';
 import { Db } from './db.ts';
 import { world } from './economy-helpers.ts';
 import type { GameServer } from './server.ts';
@@ -313,6 +313,55 @@ describe('shop on the server', () => {
 		assert.equal(server.db.accountStats(accountId).pointsBalance, PRICE * 4);
 		assert.deepEqual(server.db.ownedItems(accountId), ['bottom_cargo']);
 		second.close();
+	});
+
+	it('loot box: charged, item granted, a duplicate gives coins back, refused when broke, guest or complete', async () => {
+		const open = async (c: TestClient) => {
+			const n = c.messages.length;
+			c.send({ type: 'boxOpen' });
+			return c.waitFor('boxResult', () => true, n);
+		};
+		const { c: guest } = await connect('BoxGuest');
+		const g = await open(guest);
+		assert.ok(!g.ok && /Log in/.test(g.error));
+		guest.close();
+
+		const all = lootItems().map((i) => i.id);
+		const { c, accountId } = await register('Opener', LOOTBOX.price + 100);
+		assert.deepEqual(c.of('shop').at(-1)!.box, { price: LOOTBOX.price, odds: LOOTBOX.odds, items: all });
+		const r = await open(c);
+		assert.ok(r.ok && !r.duplicate && r.refund === 0 && all.includes(r.item));
+		assert.deepEqual(server.db.ownedItems(accountId), [r.ok && r.item]);
+		assert.deepEqual(c.of('shop').at(-1)!.owned, [r.ok && r.item]);
+		assert.equal(server.db.accountStats(accountId).pointsBalance, 100);
+		const poor = await open(c);
+		assert.ok(!poor.ok && /Not enough/.test(poor.error));
+		assert.equal(server.db.accountStats(accountId).pointsBalance, 100);
+
+		// Everything owned: refused, nothing charged.
+		give(server.db, accountId, LOOTBOX.price * 2);
+		for (const id of all) server.db.db.prepare('INSERT OR IGNORE INTO owned_items (account_id, item_id, bought_at, price) VALUES (?, ?, 1, 0)').run(accountId, id);
+		const full = await open(c);
+		assert.ok(!full.ok && /everything/.test(full.error));
+		assert.equal(server.db.accountStats(accountId).pointsBalance, LOOTBOX.price * 2 + 100);
+		c.close();
+	});
+
+	it('loot box in the database: grant or refund, all or nothing', () => {
+		const id = server.db.createAccount('BoxDb', 'x')!.id;
+		give(server.db, id, 1000);
+		const e = { accountId: id, at: 5, reason: 'shop:lootbox', label: 'Shop: Loot box', amount: 800 };
+		const refund = { amount: 200, label: 'Duplicate: Trilby' };
+		const before = server.db.accountStats(id).pointsTotal;
+		assert.equal(server.db.openBox(e, 'hat_trilby', refund), 'new');
+		assert.equal(server.db.openBox(e, 'hat_trilby', refund), 'poor');
+		give(server.db, id, 800);
+		assert.equal(server.db.openBox(e, 'hat_trilby', refund), 'duplicate');
+		assert.equal(server.db.accountStats(id).pointsBalance, 400);
+		assert.equal(server.db.accountStats(id).pointsTotal, before + 800, 'a refund is no lifetime point');
+		assert.deepEqual(server.db.ownedItems(id), ['hat_trilby']);
+		const log = server.db.recentPoints(id, 10).filter((x) => x.reason === 'shop:lootbox');
+		assert.deepEqual(log.map((x) => [x.label, x.amount]), [['Duplicate: Trilby', 200], ['Shop: Loot box', -800], ['Shop: Loot box', -800]]);
 	});
 
 	it('items of a newer version are ignored and kept; everything survives a restart', async () => {

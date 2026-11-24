@@ -1,7 +1,10 @@
-import { COSMETIC_SLOTS, cosmeticPrice, emptyLoadout, getCosmetic, listCosmetics, shopItems } from '@surf/shared';
+import { COSMETIC_SLOTS, cosmeticPrice, emptyLoadout, getCosmetic, listCosmetics, LOOTBOX, lootItems, shopItems } from '@surf/shared';
 import { describe, expect, it } from 'vitest';
 import type { ShopView } from './contract.js';
 import {
+	boxContents,
+	boxReel,
+	chanceLabel,
 	filterInventory,
 	inventoryEntries,
 	itemState,
@@ -18,6 +21,8 @@ const view = (o: Partial<ShopView> = {}): ShopView => ({
 	items: shopItems().map((i) => ({ id: i.id, price: cosmeticPrice(i)! })),
 	owned: [],
 	loadout: emptyLoadout(),
+	box: null,
+	opened: null,
 	busy: false,
 	notice: null,
 	...o
@@ -33,8 +38,8 @@ describe('shop view', () => {
 				owned: ['hat_cap', 'hat_2030', 'hat_cap', 5 as never],
 				loadout: { ...emptyLoadout(), hat: 'hat_2030', top: 'top_sunset' }
 			})
-		).toEqual({ items: [{ id: 'hat_cap', price: 750 }], owned: ['hat_cap'], loadout: { ...emptyLoadout(), top: 'top_sunset' } });
-		expect(parseShop({ type: 'shop' } as never)).toEqual({ items: [], owned: [], loadout: emptyLoadout() });
+		).toEqual({ items: [{ id: 'hat_cap', price: 750 }], owned: ['hat_cap'], loadout: { ...emptyLoadout(), top: 'top_sunset' }, box: null });
+		expect(parseShop({ type: 'shop' } as never)).toEqual({ items: [], owned: [], loadout: emptyLoadout(), box: null });
 	});
 
 	it('lists what both sides know at the server price, every slot in a category', () => {
@@ -67,6 +72,34 @@ describe('shop view', () => {
 		expect(shopNotice({ type: 'shopResult', action: 'equip', item: 'hat_cap', ok: true })).toBeNull();
 		expect(shopNotice({ type: 'shopResult', action: 'buy', item: null, ok: false, error: 'No.' })).toEqual({ ok: false, text: 'No.' });
 		expect(shopNotice({ type: 'shopResult', action: 'buy', item: null, ok: false })?.ok).toBe(false);
+	});
+});
+
+describe('loot box', () => {
+	const box = { price: 800, odds: LOOTBOX.odds, items: lootItems().map((i) => i.id) };
+
+	it('drops a malformed offer and unknown items', () => {
+		const parse = (b: unknown) => parseShop({ type: 'shop', items: [], owned: [], loadout: emptyLoadout(), box: b } as never).box;
+		expect(parse(box)).toEqual(box);
+		expect(parse({ ...box, items: ['hat_trilby', 'hat_2030', 5], odds: { common: 80, mythic: 5, rare: 'x' } })).toEqual({ price: 800, items: ['hat_trilby'], odds: { common: 80 } });
+		for (const bad of [undefined, null, 5, {}, { ...box, price: 'x' }, { ...box, items: [] }, { ...box, odds: null }]) expect(parse(bad)).toBeNull();
+	});
+
+	it('contents: real chances, complete once everything is owned', () => {
+		const c = boxContents(box, ['hat_trilby']);
+		expect(c.groups.map((g) => [g.rarity, chanceLabel(g.chance)])).toEqual([['common', '100 %']]);
+		expect(c.items).toHaveLength(box.items.length);
+		expect(c.complete).toBe(false);
+		expect(boxContents(box, box.items).complete).toBe(true);
+		expect([chanceLabel(80 / 96), chanceLabel(1 / 96)]).toEqual(['83.3 %', '1.04 %']);
+	});
+
+	it('the reel has the won item at its place and only items of the box', () => {
+		const won = getCosmetic('shoes_chelsea')!;
+		const reel = boxReel(box, won, 48, 41);
+		expect(reel).toHaveLength(48);
+		expect(reel[41]).toBe(won);
+		expect(reel.every((i) => box.items.includes(i.id))).toBe(true);
 	});
 });
 

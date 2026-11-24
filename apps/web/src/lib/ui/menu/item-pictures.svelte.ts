@@ -8,6 +8,8 @@ const kept = new Map<string, string>();
 export class ItemPictures {
 	/** Item id to data URL. */
 	readonly urls: Record<string, string> = $state({});
+	/** Wanted whether on screen or not. */
+	private readonly wanted = new Set<string>();
 	private preview: CharacterPreviewHandle | null = null;
 	private readonly visible = new Map<Element, string>();
 	private readonly ids = new WeakMap<Element, string>();
@@ -43,6 +45,16 @@ export class ItemPictures {
 		};
 	}
 
+	/** Draw these soon, on screen or not (the loot box reel). */
+	want(ids: readonly string[]): void {
+		for (const id of ids) {
+			const url = kept.get(id);
+			if (url !== undefined) this.urls[id] = url;
+			else this.wanted.add(id);
+		}
+		this.queue();
+	}
+
 	setPreview(p: CharacterPreviewHandle | null): void {
 		this.preview = p;
 		this.queue();
@@ -52,6 +64,7 @@ export class ItemPictures {
 		this.preview = null;
 		this.observer?.disconnect();
 		this.visible.clear();
+		this.wanted.clear();
 	}
 
 	/** Ask for the visible pictures that are missing (replaces the last request), once per task. */
@@ -60,7 +73,7 @@ export class ItemPictures {
 		this.queued = true;
 		queueMicrotask(() => {
 			this.queued = false;
-			const missing = [...new Set(this.visible.values())].filter((id) => !(id in this.urls));
+			const missing = [...new Set([...this.visible.values(), ...this.wanted])].filter((id) => !(id in this.urls));
 			this.preview?.thumbnails(missing, (id, url) => {
 				this.urls[id] = url;
 				if (!getCosmetic(id)?.isDefault) kept.set(id, url);

@@ -399,6 +399,8 @@ export class Game implements CommandContext {
 			rtvVote: (yes) => this.rtvVote(yes),
 			minimizeBan: (minimized) => this.minimizeBan(minimized),
 			shopBuy: (item) => this.shopRequest({ type: 'shopBuy', item }),
+			boxOpen: () => this.shopRequest({ type: 'boxOpen' }),
+			boxSound: (name) => this.audio.box(name),
 			shopEquip: (slot, item) => this.shopRequest({ type: 'shopEquip', slot, item }),
 			createPreview: (canvas) => this.createPreview(canvas),
 			admin: (a) => this.adminAction(a)
@@ -940,7 +942,7 @@ export class Game implements CommandContext {
 	// -----------------------------------------------------------------------
 	// Shop (docs/ui.md#shop): the server decides; the menu shows its replies.
 
-	private shopRequest(msg: Extract<ClientMessage, { type: 'shopBuy' | 'shopEquip' }>): void {
+	private shopRequest(msg: Extract<ClientMessage, { type: 'shopBuy' | 'shopEquip' | 'boxOpen' }>): void {
 		const s = this.hud.shop;
 		if (!s || s.busy || this.mode !== 'online') return;
 		this.hud.shop = { ...s, busy: true, notice: null };
@@ -2336,13 +2338,21 @@ export class Game implements CommandContext {
 				if (typeof m.id === 'number' && m.id !== this.selfId) this.renderer?.players.setLoadout(m.id, sanitizeLoadout(m.loadout));
 				break;
 			case 'shop':
-				this.hud.shop = { busy: this.hud.shop?.busy ?? false, notice: this.hud.shop?.notice ?? null, ...parseShop(m) };
+				this.hud.shop = { busy: this.hud.shop?.busy ?? false, notice: this.hud.shop?.notice ?? null, opened: this.hud.shop?.opened ?? null, ...parseShop(m) };
 				this.dressGhost();
 				break;
 			case 'shopResult':
 				clearTimeout(this.shopTimer);
 				if (this.hud.shop) this.hud.shop = { ...this.hud.shop, busy: false, notice: shopNotice(m) };
 				break;
+			case 'boxResult': {
+				clearTimeout(this.shopTimer);
+				const s = this.hud.shop;
+				if (!s) break;
+				if (m.ok) this.hud.shop = { ...s, busy: false, notice: null, opened: { n: (s.opened?.n ?? 0) + 1, item: m.item, duplicate: m.duplicate === true, refund: Number(m.refund) || 0 } };
+				else this.hud.shop = { ...s, busy: false, notice: { ok: false, text: m.error } };
+				break;
+			}
 			case 'multiplier':
 				this.hud.multiplier = { mult: m.mult, active: m.active, need: m.need };
 				break;

@@ -5,7 +5,7 @@
  *
  * Amounts are tenths of a point. Guests earn nothing.
  */
-import type { AbuseSignal, AwardDef, AwardReason, CosmeticItem, GameModeId, MapDef, NetState, PointLogEntry, ServerMessage } from '@surf/shared';
+import type { AbuseSignal, AwardDef, AwardReason, CosmeticItem, GameModeId, LootRarity, MapDef, NetState, PointLogEntry, ServerMessage } from '@surf/shared';
 import {
 	ABUSE,
 	applyMultiplier,
@@ -14,6 +14,7 @@ import {
 	BACKSTOP,
 	cosmeticPrice,
 	formatTenths,
+	LOOTBOX,
 	MIN_ACTIVE,
 	modeMultiplier,
 	MULT_ONE,
@@ -429,6 +430,19 @@ export class Economy {
 		const r = this.host.db.buyItem({ accountId, at: this.host.now(), reason, label: awardLabel(reason), amount: price }, item.id);
 		if (r === 'ok') this.sendCoinsTo(accountId);
 		return r;
+	}
+
+	/** Buy and open a loot box holding `item` (docs/economy.md#loot-box), in one transaction. */
+	openBox(accountId: number, item: CosmeticItem): { duplicate: boolean; refund: number } | 'poor' {
+		const refund = LOOTBOX.refund[item.rarity as LootRarity] ?? 0;
+		const r = this.host.db.openBox(
+			{ accountId, at: this.host.now(), reason: `shop:${LOOTBOX.id}`, label: `Shop: ${LOOTBOX.name}`, amount: LOOTBOX.price },
+			item.id,
+			{ amount: refund, label: `Duplicate: ${item.name}` }
+		);
+		if (r === 'poor') return r;
+		this.sendCoinsTo(accountId);
+		return { duplicate: r === 'duplicate', refund: r === 'duplicate' ? refund : 0 };
 	}
 
 	/**

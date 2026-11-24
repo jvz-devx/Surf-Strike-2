@@ -570,6 +570,32 @@ export class Db {
 			.immediate();
 	}
 
+	/**
+	 * Open a loot box: take the price, log it, then grant the item, or give
+	 * `refund` tenths back when the account already owns it. All or nothing.
+	 */
+	openBox(
+		e: Pick<PointEntry, 'accountId' | 'at' | 'reason' | 'label' | 'amount'>,
+		itemId: string,
+		refund: { amount: number; label: string }
+	): 'new' | 'duplicate' | 'poor' {
+		return this.db
+			.transaction((): 'new' | 'duplicate' | 'poor' => {
+				const duplicate = this.ownedItems(e.accountId).includes(itemId);
+				if (!this.spendPoints(e)) return 'poor';
+				if (!duplicate) {
+					this.st.grantItem.run(e.accountId, itemId, e.at, e.amount);
+					return 'new';
+				}
+				if (refund.amount > 0) {
+					this.st.setBalance.run({ id: e.accountId, balance: this.accountStats(e.accountId).pointsBalance + refund.amount });
+					this.st.logPoints.run({ ...e, label: refund.label, mode: 'shop', map: '', base: 0, counted: 0, mult: 10, amount: refund.amount });
+				}
+				return 'duplicate';
+			})
+			.immediate();
+	}
+
 	/** Item ids, oldest first (also items this version does not know). */
 	ownedItems(accountId: number): string[] {
 		return this.st.ownedItems.all(accountId) as string[];

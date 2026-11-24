@@ -33,19 +33,18 @@ export const RARITIES = Object.freeze({
 }) satisfies Readonly<Record<string, Rarity>>;
 export type RarityId = keyof typeof RARITIES;
 
-/**
- * Loot box (docs/economy.md#loot-box). Shown in the shop but not usable yet.
- * `odds` are the owner's percentages; they add up to 96, so a future roll must
- * treat them as weights or the missing 4 must be assigned first.
- */
+/** Loot box (docs/economy.md#loot-box). `odds` are weights: they need not add up to 100 (lootChances). */
 export const LOOTBOX = Object.freeze({
 	id: 'lootbox',
 	name: 'Loot box',
 	/** Tenths of a coin. */
 	price: 800,
-	available: false,
-	odds: Object.freeze({ common: 80, uncommon: 10, rare: 5, epic: 1 }) satisfies Partial<Record<RarityId, number>>
+	odds: Object.freeze({ common: 80, uncommon: 10, rare: 5, epic: 1 }) satisfies Partial<Record<RarityId, number>>,
+	/** Tenths of a coin given back for an item the player already owns. */
+	refund: Object.freeze({ common: 200, uncommon: 400, rare: 600, epic: 800 }) satisfies Partial<Record<RarityId, number>>
 });
+export type LootRarity = keyof typeof LOOTBOX.odds;
+export type LootOdds = Readonly<Partial<Record<RarityId, number>>>;
 
 export interface CosmeticItem {
 	/** Unique and stable: it is what gets stored and sent. */
@@ -85,6 +84,29 @@ export function cosmeticPrice(item: CosmeticItem): number | null {
 /** Everything the shop sells, in display order. */
 export function shopItems(): CosmeticItem[] {
 	return listCosmetics().filter((i) => cosmeticPrice(i) !== null);
+}
+
+/** Everything a loot box can hold, in display order. */
+export function lootItems(): CosmeticItem[] {
+	return listCosmetics().filter((i) => !i.isDefault && i.rarity !== undefined && i.rarity in LOOTBOX.odds);
+}
+
+/** Chance (0..1) of each rarity that has items, most common first. Rarities without items drop out, the rest share their weight. */
+export function lootChances(items: readonly CosmeticItem[] = lootItems(), odds: LootOdds = LOOTBOX.odds): { rarity: RarityId; chance: number; items: CosmeticItem[] }[] {
+	const groups = (Object.keys(RARITIES) as RarityId[])
+		.map((rarity) => ({ rarity, chance: odds[rarity] ?? 0, items: items.filter((i) => i.rarity === rarity) }))
+		.filter((g) => g.chance > 0 && g.items.length > 0);
+	const total = groups.reduce((n, g) => n + g.chance, 0);
+	return groups.map((g) => ({ ...g, chance: g.chance / total }));
+}
+
+/** Pick an item: the rarity by its chance, then any of its items equally. `rand` gives [0, 1). Null when there is nothing to win. */
+export function rollLoot(rand: () => number, items: readonly CosmeticItem[] = lootItems(), odds: LootOdds = LOOTBOX.odds): CosmeticItem | null {
+	const groups = lootChances(items, odds);
+	if (groups.length === 0) return null;
+	let r = rand();
+	const g = groups.find((x) => (r -= x.chance) < 0) ?? groups[groups.length - 1]!;
+	return g.items[Math.min(g.items.length - 1, Math.floor(rand() * g.items.length))]!;
 }
 
 /** Nothing is equipped. */

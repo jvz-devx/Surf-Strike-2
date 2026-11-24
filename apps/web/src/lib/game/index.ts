@@ -38,6 +38,8 @@ const inertApi: GameApi = {
 	changeMap: noop,
 	minimizeBan: noop,
 	shopBuy: noop,
+	boxOpen: noop,
+	boxSound: noop,
 	shopEquip: noop,
 	createPreview: () => null,
 	rtvVote: noop,

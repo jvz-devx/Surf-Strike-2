@@ -539,11 +539,13 @@ export class Lobby {
 				// Zombies/infected weapons and hide-and-seek knife (docs/modes.md); the mode validates every field.
 				if (!c.spectating) this.mode.message?.(c, msg);
 				return;
+			case 'boxOpen':
 			case 'shopBuy':
 			case 'shopEquip': {
 				const k = c.rate.shop.hit(t);
 				if (k > RATE.shop.kick) return this.kick(c, 'shop flood');
 				if (c.closed) return;
+				if (msg.type === 'boxOpen') return this.shop.openBox(c, k > RATE.shop.limit);
 				return this.shop.handle(c, msg, k > RATE.shop.limit);
 			}
 			case 'admin':

@@ -70,6 +70,16 @@
 			"fadeIn": 0.001,
 			"fadeOut": 0.03
 		},
+		"tick": {
+			"src": "347544",
+			"takes": [
+				{ "start": 0.963, "dur": 0.05 },
+				{ "start": 1.093, "dur": 0.05 },
+				{ "start": 1.96, "dur": 0.05 }
+			],
+			"fadeIn": 0.001,
+			"fadeOut": 0.025
+		},
 		"swing": {
 			"src": "427979",
 			"takes": [

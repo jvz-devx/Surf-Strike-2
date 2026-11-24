@@ -3,11 +3,15 @@
  * prices and the stock are in `packages/shared/src/cosmetics.ts`, the coins in
  * `economy.ts`.
  */
+import { randomInt } from 'node:crypto';
 import {
 	COSMETIC_SLOTS,
 	cosmeticPrice,
 	emptyLoadout,
 	getCosmetic,
+	LOOTBOX,
+	lootItems,
+	rollLoot,
 	sanitizeLoadout,
 	shopItems,
 	type ClientMessage,
@@ -35,6 +39,9 @@ export interface ShopHost<P extends ShopPlayer> {
 
 export type ShopRequest = Extract<ClientMessage, { type: 'shopBuy' | 'shopEquip' }>;
 
+/** Unpredictable, uniform in [0, 1). */
+const secureRandom = () => randomInt(2 ** 40) / 2 ** 40;
+
 const ERRORS = {
 	guest: 'Log in to buy and wear items.',
 	busy: 'Too fast. Try again in a moment.',
@@ -42,6 +49,7 @@ const ERRORS = {
 	owned: 'You already own this item.',
 	poor: 'Not enough coins.',
 	notOwned: 'You do not own this item.',
+	complete: 'You already own everything in this box.',
 	bad: 'Invalid request.'
 };
 
@@ -58,7 +66,13 @@ export class Shop<P extends ShopPlayer> {
 	send(p: P): void {
 		const items: ShopOffer[] = shopItems().map((i) => ({ id: i.id, price: cosmeticPrice(i)! }));
 		const owned = p.accountId === null ? [] : this.host.db.ownedItems(p.accountId).filter((id) => getCosmetic(id));
-		this.host.send(p, { type: 'shop', items, owned, loadout: p.loadout });
+		this.host.send(p, {
+			type: 'shop',
+			items,
+			owned,
+			loadout: p.loadout,
+			box: { price: LOOTBOX.price, odds: LOOTBOX.odds, items: lootItems().map((i) => i.id) }
+		});
 	}
 
 	/** The player logged in or out. */
@@ -87,6 +101,22 @@ export class Shop<P extends ShopPlayer> {
 			this.send(p);
 		}
 		this.host.send(p, { type: 'shopResult', action: buy ? 'buy' : 'equip', item: id, ok: error === null, ...(error === null ? {} : { error }) });
+	}
+
+	/** Buy and open a loot box. The item is rolled here, never by the client. `busy`: over the rate limit, refuse. */
+	openBox(p: P, busy = false): void {
+		const fail = (error: string) => this.host.send(p, { type: 'boxResult', ok: false, error });
+		if (busy) return fail(ERRORS.busy);
+		if (p.accountId === null) return fail(ERRORS.guest);
+		const owned = new Set(this.host.db.ownedItems(p.accountId));
+		if (lootItems().every((i) => owned.has(i.id))) return fail(ERRORS.complete);
+		const item = rollLoot(secureRandom);
+		if (!item) return fail(ERRORS.unknown);
+		const r = this.host.economy().openBox(p.accountId, item);
+		if (r === 'poor') return fail(ERRORS.poor);
+		this.host.log(`shop: account ${p.accountId} opened a loot box: ${item.id}${r.duplicate ? ' (duplicate)' : ''}`);
+		this.send(p);
+		this.host.send(p, { type: 'boxResult', ok: true, item: item.id, ...r });
 	}
 
 	private buy(accountId: number, id: string | null): string | null {

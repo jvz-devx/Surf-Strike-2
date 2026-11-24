@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COSMETIC_SLOTS, cosmeticPrice, defaultItem, emptyLoadout, getCosmetic, isEmptyLoadout, listCosmetics, LOOTBOX, RARITIES, registerCosmetic, sanitizeLoadout, shopItems, type CosmeticSlot } from './cosmetics.ts';
+import { COSMETIC_SLOTS, cosmeticPrice, defaultItem, emptyLoadout, getCosmetic, isEmptyLoadout, listCosmetics, LOOTBOX, lootChances, lootItems, RARITIES, registerCosmetic, rollLoot, sanitizeLoadout, shopItems, type CosmeticSlot } from './cosmetics.ts';
 import { awardLabel, pts } from './economy.ts';
 
 describe('cosmetics', () => {
@@ -20,11 +20,48 @@ describe('cosmetics', () => {
 		for (const r of Object.values(RARITIES)) expect((r.price === null || (Number.isInteger(r.price) && r.price > 0)) && /^#[0-9a-f]{6}$/.test(r.color) && r.name !== '').toBe(true);
 	});
 
-	it('loot rarities are not sold; the loot box costs 80 coins and is not usable yet', () => {
+	it('loot rarities are not sold; the loot box costs 80 coins', () => {
 		expect(Object.keys(RARITIES)).toEqual(['basic', 'common', 'uncommon', 'rare', 'epic']);
 		expect(cosmeticPrice(getCosmetic('hat_frycook')!)).toBeNull();
-		expect(LOOTBOX).toMatchObject({ price: pts(80), available: false, odds: { common: 80, uncommon: 10, rare: 5, epic: 1 } });
+		expect(LOOTBOX).toMatchObject({ price: pts(80), odds: { common: 80, uncommon: 10, rare: 5, epic: 1 } });
 		for (const r of Object.keys(LOOTBOX.odds)) expect(RARITIES[r as keyof typeof RARITIES].price).toBeNull();
+	});
+
+	it('a loot box holds every common or better item, never basic or default ones', () => {
+		const items = lootItems();
+		expect(items).toHaveLength(13);
+		expect(items.every((i) => i.rarity === 'common' && !i.isDefault)).toBe(true);
+		for (const r of Object.keys(LOOTBOX.odds) as (keyof typeof LOOTBOX.odds)[]) expect(LOOTBOX.refund[r]).toBeLessThanOrEqual(LOOTBOX.price);
+		// Only commons exist: they are certain.
+		expect(lootChances().map((g) => [g.rarity, g.chance])).toEqual([['common', 1]]);
+	});
+
+	it('rolls by weight, whatever the odds add up to', () => {
+		const items = (['common', 'uncommon', 'rare', 'epic', 'basic'] as const).flatMap((rarity) =>
+			[1, 2].map((n) => ({ id: `${rarity}${n}`, slot: 'hat' as const, name: 'x', rarity }))
+		);
+		const chances = lootChances(items);
+		expect(chances.map((g) => g.rarity)).toEqual(['common', 'uncommon', 'rare', 'epic']);
+		expect(chances.reduce((n, g) => n + g.chance, 0)).toBeCloseTo(1);
+		expect(chances[0]!.chance).toBeCloseTo(80 / 96);
+		const seq = (...v: number[]) => () => v.shift()!;
+		expect(rollLoot(seq(0, 0), items)?.id).toBe('common1');
+		expect(rollLoot(seq(0.83, 0.99), items)?.id).toBe('common2');
+		expect(rollLoot(seq(0.84, 0), items)?.id).toBe('uncommon1');
+		expect(rollLoot(seq(0.95, 0.5), items)?.id).toBe('rare2');
+		expect(rollLoot(seq(0.9999999999, 0.9999999999), items)?.id).toBe('epic2');
+		// Measured with a fixed generator.
+		let s = 1;
+		const rand = () => (s = (s * 48271) % 2147483647) / 2147483647;
+		const n = 50_000;
+		const hits: Record<string, number> = {};
+		for (let i = 0; i < n; i++) {
+			const r = rollLoot(rand, items)!.rarity!;
+			hits[r] = (hits[r] ?? 0) + 1;
+		}
+		for (const g of chances) expect(hits[g.rarity]! / n).toBeCloseTo(g.chance, 1.9);
+		expect(hits.basic).toBeUndefined();
+		expect(rollLoot(rand, [])).toBeNull();
 	});
 
 	it('keeps the stored ids', () => {

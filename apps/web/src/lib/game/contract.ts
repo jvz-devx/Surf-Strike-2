@@ -24,6 +24,7 @@ import type {
 	PointLogEntry,
 	RecordEntry,
 	ScoreRow,
+	BoxOffer,
 	ShopOffer,
 	TagPhase,
 	WeaponId,
@@ -321,6 +322,10 @@ export interface ShopView {
 	owned: readonly string[];
 	/** Worn items (sanitized). */
 	loadout: Loadout;
+	/** The loot box on sale; null: older server. */
+	box: BoxOffer | null;
+	/** Last opened box; `n` counts up, so the same item twice is still a new result. */
+	opened: { n: number; item: string; duplicate: boolean; refund: number } | null;
 	/** A request waits for the server's reply. */
 	busy: boolean;
 	/** Last result, shown in the shop and the inventory; `bought`: the item just bought. */
@@ -482,6 +487,10 @@ export interface GameApi {
 	minimizeBan(minimized: boolean): void;
 	/** Shop (docs/ui.md#shop): buy an item; the reply lands in `shop`. */
 	shopBuy(item: string): void;
+	/** Buy and open a loot box; the result lands in `shop.opened`, or an error in `shop.notice`. */
+	boxOpen(): void;
+	/** Loot box sounds. */
+	boxSound(name: 'open' | 'tick' | 'reveal' | 'rare'): void;
 	/** Wear an owned item, or `null` for the slot's default. */
 	shopEquip(slot: CosmeticSlot, item: string | null): void;
 	/** Turntable of the local player's character; null without WebGL. Dispose it. */

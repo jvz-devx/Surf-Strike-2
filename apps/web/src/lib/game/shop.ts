@@ -6,8 +6,11 @@ import {
 	formatTenths,
 	getCosmetic,
 	listCosmetics,
+	lootChances,
 	RARITIES,
+	rollLoot,
 	sanitizeLoadout,
+	type BoxOffer,
 	type CosmeticItem,
 	type CosmeticSlot,
 	type RarityId,
@@ -16,14 +19,49 @@ import {
 import type { ShopView } from './contract.js';
 
 /** A `shop` message of any server version: unknown items and malformed entries are dropped. */
-export function parseShop(m: Extract<ServerMessage, { type: 'shop' }>): Pick<ShopView, 'items' | 'owned' | 'loadout'> {
+export function parseShop(m: Extract<ServerMessage, { type: 'shop' }>): Pick<ShopView, 'items' | 'owned' | 'loadout' | 'box'> {
 	const items = Array.isArray(m.items) ? m.items : [];
 	const owned = Array.isArray(m.owned) ? m.owned : [];
 	return {
 		items: items.filter((i) => i && typeof i.id === 'string' && Number.isFinite(i.price) && getCosmetic(i.id)),
 		owned: [...new Set(owned)].filter((id) => typeof id === 'string' && getCosmetic(id)),
-		loadout: sanitizeLoadout(m.loadout)
+		loadout: sanitizeLoadout(m.loadout),
+		box: parseBox(m.box)
 	};
+}
+
+function parseBox(b: unknown): BoxOffer | null {
+	const { price, items, odds } = (b ?? {}) as Partial<BoxOffer>;
+	if (typeof price !== 'number' || !Number.isFinite(price) || !Array.isArray(items) || typeof odds !== 'object' || odds === null) return null;
+	const known = items.filter((id) => typeof id === 'string' && getCosmetic(id));
+	const weights = Object.fromEntries(Object.entries(odds).filter(([r, w]) => Object.hasOwn(RARITIES, r) && typeof w === 'number' && w > 0));
+	return known.length > 0 ? { price, items: known, odds: weights } : null;
+}
+
+export interface BoxContents {
+	/** Rarities that can drop, rarest last, with their real chance. */
+	groups: ReturnType<typeof lootChances>;
+	items: CosmeticItem[];
+	/** Everything in it is owned. */
+	complete: boolean;
+}
+
+export function boxContents(box: BoxOffer, owned: readonly string[]): BoxContents {
+	const items = box.items.map((id) => getCosmetic(id)).filter((i) => i !== undefined);
+	const groups = lootChances(items, box.odds);
+	return { groups, items: groups.flatMap((g) => g.items), complete: items.every((i) => owned.includes(i.id)) };
+}
+
+/** Cards that pass by on the reel; the won item is at `win`. Every card is drawn with the real odds. */
+export function boxReel(box: BoxOffer, won: CosmeticItem, length: number, win: number, rand: () => number = Math.random): CosmeticItem[] {
+	const items = box.items.map((id) => getCosmetic(id)).filter((i) => i !== undefined);
+	return Array.from({ length }, (_, i) => (i === win ? won : (rollLoot(rand, items, box.odds) ?? won)));
+}
+
+/** `83.3 %`; more digits for small chances. */
+export function chanceLabel(chance: number): string {
+	const p = chance * 100;
+	return `${p >= 10 ? Math.round(p * 10) / 10 : Math.round(p * 100) / 100} %`;
 }
 
 export function shopNotice(m: Extract<ServerMessage, { type: 'shopResult' }>): ShopView['notice'] {

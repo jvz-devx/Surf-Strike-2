@@ -271,6 +271,14 @@ export class GameAudio {
 		this.play(name, eventDb(name) + falloff, true);
 	}
 
+	/** Loot box (docs/ui.md#lootbox): lid, one reel tick, and the reveal. */
+	box(name: 'open' | 'tick' | 'reveal' | 'rare'): void {
+		if (name === 'open') this.play('swing', eventDb('swing'), true);
+		else if (name === 'tick') this.play('tick', eventDb('tick'), true);
+		else if (name === 'reveal') this.zoneBeep();
+		else this.recordChime();
+	}
+
 	/** The one click voice (chat messages). */
 	chatTick(): void {
 		this.play('click', eventDb('click'), false);

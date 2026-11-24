@@ -360,6 +360,7 @@
 		border-radius: 2px;
 	}
 	.content {
+		position: relative;
 		flex: 0 1 680px;
 		min-width: 0;
 		height: min(620px, calc(100vh - 64px));

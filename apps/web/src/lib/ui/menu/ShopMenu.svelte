@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { emptyLoadout, formatTenths, formatWhole, LOOTBOX, RARITIES, type CosmeticSlot, type Loadout, type RarityId } from '@surf/shared';
+	import { emptyLoadout, formatTenths, formatWhole, LOOTBOX, RARITIES, type CosmeticSlot, type Loadout } from '@surf/shared';
 	import type { GameApi, ShopView } from '#lib/game/contract.js';
-	import { itemState, missingCoins, SHOP_CATEGORIES, shopEntries, type ItemState, type ShopEntry } from '#lib/game/shop.js';
+	import { boxContents, itemState, missingCoins, SHOP_CATEGORIES, shopEntries, type ItemState, type ShopEntry } from '#lib/game/shop.js';
 	import ItemBrowser from '#lib/ui/menu/ItemBrowser.svelte';
 	import ItemCard from '#lib/ui/menu/ItemCard.svelte';
 	import { ItemPictures } from '#lib/ui/menu/item-pictures.svelte.js';
+	import LootboxMenu from '#lib/ui/menu/LootboxMenu.svelte';
 	import Tabs from '#lib/ui/menu/Tabs.svelte';
 
 	/** Shop submenu (docs/ui.md#shop): what can be bought, with try-on and a two-step purchase. Wearing is in the inventory. */
@@ -34,6 +35,7 @@
 	/** Tried on, not worn: slot to item id. */
 	let tried: Partial<Loadout> = $state({});
 	let confirming = $state(false);
+	let boxShown = $state(false);
 	let confirmButton: HTMLButtonElement | undefined = $state();
 	let boughtButton: HTMLButtonElement | undefined = $state();
 
@@ -94,7 +96,8 @@
 		api.shopBuy(e.item.id);
 	}
 
-	const LOOT_RARITIES = Object.keys(LOOTBOX.odds) as RarityId[];
+	// Only rarities that can really drop.
+	const LOOT_RARITIES = $derived(shop?.box ? boxContents(shop.box, shop.owned).groups.map((g) => g.rarity) : []);
 </script>
 
 <header class="head">
@@ -155,21 +158,15 @@
 		{/snippet}
 
 		{#snippet list()}
-			{#if category === ALL}
+			{#if category === ALL && shop.box}
 				<section>
 					<h3 class="ss-label">Loot boxes</h3>
-					<button
-						type="button"
-						class="lootbox"
-						disabled
-						aria-label="{LOOTBOX.name}, {formatTenths(LOOTBOX.price)} coins, coming soon"
-						{@attach pictures.watch(LOOTBOX.id)}
-					>
+					<button type="button" class="lootbox" onclick={() => (boxShown = true)} {@attach pictures.watch(LOOTBOX.id)}>
 						<span class="thumb">{#if pictures.urls[LOOTBOX.id]}<img src={pictures.urls[LOOTBOX.id]} alt="" />{/if}</span>
 						<span>{LOOTBOX.name}</span>
 						<span class="meta">
-							<span class="price ss-num">{formatTenths(LOOTBOX.price)}<span class="unit">coins</span></span>
-							<span class="soon">Coming soon</span>
+							<span class="price ss-num" class:poor={loggedIn && balance < shop.box.price}>{formatTenths(shop.box.price)}<span class="unit">coins</span></span>
+							<span class="open">Open</span>
 						</span>
 						<span class="odds">
 							{#each LOOT_RARITIES as r (r)}<span style:color={RARITIES[r].color}>{RARITIES[r].name}</span>{/each}
@@ -208,6 +205,9 @@
 			{/each}
 		{/snippet}
 	</ItemBrowser>
+	{#if boxShown && shop.box}
+		<LootboxMenu {api} {shop} box={shop.box} {balance} {loggedIn} {pictures} {oninventory} onclose={() => (boxShown = false)} />
+	{/if}
 {:else if !online}
 	<p class="hint">Offline: the shop needs the server.</p>
 {:else}
@@ -249,11 +249,16 @@
 		color: var(--text);
 		background: rgba(255, 255, 255, 0.03);
 		border: 1px solid var(--panel-border);
-		border-left: 3px solid var(--panel-border-strong);
+		border-left: 3px solid var(--accent);
 		border-radius: var(--radius);
-		filter: grayscale(0.85);
-		opacity: 0.55;
-		cursor: not-allowed;
+		cursor: pointer;
+	}
+	.lootbox:hover,
+	.lootbox:focus-visible {
+		background: rgba(255, 255, 255, 0.07);
+	}
+	.lootbox:focus-visible {
+		outline-offset: -2px;
 	}
 	.lootbox .thumb {
 		grid-row: 1 / 4;
@@ -273,7 +278,8 @@
 		gap: 6px;
 		font-size: 13px;
 	}
-	.soon {
+	.open {
+		color: var(--accent);
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 	}
