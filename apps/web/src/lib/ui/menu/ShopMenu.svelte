@@ -1,16 +1,21 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { emptyLoadout, formatTenths, formatWhole, LOOTBOX, RARITIES, type CosmeticSlot, type Loadout, type RarityId } from '@surf/shared';
-	import type { CharacterPreviewHandle, GameApi, ShopView } from '#lib/game/contract.js';
+	import type { GameApi, ShopView } from '#lib/game/contract.js';
 	import { itemState, missingCoins, SHOP_CATEGORIES, shopEntries, type ItemState, type ShopEntry } from '#lib/game/shop.js';
+	import ItemBrowser from '#lib/ui/menu/ItemBrowser.svelte';
+	import ItemCard from '#lib/ui/menu/ItemCard.svelte';
+	import { ItemPictures } from '#lib/ui/menu/item-pictures.svelte.js';
+	import Tabs from '#lib/ui/menu/Tabs.svelte';
 
-	/** Shop submenu (docs/ui.md#shop): items by category, live try-on, two-step purchase. */
+	/** Shop submenu (docs/ui.md#shop): what can be bought, with try-on and a two-step purchase. Wearing is in the inventory. */
 	let {
 		api,
 		shop,
 		balance,
 		loggedIn,
-		online
+		online,
+		oninventory
 	}: {
 		api: GameApi;
 		shop: ShopView | null;
@@ -18,45 +23,41 @@
 		balance: number;
 		loggedIn: boolean;
 		online: boolean;
+		/** Open the inventory on this item. */
+		oninventory: (item: string) => void;
 	} = $props();
 
-	let canvas: HTMLCanvasElement | undefined = $state();
-	let preview: CharacterPreviewHandle | null = $state.raw(null);
-	let noPreview = $state(false);
-	let thumbs: Record<string, string> = $state({});
+	const ALL = 'all';
+	const pictures = new ItemPictures();
+	let category: CosmeticSlot | typeof ALL = $state(ALL);
 	let selectedId: string | null = $state(null);
-	/** Tried on, not worn: slot to item id (null: taken off). */
+	/** Tried on, not worn: slot to item id. */
 	let tried: Partial<Loadout> = $state({});
 	let confirming = $state(false);
 	let confirmButton: HTMLButtonElement | undefined = $state();
+	let boughtButton: HTMLButtonElement | undefined = $state();
 
 	const entries = $derived(shop ? shopEntries(shop) : []);
 	const groups = $derived(
 		SHOP_CATEGORIES.map((c) => ({ ...c, entries: entries.filter((e) => e.item.slot === c.slot) })).filter((g) => g.entries.length > 0)
 	);
+	const tabs = $derived([
+		{ id: ALL as string, label: 'All', count: entries.length },
+		...groups.map((g) => ({ id: g.slot as string, label: g.label, count: g.entries.length }))
+	]);
 	const selected = $derived(entries.find((e) => e.item.id === selectedId) ?? null);
 	const look = $derived({ ...emptyLoadout(), ...shop?.loadout, ...tried });
 	const trying = $derived(shop !== null && Object.entries(tried).some(([slot, id]) => shop.loadout[slot as CosmeticSlot] !== id));
 	const stateOf = (e: ShopEntry): ItemState => (shop ? itemState(e.item, e.price, shop, balance, loggedIn) : 'guest');
 	const selectedState = $derived(selected ? stateOf(selected) : null);
-	const rarity = (e: ShopEntry) => RARITIES[e.item.rarity ?? 'basic'];
+	// A result of the other menu is not shown again here.
+	const oldNotice = untrack(() => shop?.notice ?? null);
+	const notice = $derived(shop?.notice && shop.notice !== oldNotice ? shop.notice : null);
+	const bought = $derived(notice?.bought !== undefined && notice.bought === selectedId);
 
-	// The preview lives as long as its canvas.
+	// Keyboard: the buy button is gone after a purchase, and the focus with it.
 	$effect(() => {
-		if (!canvas) return;
-		const p = api.createPreview(canvas);
-		preview = p;
-		noPreview = p === null;
-		// The list does not change while the shop is open.
-		const ids = untrack(() => [LOOTBOX.id, ...entries.map((e) => e.item.id)]);
-		p?.thumbnails(ids, (id, url) => (thumbs[id] = url));
-		return () => {
-			preview = null;
-			p?.dispose();
-		};
-	});
-	$effect(() => {
-		preview?.setLoadout(look);
+		if (bought && document.activeElement === document.body) boughtButton?.focus();
 	});
 
 	function select(e: ShopEntry) {
@@ -77,10 +78,10 @@
 		tried = {};
 	}
 
-	function equip(e: ShopEntry, on: boolean) {
+	function wear(e: ShopEntry) {
 		const { [e.item.slot]: _, ...rest } = tried;
 		tried = rest;
-		api.shopEquip(e.item.slot, on ? e.item.id : null);
+		api.shopEquip(e.item.slot, e.item.id);
 	}
 
 	function askBuy() {
@@ -94,7 +95,6 @@
 	}
 
 	const LOOT_RARITIES = Object.keys(LOOTBOX.odds) as RarityId[];
-	const STATE_LABEL: Record<ItemState, string> = { equipped: 'Equipped', owned: 'Owned', buy: '', poor: '', guest: '' };
 </script>
 
 <header class="head">
@@ -105,54 +105,68 @@
 </header>
 
 {#if shop && entries.length > 0}
-	<div class="wrap">
-		<div class="body">
-			<section class="side" aria-label="Preview">
-				<div class="stage">
-					<canvas bind:this={canvas} aria-label="Your character wearing the selected items; drag to turn"></canvas>
-					{#if noPreview}<p class="hint center">No 3D preview in this browser.</p>{/if}
-					{#if trying}<button type="button" class="reset" onclick={reset}>Reset look</button>{/if}
-				</div>
-				<div class="detail" aria-live="polite">
-					{#if selected && selectedState}
-						<div class="title">
-							<strong>{selected.item.name}</strong>
-							<span class="rarity" style:color={rarity(selected).color}>{rarity(selected).name}</span>
-						</div>
-						{#if selectedState === 'equipped'}
-							<button type="button" class="ss-button plain" disabled={shop.busy} onclick={() => equip(selected, false)}>Take off</button>
-						{:else if selectedState === 'owned'}
-							<button type="button" class="ss-button" disabled={shop.busy} onclick={() => equip(selected, true)}>Equip</button>
-						{:else if selectedState === 'guest'}
-							<p class="hint">Guests can look around. Log in to buy items.</p>
-							<button type="button" class="ss-button" onclick={() => api.openAuth()}>Log in / Register</button>
-						{:else if selectedState === 'poor'}
-							<button type="button" class="ss-button" disabled>Buy · {formatTenths(selected.price)} coins</button>
-							<p class="hint bad">You need {missingCoins(selected.price, balance)} more coins.</p>
-						{:else if confirming}
-							<p class="hint">Buy for <strong>{formatTenths(selected.price)} coins</strong>? There are no refunds.</p>
-							<div class="row">
-								<button type="button" class="ss-button" disabled={shop.busy} bind:this={confirmButton} onclick={() => buy(selected)}>Confirm</button>
-								<button type="button" class="ss-button plain" onclick={() => (confirming = false)}>Cancel</button>
-							</div>
-						{:else}
-							<button type="button" class="ss-button" disabled={shop.busy} onclick={askBuy}>
-								{shop.busy ? 'Please wait…' : `Buy · ${formatTenths(selected.price)} coins`}
-							</button>
-						{/if}
-					{:else}
-						<p class="hint">Pick an item to try it on.</p>
-					{/if}
-					{#if shop.notice}<p class="hint" class:bad={!shop.notice.ok} class:good={shop.notice.ok} role="status">{shop.notice.text}</p>{/if}
-				</div>
-			</section>
+	<ItemBrowser {api} {pictures} {look} onreset={trying ? reset : null} panelId="ss-shop-panel" labelledby="ss-shop-tab-{category}">
+		{#snippet toolbar()}
+			<Tabs {tabs} selected={category} onselect={(id) => (category = id as typeof category)} label="Shop categories" idPrefix="ss-shop" />
+		{/snippet}
 
-			<div class="list">
+		{#snippet detail()}
+			<div class="item-detail" aria-live="polite">
+				{#if selected && selectedState}
+					{@const r = RARITIES[selected.item.rarity ?? 'basic']}
+					<div class="item-title">
+						<strong>{selected.item.name}</strong>
+						<span style:color={r.color}>{r.name}</span>
+					</div>
+					{#if selectedState === 'owned'}
+						{#if bought && notice}
+							<p class="hint good" role="status">{notice.text}</p>
+						{:else}
+							<p class="hint">You own this.{shop.loadout[selected.item.slot] === selected.item.id ? ' You wear it now.' : ''}</p>
+						{/if}
+						<div class="item-row">
+							{#if bought}
+								<button type="button" class="ss-button" disabled={shop.busy} bind:this={boughtButton} onclick={() => wear(selected)}>Wear it</button>
+							{/if}
+							<button type="button" class="ss-button plain" onclick={() => oninventory(selected.item.id)}>Go to inventory</button>
+						</div>
+					{:else if selectedState === 'guest'}
+						<p class="hint">Guests can look around. Log in to buy items.</p>
+						<button type="button" class="ss-button" onclick={() => api.openAuth()}>Log in / Register</button>
+					{:else if selectedState === 'poor'}
+						<button type="button" class="ss-button" disabled>Buy · {formatTenths(selected.price)} coins</button>
+						<p class="hint bad">You are {missingCoins(selected.price, balance)} coins short.</p>
+					{:else if confirming}
+						<p class="hint">Buy for <strong>{formatTenths(selected.price)} coins</strong>? There are no refunds.</p>
+						<div class="item-row">
+							<button type="button" class="ss-button" disabled={shop.busy} bind:this={confirmButton} onclick={() => buy(selected)}>Confirm</button>
+							<button type="button" class="ss-button plain" onclick={() => (confirming = false)}>Cancel</button>
+						</div>
+					{:else}
+						<button type="button" class="ss-button" disabled={shop.busy} onclick={askBuy}>
+							{shop.busy ? 'Please wait…' : `Buy · ${formatTenths(selected.price)} coins`}
+						</button>
+					{/if}
+				{:else}
+					<p class="hint">Pick an item to try it on.</p>
+				{/if}
+				{#if notice && !notice.ok}<p class="hint bad" role="status">{notice.text}</p>{/if}
+			</div>
+		{/snippet}
+
+		{#snippet list()}
+			{#if category === ALL}
 				<section>
 					<h3 class="ss-label">Loot boxes</h3>
-					<button type="button" class="card lootbox" disabled aria-label="{LOOTBOX.name}, {formatTenths(LOOTBOX.price)} coins, coming soon">
-						<span class="thumb">{#if thumbs[LOOTBOX.id]}<img src={thumbs[LOOTBOX.id]} alt="" />{/if}</span>
-						<span class="name">{LOOTBOX.name}</span>
+					<button
+						type="button"
+						class="lootbox"
+						disabled
+						aria-label="{LOOTBOX.name}, {formatTenths(LOOTBOX.price)} coins, coming soon"
+						{@attach pictures.watch(LOOTBOX.id)}
+					>
+						<span class="thumb">{#if pictures.urls[LOOTBOX.id]}<img src={pictures.urls[LOOTBOX.id]} alt="" />{/if}</span>
+						<span>{LOOTBOX.name}</span>
 						<span class="meta">
 							<span class="price ss-num">{formatTenths(LOOTBOX.price)}<span class="unit">coins</span></span>
 							<span class="soon">Coming soon</span>
@@ -162,40 +176,38 @@
 						</span>
 					</button>
 				</section>
-				{#each groups as g (g.slot)}
+			{/if}
+			{#each groups as g (g.slot)}
+				{#if category === ALL || category === g.slot}
 					<section>
-						<h3 class="ss-label">{g.label}</h3>
-						<div class="grid">
+						{#if category === ALL}<h3 class="ss-label">{g.label}</h3>{/if}
+						<div class="item-grid">
 							{#each g.entries as e (e.item.id)}
 								{@const st = stateOf(e)}
-								<button
-									type="button"
-									class="card"
-									class:selected={selectedId === e.item.id}
-									class:worn={st === 'equipped'}
-									class:poor={st === 'poor'}
-									style:--rarity={rarity(e).color}
-									aria-pressed={selectedId === e.item.id}
+								<ItemCard
+									{pictures}
+									drawn={e.item.id}
+									name={e.item.name}
+									rarity={e.item.rarity ?? 'basic'}
+									selected={selectedId === e.item.id}
+									dim={st === 'owned'}
 									onclick={() => select(e)}
 								>
-									<span class="thumb">{#if thumbs[e.item.id]}<img src={thumbs[e.item.id]} alt="" />{/if}</span>
-									<span class="name">{e.item.name}</span>
-									<span class="meta">
-										<span class="rarity" style:color={rarity(e).color}>{rarity(e).name}</span>
-										{#if STATE_LABEL[st]}
-											<span class="state" class:good={st === 'equipped'}>{STATE_LABEL[st]}</span>
-										{:else}
-											<span class="price ss-num" title={st === 'poor' ? 'Not enough coins' : undefined}>{formatTenths(e.price)}<span class="unit">coins</span></span>
-										{/if}
-									</span>
-								</button>
+									{#if st === 'owned'}
+										<span class="state">Owned</span>
+									{:else}
+										<span class="price ss-num" class:poor={st === 'poor'} title={st === 'poor' ? 'Not enough coins' : undefined}>
+											{formatTenths(e.price)}<span class="unit">coins</span>
+										</span>
+									{/if}
+								</ItemCard>
 							{/each}
 						</div>
 					</section>
-				{/each}
-			</div>
-		</div>
-	</div>
+				{/if}
+			{/each}
+		{/snippet}
+	</ItemBrowser>
 {:else if !online}
 	<p class="hint">Offline: the shop needs the server.</p>
 {:else}
@@ -220,99 +232,15 @@
 		line-height: 1;
 		color: var(--accent);
 	}
-	.wrap {
-		user-select: none;
-		flex: 1;
-		min-height: 0;
-		container-type: size;
-	}
-	.body {
-		height: 100%;
-		display: grid;
-		grid-template-columns: minmax(230px, 34%) 1fr;
-		gap: 16px;
-	}
-	.side {
-		min-height: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-	}
-	.stage {
-		position: relative;
-		flex: 1;
-		min-height: 120px;
-		background: radial-gradient(ellipse at 50% 85%, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02) 70%);
-		border: 1px solid var(--panel-border);
-		border-radius: var(--radius);
-		overflow: hidden;
-	}
-	canvas {
-		position: absolute;
-		inset: 0;
-		width: 100%;
-		height: 100%;
-		cursor: grab;
-		touch-action: none;
-	}
-	.reset {
-		position: absolute;
-		right: 6px;
-		bottom: 6px;
-		padding: 5px 9px;
-		font: 600 12px/1 var(--ui-font);
-		color: var(--text);
-		background: rgba(0, 0, 0, 0.5);
-		border: 1px solid var(--panel-border-strong);
-		border-radius: var(--radius);
-		cursor: pointer;
-	}
-	.detail {
-		min-height: 92px;
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-	}
-	.title {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 10px;
-		font-size: 18px;
-	}
-	.row {
-		display: flex;
-		gap: 8px;
-	}
-	.row > button {
-		flex: 1;
-		padding-inline: 8px;
-	}
-	.ss-button.plain {
-		color: var(--text);
-		background: rgba(255, 255, 255, 0.08);
-	}
-	.list {
-		min-height: 0;
-		overflow-y: auto;
-		display: flex;
-		flex-direction: column;
-		gap: 14px;
-		padding-right: 4px;
-	}
 	h3 {
 		margin: 0 0 6px;
 		font-size: 12px;
 	}
-	.grid {
+	.lootbox {
+		width: 100%;
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-		gap: 8px;
-	}
-	.card {
-		display: grid;
-		grid-template-columns: 56px 1fr;
-		grid-template-rows: auto auto;
+		grid-template-columns: 96px 1fr;
+		grid-template-rows: auto auto auto;
 		align-items: center;
 		gap: 2px 10px;
 		padding: 7px 10px 7px 7px;
@@ -321,22 +249,16 @@
 		color: var(--text);
 		background: rgba(255, 255, 255, 0.03);
 		border: 1px solid var(--panel-border);
-		border-left: 3px solid var(--rarity);
+		border-left: 3px solid var(--panel-border-strong);
 		border-radius: var(--radius);
-		cursor: pointer;
+		filter: grayscale(0.85);
+		opacity: 0.55;
+		cursor: not-allowed;
 	}
-	.card:hover,
-	.card:focus-visible {
-		background: rgba(255, 255, 255, 0.09);
-	}
-	.card.selected {
-		border-color: var(--accent);
-		background: var(--accent-soft);
-	}
-	.thumb {
-		grid-row: 1 / 3;
-		width: 56px;
-		height: 56px;
+	.lootbox .thumb {
+		grid-row: 1 / 4;
+		width: 96px;
+		height: 96px;
 		background: rgba(255, 255, 255, 0.06);
 		border-radius: 2px;
 	}
@@ -345,25 +267,13 @@
 		width: 100%;
 		height: 100%;
 	}
-	.lootbox {
-		width: 100%;
-		grid-template-columns: 96px 1fr;
-		grid-template-rows: auto auto auto;
-		--rarity: var(--panel-border-strong);
-		filter: grayscale(0.85);
-		opacity: 0.55;
-		cursor: not-allowed;
-	}
-	.card.lootbox:hover {
-		background: rgba(255, 255, 255, 0.03);
-	}
-	.lootbox .thumb {
-		grid-row: 1 / 4;
-		width: 96px;
-		height: 96px;
+	.meta {
+		display: flex;
+		justify-content: space-between;
+		gap: 6px;
+		font-size: 13px;
 	}
 	.soon {
-		color: var(--text);
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 	}
@@ -373,27 +283,17 @@
 		gap: 2px 10px;
 		font-size: 13px;
 	}
-	.name {
-		align-self: end;
-	}
-	.meta {
-		align-self: start;
-		display: flex;
-		justify-content: space-between;
-		gap: 6px;
-		font-size: 13px;
-	}
 	.price {
 		font-weight: 700;
 		color: var(--accent);
 		white-space: nowrap;
 	}
+	.price.poor {
+		color: var(--bad);
+	}
 	.unit {
 		margin-left: 3px;
 		font-weight: 500;
-	}
-	.card.poor .price {
-		color: var(--bad);
 	}
 	.state {
 		color: var(--text-dim);
@@ -404,50 +304,13 @@
 		line-height: 1.4;
 		color: var(--text-dim);
 	}
-	.hint strong {
-		color: var(--text);
-	}
-	.center {
-		position: absolute;
-		inset: auto 10px 45%;
-		text-align: center;
-	}
-	.good,
-	.state.good {
+	.hint.good {
 		color: var(--good);
 	}
-	.bad {
+	.hint.bad {
 		color: var(--bad);
 	}
-	/* Narrow: preview and details side by side, the list scrolls below them. */
-	@container (max-width: 560px) {
-		.body {
-			display: flex;
-			flex-direction: column;
-			overflow-y: auto;
-		}
-		.side {
-			position: sticky;
-			top: 0;
-			z-index: 1;
-			flex: none;
-			flex-direction: row;
-			padding-bottom: 6px;
-			background: #101318;
-		}
-		.stage {
-			flex: 0 0 38%;
-			height: min(210px, 42cqh);
-		}
-		.detail {
-			flex: 1;
-			min-width: 0;
-		}
-		.list {
-			overflow: visible;
-		}
-		.row {
-			flex-wrap: wrap;
-		}
+	.hint strong {
+		color: var(--text);
 	}
 </style>

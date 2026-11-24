@@ -116,9 +116,9 @@ Settings are saved to localStorage on change.
 
 A CS2-style pause menu opened with `Esc` (pointer lock is released). The game stays visible behind a dark gradient; the HUD is hidden while it is open. Components live in `apps/web/src/lib/ui/menu/` (`EscMenu.svelte` and one component per submenu); pure helpers (map grouping, settings sections, cvar defaults) are in `menu.ts` with unit tests.
 
-Main menu (left column): brand, current map and mode, then the entries **Resume**, **Change map**, **Settings**, **Shop**, **Coins**, **Account** (and **Admin** for admin accounts, see below), and below them the account line ("Logged in as X" or "Guest · runs are not saved") and a key hint. A submenu opens in a panel beside the entries; clicking its entry again folds it.
+Main menu (left column): brand, current map and mode, then the entries **Resume**, **Change map**, **Settings**, **Shop**, **Inventory**, **Coins**, **Account** (and **Admin** for admin accounts, see below), and below them the account line ("Logged in as X" or "Guest · runs are not saved") and a key hint. A submenu opens in a panel beside the entries; clicking its entry again folds it.
 
-Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the open submenu, `←`/`→` (and `Home`/`End`) switch tabs. `Esc` goes back one level (submenu to main menu), then resumes. In the map filter, `Esc` first clears the text. Focus is always visible.
+Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the open submenu, `←`/`→` (and `Home`/`End`) switch tabs. `Esc` goes back one level (submenu to main menu), then resumes. In the map filter and the item search, `Esc` first clears the text. Focus is always visible.
 
 - **Change map**: tabs **All** plus one per gamemode with maps, in `GAME_MODES` registry order and labels (Surf, Bhop, Tag, …), so new modes appear without UI changes. Opens on the current map's mode. Within a mode, maps sort by difficulty (easy first), then title, then size. Each row shows title, id, an easy/hard badge (Medium/Large for maps that come in sizes, `mapTag` in `menu.ts`), and marks the current map. A filter box matches title, id or size. Picking a map switches at once and resumes in solo or when you are alone on the server (`canChangeMap`). With others online every map stays clickable (button tooltip and tag "Request map vote"): picking one starts an RTV request nominating it and resumes, so the modal is visible. The notice above the list says so, or, when requests are not possible, why and for how long: "Map vote declined — try again in 45 s", "Map vote requests open in 12 s" (first 20 s of a map), "A map vote is in progress", "A map vote request is open", or "Spectators cannot request a map vote" (rows read-only then). The current map and admin-disabled maps ("Disabled by admin") cannot be nominated. State logic: `mapMenuState` / `mapRowPickable` in `menu.ts`.
 - **Settings**: tabs
@@ -128,13 +128,17 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
   - Audio: master volume
 
   Each tab has **Reset … to defaults**, which sets that tab's cvars to the engine defaults (`CLIENT_CVARS`); it is disabled when they already are.
-- <a id="shop"></a>**Shop** (`ShopMenu.svelte`; pure helpers in `game/shop.ts`; rules in [economy.md](economy.md#shop)): the balance, the items by category with picture, name, rarity (in its colour) and price or Owned / Equipped (a price you cannot afford is red), and a turntable of your own character.
-  - **Loot boxes** on top: one greyed-out, disabled card with the picture, 80 coins, the possible rarities and "Coming soon".
+- <a id="shop"></a>**Shop** (`ShopMenu.svelte`; pure helpers in `game/shop.ts`; rules in [economy.md](economy.md#shop)): only what can be bought. The balance, category tabs, items with picture, name, rarity (in its colour) and price (red when you cannot afford it), and a turntable of your own character. Owned items are marked "Owned" and come last; loot-only items never appear.
+  - **Loot boxes** on top of All: one greyed-out, disabled card with the picture, 80 coins, the possible rarities and "Coming soon".
   - Clicking an item tries it on (one per slot, on top of what you wear); clicking it again or **Reset look** undoes that. Drag turns the character; it stands still with reduced motion.
-  - **Buy · 30 coins**, then **Confirm** or **Cancel**; after that **Equip** / **Take off**. Too few coins: the button is disabled and the missing amount is shown. Guests get a login button. Errors and "… bought" show below.
+  - **Buy · 30 coins**, then **Confirm** or **Cancel**. Too few coins: the button is disabled and "You are X coins short" is shown. Guests get a login button. Errors show below.
+  - After a purchase: "… bought." with **Wear it** and **Go to inventory** (opens it on that item). Nothing is worn by itself.
   - Offline, or on a server without a shop: one line says so.
-  - Narrow panels put the preview on top, sticky, and the list below.
-  - The preview (`render/character/preview.ts`, through `GameApi.createPreview`) is a second small WebGL context of at most 45 fps with its own geometry. It exists only while the submenu is open. The item pictures are drawn with it, one per frame. No sounds.
+- <a id="inventory"></a>**Inventory** (`InventoryMenu.svelte`): every item you own, of any rarity, plus the default look per slot. Opening it on 100+ items stays fast.
+  - Category tabs, rarity buttons (only rarities you have), a search box (name, category, rarity; `Esc` first clears it) and **Sort: Rarity / Name** (rarest first, default look last). The counts follow the other filters and leave out the default look.
+  - Cards have the colour of their rarity; worn ones have a green frame and "Worn". The first click shows an item on the turntable, the second wears it; **Wear** and **Take off** are below the turntable. The list under them shows what you wear per slot, each with × to take it off.
+  - Owning nothing: a line and a button to the shop. Guests: a line and a login button. Offline or without a shop on the server: one line.
+- Shop and Inventory share `ItemBrowser.svelte` (turntable, details, toolbar, scrolling list), `ItemCard.svelte` and `item-pictures.svelte.ts`. Narrow panels put the preview on top, sticky, and the list below. The preview (`render/character/preview.ts`, through `GameApi.createPreview`) is a second small WebGL context of at most 45 fps with its own geometry. It exists only while the submenu is open. The item pictures are drawn with it, one per frame, only for cards on screen, and are kept while the page lives (not those of the default look). No sounds.
 - <a id="coins"></a>**Coins** (`CoinsMenu.svelte`): coins, points earned in total (both rounded down), the current multiplier and active players, and the latest 20 awards and purchases. Guests get a login button.
 - **Account**: "Logged in as X" with **Log out**, or guest with **Log in / Register** (opens the account panel).
 - <a id="admin"></a>**Admin** (only when the server says the account is admin, [gameplay.md](gameplay.md#admin); `AdminMenu.svelte`): **Extend +10 min** in the header, then tabs
@@ -147,7 +151,7 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
 
 All values are the same cvars as the console and are saved the same way.
 
-Dev preview: `/?mockhud&open=settings` (main menu), `&open=maps` (map submenu), `&open=settings&view=settings&tab=hud` (a settings tab), `&view=account`, `&view=shop` (`&balance=<coins>`, `&coins=0` a guest, `&noshop`), `&view=coins`, `&view=admin` (logged in as an admin; `&tab=maps|players|bans|abuse`), and `&solo=0` for the read-only map list.
+Dev preview: `/?mockhud&open=settings` (main menu), `&open=maps` (map submenu), `&open=settings&view=settings&tab=hud` (a settings tab), `&view=account`, `&view=shop` (`&balance=<coins>`, `&coins=0` a guest, `&noshop`), `&view=inventory` (130 items, most of them made up; `&items=<n>`, 0 = empty), `&view=coins`, `&view=admin` (logged in as an admin; `&tab=maps|players|bans|abuse`), and `&solo=0` for the read-only map list.
 
 ## Ghost
 

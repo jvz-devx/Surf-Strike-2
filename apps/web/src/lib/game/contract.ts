@@ -323,14 +323,14 @@ export interface ShopView {
 	loadout: Loadout;
 	/** A request waits for the server's reply. */
 	busy: boolean;
-	/** Last result, shown in the shop. */
-	notice: { ok: boolean; text: string } | null;
+	/** Last result, shown in the shop and the inventory; `bought`: the item just bought. */
+	notice: { ok: boolean; text: string; bought?: string } | null;
 }
 
 /** A live character turntable on a canvas of the UI. */
 export interface CharacterPreviewHandle {
 	setLoadout(loadout: Loadout): void;
-	/** Small pictures of items (data URLs), one per frame. */
+	/** Small pictures of items (data URLs), one per frame. Replaces the pictures still waiting. */
 	thumbnails(ids: readonly string[], ready: (id: string, url: string) => void): void;
 	dispose(): void;
 }

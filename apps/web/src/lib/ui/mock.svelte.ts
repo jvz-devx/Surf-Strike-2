@@ -9,9 +9,11 @@
  * Scores: `&mode=<gamemode>` (its score panel and scoreboard), `&players=<n>` (default 5),
  * `&self=<n>` your position, `&old=1` an older server (no leaderboard top, no totals),
  * `&novote=1` without the map vote. Coins: `&coins=<n>` n award popups, `&coins=0` a guest,
- * `&view=coins` the Coins submenu, `&view=shop` the Shop (`&balance=<coins>`, `&noshop` a server without it), `&ban=<seconds>` the ban screen (`&ban=0` permanent).
+ * `&view=coins` the Coins submenu, `&view=shop` the Shop (`&balance=<coins>`, `&noshop` a server without it),
+ * `&view=inventory` the Inventory (`&items=<n>` owned items, default 130, with made-up ones; 0 = empty), `&ban=<seconds>` the ban screen (`&ban=0` permanent).
  */
-import { cosmeticPrice, emptyLoadout, gameMode, isGameModeId, shopItems, Status, TICK_RATE, type GameModeId, type ModeState, type ScoreRow } from '@surf/shared';
+import { cosmeticPrice, COSMETIC_SLOTS, emptyLoadout, gameMode, getCosmetic, isGameModeId, listCosmetics, registerCosmetic, shopItems, Status, TICK_RATE, type RarityId, type GameModeId, type ModeState, type ScoreRow } from '@surf/shared';
+import { itemMesh, registerItemMesh } from '#lib/render/character/items.js';
 import { CharacterPreview } from '#lib/render/character/preview.js';
 import { awardPopup, noticePopup } from '#lib/game/coins.js';
 import type { GameApi, GameHandle, HudStateShape } from '#lib/game/contract.js';
@@ -74,6 +76,30 @@ function mockRows(mode: GameModeId, n: number, self: number, old: boolean): Scor
 	return rows;
 }
 
+/** What the shop sells (before mockOwned() adds made-up items). */
+const MOCK_OFFERS = shopItems().map((i) => ({ id: i.id, price: cosmeticPrice(i)! }));
+const MOCK_WORDS = ['Coral', 'Midnight', 'Neon', 'Dune', 'Frost', 'Ember', 'Moss', 'Violet', 'Salt', 'Copper', 'Glass'];
+
+/** `n` owned items: a few from the shop, all loot, then made-up loot drawn like a real item. */
+function mockOwned(n: number): string[] {
+	const real = listCosmetics().filter((i) => !i.isDefault && !i.id.startsWith('mock_'));
+	const ids = ['hat_cap', 'top_sunset', 'shoes_slides', ...real.filter((i) => cosmeticPrice(i) === null).map((i) => i.id)].slice(0, n);
+	const rarities: RarityId[] = ['common', 'common', 'uncommon', 'common', 'rare', 'uncommon', 'common', 'epic'];
+	for (let i = 0; ids.length < n; i++) {
+		const slot = COSMETIC_SLOTS[i % COSMETIC_SLOTS.length]!;
+		const like = real.filter((r) => r.slot === slot);
+		const base = like[Math.floor(i / COSMETIC_SLOTS.length) % like.length]!;
+		const id = `mock_${slot}_${i}`;
+		if (!getCosmetic(id)) {
+			registerCosmetic({ id, slot, name: `${MOCK_WORDS[i % MOCK_WORDS.length]} ${base.name.toLowerCase()}`, rarity: rarities[i % rarities.length]! });
+			const mesh = itemMesh(base.id);
+			if (mesh) registerItemMesh(id, mesh);
+		}
+		ids.push(id);
+	}
+	return ids;
+}
+
 /** Only what the score metrics read of a mode state. */
 function mockState(mode: GameModeId, rows: ScoreRow[]): ModeState | null {
 	if (mode === 'surf' || mode === 'bhop') return null;
@@ -92,6 +118,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 	const race = gameMode(mode).family === 'race';
 	const coinsN = params.has('coins') ? Number(params.get('coins')) : null;
 	const asAdmin = params.get('view') === 'admin' || params.has('admin');
+	const owned = coinsN === 0 ? [] : mockOwned(Number(params.get('items') ?? 130));
 	const hud: HudStateShape = $state({
 		online: true,
 		connecting: false,
@@ -144,9 +171,9 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			old || params.has('noshop')
 				? null
 				: {
-						items: shopItems().map((i) => ({ id: i.id, price: cosmeticPrice(i)! })),
-						owned: coinsN === 0 ? [] : ['hat_cap', 'top_sunset', 'shoes_slides'],
-						loadout: coinsN === 0 ? emptyLoadout() : { ...emptyLoadout(), hat: 'hat_cap', shoes: 'shoes_slides' },
+						items: MOCK_OFFERS,
+						owned,
+						loadout: owned.length < 3 ? emptyLoadout() : { ...emptyLoadout(), hat: 'hat_cap', shoes: 'shoes_slides' },
 						busy: false,
 						notice: null
 					},
@@ -346,7 +373,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 				return;
 			}
 			hud.coins = { ...hud.coins, balance: hud.coins.balance - price };
-			hud.shop = { ...hud.shop, owned: [...hud.shop.owned, item], notice: { ok: true, text: 'Item bought.' } };
+			hud.shop = { ...hud.shop, owned: [...hud.shop.owned, item], notice: { ok: true, text: `${getCosmetic(item)?.name} bought.`, bought: item } };
 		},
 		shopEquip(slot, item) {
 			if (hud.shop) hud.shop = { ...hud.shop, loadout: { ...hud.shop.loadout, [slot]: item }, notice: null };

@@ -6,13 +6,14 @@
 	import MapMenu from '#lib/ui/menu/MapMenu.svelte';
 	import CoinsMenu from '#lib/ui/menu/CoinsMenu.svelte';
 	import ShopMenu from '#lib/ui/menu/ShopMenu.svelte';
+	import InventoryMenu from '#lib/ui/menu/InventoryMenu.svelte';
 	import AccountMenu from '#lib/ui/menu/AccountMenu.svelte';
 	import AdminMenu from '#lib/ui/menu/AdminMenu.svelte';
 	import { isSettingsSection, modeLabel, wrapIndex, type MenuView, type SettingsSectionId } from '#lib/ui/menu/menu.js';
 
 	/**
 	 * Esc menu (docs/ui.md#esc-menu): main entries on the left, the open
-	 * submenu (Change map, Settings, Shop, Coins, Account) beside them. Esc goes back one
+	 * submenu (Change map, Settings, Shop, Inventory, Coins, Account) beside them. Esc goes back one
 	 * level, then resumes.
 	 */
 	let {
@@ -49,7 +50,7 @@
 		online?: boolean;
 		/** Coins submenu (null: guest, offline or a server without coins). */
 		coins?: CoinsView | null;
-		/** Shop submenu (null: offline or a server without a shop). */
+		/** Shop and Inventory submenus (null: offline or a server without a shop). */
 		shop?: ShopView | null;
 		multiplier?: { mult: number; active: number; need: number } | null;
 		/** Admin menu data (server-sent to admin accounts only). */
@@ -70,7 +71,7 @@
 		const v = p.get('open') === 'maps' ? 'maps' : p.get('view');
 		const tab = p.get('tab');
 		return {
-			view: v === 'maps' || v === 'settings' || v === 'shop' || v === 'coins' || v === 'account' || v === 'admin' ? v : 'main',
+			view: v === 'maps' || v === 'settings' || v === 'shop' || v === 'inventory' || v === 'coins' || v === 'account' || v === 'admin' ? v : 'main',
 			section: isSettingsSection(tab) ? tab : 'mouse'
 		};
 	}
@@ -78,6 +79,7 @@
 
 	let view: MenuView = $state(start.view);
 	let section: SettingsSectionId = $state(start.section);
+	let shownItem: string | null = $state(null);
 
 	type Entry = { id: Exclude<MenuView, 'main'> | 'resume'; label: string };
 	// "Admin" only for admin accounts (the server decides; it re-checks every request).
@@ -86,6 +88,7 @@
 		{ id: 'maps', label: 'Change map' },
 		{ id: 'settings', label: 'Settings' },
 		{ id: 'shop', label: 'Shop' },
+		{ id: 'inventory', label: 'Inventory' },
 		{ id: 'coins', label: 'Coins' },
 		{ id: 'account', label: 'Account' },
 		...(account?.admin ? [{ id: 'admin', label: 'Admin' } as Entry] : [])
@@ -121,8 +124,15 @@
 	function open(id: (typeof entries)[number]['id']) {
 		if (id === 'resume') return resume();
 		// Clicking the open entry again folds the submenu back to the main menu.
-		view = view === id ? 'main' : id;
-		if (view !== 'main') focusContent();
+		if (view === id) view = 'main';
+		else go(id);
+	}
+
+	/** Open a submenu; `item` is shown first in the inventory. */
+	function go(id: MenuView, item: string | null = null) {
+		shownItem = item;
+		view = id;
+		if (id !== 'main') focusContent();
 	}
 
 	function back() {
@@ -207,7 +217,7 @@
 		<div
 			class="content ss-panel"
 			class:compact={view === 'account'}
-			class:wide={view === 'shop'}
+			class:wide={view === 'shop' || view === 'inventory'}
 			id="ss-menu-content"
 			role="dialog"
 			aria-modal="false"
@@ -229,7 +239,9 @@
 					onpick={pickMap}
 				/>
 			{:else if view === 'shop'}
-				<ShopMenu {api} {shop} balance={coins?.balance ?? 0} loggedIn={account !== null} {online} />
+				<ShopMenu {api} {shop} balance={coins?.balance ?? 0} loggedIn={account !== null} {online} oninventory={(item) => go('inventory', item)} />
+			{:else if view === 'inventory'}
+				<InventoryMenu {api} {shop} loggedIn={account !== null} {online} initial={shownItem} onshop={() => go('shop')} />
 			{:else if view === 'coins'}
 				<CoinsMenu {api} {coins} {multiplier} loggedIn={account !== null} {online} />
 			{:else if view === 'admin'}

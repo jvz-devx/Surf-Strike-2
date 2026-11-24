@@ -277,11 +277,12 @@ this.chased.reset();
 
 Cosmetics only. The stock, the rarities and their prices are data in `packages/shared/src/cosmetics.ts` ([how to add an item](characters.md#adding-an-item)); the rules are in `apps/server/src/shop.ts`. Menu: [ui.md](ui.md#shop).
 
-- **Rarity** sets the price. `basic` is 30 coins (300 tenths). `common`, `uncommon`, `rare` and `epic` have no price: not in the shop, only meant for loot boxes. An owned one is listed so it can be worn.
+- **Rarity** sets the price. `basic` is 30 coins (300 tenths). `common`, `uncommon`, `rare` and `epic` have no price: not in the shop, only meant for loot boxes.
 - <a id="loot-box"></a>**Loot box** (`LOOTBOX`, 80 coins): shown greyed out as "Coming soon"; nothing can be bought or opened yet (the server knows no such request). Planned odds from the owner: common 80 %, uncommon 10 %, rare 5 %, epic 1 %. They add up to 96 %; the missing 4 % must be assigned before it opens. Model: `apps/web/src/lib/render/lootbox.ts`.
 - **Buying** (`Db.buyItem`) is one transaction that takes the write lock first: not owned yet, balance suffices, deduct, log `shop:<id>` (label `Shop: <name>`), grant. A second click, tab or process gets "You already own this item". No refunds.
+- **Shop and inventory** are two menus on the same messages. The shop lists only what has a price (owned items last, marked "Owned") and never changes what you wear, except through "Wear it" right after a purchase. The [inventory](ui.md#inventory) lists everything the account owns, of any rarity, also what the server no longer sells, plus the default look of each slot; wearing and taking off happen there.
 - **Wearing**: owned items only, one per slot, in the item's own slot; `null` takes it off. Kept across sessions, maps and modes.
-- **Guests** see the stock and can try items on, but not buy or wear them.
+- **Guests** see the stock and can try items on, but not buy or wear them, and have no inventory.
 - At most 8 requests per second and connection; more are refused, above 100 the client is kicked.
 - **Storage** (new tables, nothing else changes): `owned_items (account_id, item_id, bought_at, price)` and `equipped (account_id, slot, item_id)`, which references `owned_items`. Rows of items this version does not know are kept and ignored.
 
@@ -294,7 +295,7 @@ Cosmetics only. The stock, the rarities and their prices are data in `packages/s
 | S→C | `cosmetics { id, loadout }`: to everyone when a player's worn items change (also on login and logout) |
 | S→C | `welcome.players[]` and `join.player` carry `loadout?` (absent: default look) |
 
-All of it is optional: older clients ignore it, and without `shop` a newer client says the shop is not available on this server. The server's prices are the ones shown and charged.
+All of it is optional: older clients ignore it, and without `shop` a newer client says the shop and the inventory are not available on this server. The server's prices are the ones shown and charged.
 
 ### Spending from code
 
