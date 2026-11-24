@@ -13,6 +13,7 @@ import { drawnItems, itemMesh, type PlayerTint } from './items.js';
 import { CharacterMaterial } from './material.js';
 import { PAL, type Lod } from './mesh-kit.js';
 import './shop-items.js';
+import './common/index.js';
 import { commitPose, createSkeleton, type CharacterSkeleton, type SocketName } from './skeleton.js';
 
 /** Gameplay looks. They override clothing colours, so they read at any distance. */

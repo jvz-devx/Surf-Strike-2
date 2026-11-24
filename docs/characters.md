@@ -9,7 +9,8 @@ Every humanoid in the game (remote players, turned players, infected, AI zombies
 | `body.ts` | Head, face, 5 hair styles, neck, arms, hands, claws, shins (body regions) |
 | `outfit.ts` | Default tee, trousers, sneakers, plus reusable torso, sleeve, leg and seat builders |
 | `items.ts` | Client item meshes: `registerItemMesh`, `ItemMesh` |
-| `shop-items.ts` | Meshes of the shop's items |
+| `shop-items.ts` | Meshes of the shop's items, and helpers shared with `common/` |
+| `common/` | Meshes of the Common items, one file per item, listed in `common/index.ts` |
 | `preview.ts` | Shop turntable and item pictures (own small WebGL context) |
 | `geometry.ts` | Merges the parts of a look into one shared, reference-counted geometry per LOD |
 | `material.ts` | One Lambert-based material per character: palette, baked shade, rim light |
@@ -38,13 +39,13 @@ sanitizeLoadout(untrusted)     // always a valid Loadout; use it on everything r
 
 The registry holds `top_default`, `bottom_default`, `shoes_default` and the shop's items (`SHOP_ITEMS`). Hat and glasses are empty by default. Buying, storage and messages: [economy.md](economy.md#shop). Guests wear the default look. Both ends run `sanitizeLoadout` on everything received or stored, so an item the other side does not know is simply not worn.
 
-| Slot | Items (Basic, 30 coins, unless noted) |
+| Slot | Items (Basic, 30 coins; Common ones are loot only, not in the shop) |
 | --- | --- |
-| hat | Breakline cap, Pom beanie, Straw hat, Fry cook hat (Common, not in the shop) |
-| glasses | Glare shades, Round shades |
-| top | Sunset tee, Half-and-half tee, Checker tee |
-| bottom | Boardshorts, Joggers, Cargo pants |
-| shoes | High-tops, Beach slides, Trail boots, Slip-ons |
+| hat | Breakline cap, Pom beanie, Straw hat; Common: Fry cook hat, Palm bucket hat, Trilby, Wave bandana |
+| glasses | Glare shades, Round shades; Common: Gold aviators, Sport wraps |
+| top | Sunset tee, Half-and-half tee, Checker tee; Common: Zip hoodie, Floral shirt, Varsity jacket |
+| bottom | Boardshorts, Joggers, Cargo pants; Common: Cuffed jeans, Track pants |
+| shoes | High-tops, Beach slides, Trail boots, Slip-ons; Common: Pulse runners, Chelsea boots |
 
 The own player is never drawn in the game, except as the shop preview and as the race ghost of an own run (your PB, or your record), which wears what you wear now.
 
@@ -59,7 +60,7 @@ registerItemMesh(id, { hides?, colors, build })  // items.ts
 ### Adding an item
 
 1. One line in `SHOP_ITEMS` in `packages/shared/src/cosmetics.ts`: `{ id, slot, name, rarity }`. The id is stored in players' databases: never rename, reuse or remove one. For a new rarity, add it to `RARITIES` (name, colour, price).
-2. `registerItemMesh(id, mesh)` in `apps/web/src/lib/render/character/shop-items.ts`.
+2. `registerItemMesh(id, mesh)` in `apps/web/src/lib/render/character/shop-items.ts` (Basic), or its own file in `common/` with a line in `common/index.ts`.
 3. Look at it in the [gallery](#dev-gallery) from the front and back, crouched, running, surfing, with every hair style (hats) and with every other bottom or pair of shoes, and as IT, infected and zombie.
 4. Update the counts in `cosmetics.test.ts` and `character.test.ts` (they also check the mesh, its budget, its winding and its palette), and the table above.
 

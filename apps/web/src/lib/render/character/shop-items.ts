@@ -20,14 +20,14 @@ import {
 } from './outfit.js';
 import { BIND, sideSign, type Side } from './skeleton.js';
 
-const SIDES: readonly Side[] = ['L', 'R'];
-const HEAD = bone('head');
+export const SIDES: readonly Side[] = ['L', 'R'];
+export const HEAD = bone('head');
 
 // ---------------------------------------------------------------------------
 // Hats (socket space: origin at band height, +X forward)
 
 /** Ring of a hat; `f`, `back`, `s`: radius forward, backward, sideways. */
-const hatRing = (y: number, f: number, back: number, s: number, shade = 1): Ring => ({ c: [0.1, y, 0], f, b: back, s, n: 2.2, w: HEAD, shade });
+export const hatRing = (y: number, f: number, back: number, s: number, shade = 1): Ring => ({ c: [0.1, y, 0], f, b: back, s, n: 2.2, w: HEAD, shade });
 
 registerItemMesh('hat_cap', {
 	hides: ['hair'],
@@ -294,7 +294,7 @@ registerItemMesh('glasses_round', {
 // ---------------------------------------------------------------------------
 // T-shirts
 
-interface Tee {
+export interface Tee {
 	/** Ring heights at LOD 0, 1, 2. */
 	ys: readonly [readonly number[], readonly number[], readonly number[]];
 	seg?: readonly [number, number, number];
@@ -307,7 +307,7 @@ interface Tee {
 	pal: (y0: number, y1: number, a: number, row: number) => number;
 }
 
-function buildTee(b: PartBuilder, t: Tee): void {
+export function buildTee(b: PartBuilder, t: Tee): void {
 	const rings = torsoRings(t.hem ?? 37.2, b.pick(...t.ys), t.grow ?? 0.15);
 	b.loft(rings, {
 		seg: b.pick(...(t.seg ?? [20, 12, 8])),
@@ -381,7 +381,7 @@ registerItemMesh('top_checker', {
 // Trousers
 
 /** Two cord ends hanging from the waistband. */
-function drawstring(b: PartBuilder, pal: number): void {
+export function drawstring(b: PartBuilder, pal: number): void {
 	if (b.lod > 0) return;
 	for (const s of SIDES) b.box([5.1, 35.6, sideSign(s) * 0.55], [0.3, 2.6, 0.32], { w: bone('pelvis'), pal, rot: [sideSign(s) * -0.12, 0, 0] });
 }
@@ -435,7 +435,7 @@ registerItemMesh('bottom_cargo', {
 // Shoes
 
 /** Shaft around the ankle: rings of y, front, back, side radius; closed inwards at the top. */
-function shaft(b: PartBuilder, s: Side, rows: readonly (readonly [number, number, number, number])[], pals: { shaft: number; top: number; inner: number }): void {
+export function shaft(b: PartBuilder, s: Side, rows: readonly (readonly [number, number, number, number])[], pals: { shaft: number; top: number; inner: number }): void {
 	const z0 = BIND[`foot${s}`][2] + sideSign(s) * 0.15;
 	// Same weights as the trousers, and the leg leans forward going up.
 	const ring = (y: number, f: number, back: number, r: number, pal: number, shade = 1): Ring => ({ c: [lerp(-1.1, -0.3, smooth(4, 9, y)), y, z0], f, b: back, s: r, w: legWeights(s, y), pal, shade });

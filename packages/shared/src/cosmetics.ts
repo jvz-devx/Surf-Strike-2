@@ -5,7 +5,7 @@
  *
  * Items with a rarity are sold in the shop (docs/economy.md#shop); the price
  * belongs to the rarity. To add an item: one line in SHOP_ITEMS here, and its
- * mesh in `apps/web/src/lib/render/character/shop-items.ts`.
+ * mesh in `apps/web/src/lib/render/character/` (`shop-items.ts` or `common/`).
  */
 
 /** Every cosmetic slot, in display order. */
@@ -140,6 +140,18 @@ const SHOP_ITEMS: readonly Required<Omit<CosmeticItem, 'isDefault'>>[] = [
 	{ id: 'shoes_hightops', slot: 'shoes', name: 'High-tops', rarity: 'basic' },
 	{ id: 'shoes_slides', slot: 'shoes', name: 'Beach slides', rarity: 'basic' },
 	{ id: 'shoes_boots', slot: 'shoes', name: 'Trail boots', rarity: 'basic' },
-	{ id: 'shoes_slipons', slot: 'shoes', name: 'Slip-ons', rarity: 'basic' }
+	{ id: 'shoes_slipons', slot: 'shoes', name: 'Slip-ons', rarity: 'basic' },
+	{ id: 'hat_bucket', slot: 'hat', name: 'Palm bucket hat', rarity: 'common' },
+	{ id: 'hat_trilby', slot: 'hat', name: 'Trilby', rarity: 'common' },
+	{ id: 'hat_bandana', slot: 'hat', name: 'Wave bandana', rarity: 'common' },
+	{ id: 'glasses_aviator', slot: 'glasses', name: 'Gold aviators', rarity: 'common' },
+	{ id: 'glasses_wrap', slot: 'glasses', name: 'Sport wraps', rarity: 'common' },
+	{ id: 'top_hoodie', slot: 'top', name: 'Zip hoodie', rarity: 'common' },
+	{ id: 'top_floral', slot: 'top', name: 'Floral shirt', rarity: 'common' },
+	{ id: 'top_varsity', slot: 'top', name: 'Varsity jacket', rarity: 'common' },
+	{ id: 'bottom_jeans', slot: 'bottom', name: 'Cuffed jeans', rarity: 'common' },
+	{ id: 'bottom_track', slot: 'bottom', name: 'Track pants', rarity: 'common' },
+	{ id: 'shoes_runners', slot: 'shoes', name: 'Pulse runners', rarity: 'common' },
+	{ id: 'shoes_chelsea', slot: 'shoes', name: 'Chelsea boots', rarity: 'common' }
 ];
 for (const item of SHOP_ITEMS) registerCosmetic(item);

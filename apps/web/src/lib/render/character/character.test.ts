@@ -263,7 +263,7 @@ describe('cosmetics', () => {
 	it('every shop item has a mesh in its slot that builds at every LOD, within budget, in its own colours', () => {
 		const budget = [2600, 800, 420];
 		const items = [...ids].map((id) => getCosmetic(id)!).filter((i) => !i.isDefault);
-		expect(items).toHaveLength(16);
+		expect(items).toHaveLength(28);
 		for (const item of items) {
 			const mesh = itemMesh(item.id)!;
 			expect(mesh, item.id).toBeDefined();

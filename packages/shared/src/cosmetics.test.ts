@@ -14,7 +14,7 @@ describe('cosmetics', () => {
 			expect(awardLabel(`shop:${i.id}`)).toBe(`Shop: ${i.name}`);
 		}
 		expect(listCosmetics().filter((i) => i.isDefault).map((i) => i.id)).toEqual(['top_default', 'bottom_default', 'shoes_default']);
-		expect(listCosmetics()).toHaveLength(19);
+		expect(listCosmetics()).toHaveLength(31);
 		// Default items are never for sale, whatever their rarity.
 		expect(cosmeticPrice({ id: 'x', slot: 'top', name: 'x', isDefault: true, rarity: 'basic' })).toBeNull();
 		for (const r of Object.values(RARITIES)) expect((r.price === null || (Number.isInteger(r.price) && r.price > 0)) && /^#[0-9a-f]{6}$/.test(r.color) && r.name !== '').toBe(true);
@@ -32,7 +32,9 @@ describe('cosmetics', () => {
 		expect(listCosmetics().map((i) => i.id)).toEqual(
 			expect.arrayContaining([
 				'hat_cap', 'hat_beanie', 'hat_straw', 'hat_frycook', 'glasses_shades', 'glasses_round', 'top_sunset', 'top_halves', 'top_checker',
-				'bottom_boardshorts', 'bottom_joggers', 'bottom_cargo', 'shoes_hightops', 'shoes_slides', 'shoes_boots', 'shoes_slipons'
+				'bottom_boardshorts', 'bottom_joggers', 'bottom_cargo', 'shoes_hightops', 'shoes_slides', 'shoes_boots', 'shoes_slipons',
+				'hat_bucket', 'hat_trilby', 'hat_bandana', 'glasses_aviator', 'glasses_wrap', 'top_hoodie',
+				'top_floral', 'top_varsity', 'bottom_jeans', 'bottom_track', 'shoes_runners', 'shoes_chelsea'
 			])
 		);
 	});
