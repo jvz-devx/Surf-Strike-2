@@ -33,6 +33,10 @@
 	let ms = $state(0);
 	let w = $state(600);
 	let h = $state(300);
+	/** Cashed out, and the round goes on to its crash: what the player misses. */
+	let tail = $state(false);
+	/** When the last round began. */
+	let startedAt: number | null = null;
 	/** Just after a round. */
 	let cooling = $state(false);
 	let coolTimer: ReturnType<typeof setTimeout> | undefined;
@@ -44,28 +48,57 @@
 	const round = $derived(casino.crash);
 	const running = $derived(round !== null);
 	const auto = $derived(parseAuto(autoText));
-	const mult = $derived(end ? (end.at ?? end.crash) : crashCurve(ms));
+	const mult = $derived(end && !tail ? end.crash : crashCurve(ms));
 	const frame = $derived(crashFrame(ms, w, h));
 	const betCoins = $derived(round ? round.bet / POINTS_SCALE : 0);
-	const mood = $derived(end ? (end.payout > 0 ? 'won' : 'lost') : running ? 'running' : 'idle');
+	/** Tenths more than was paid, at the multiplier shown. */
+	const missed = $derived(end ? Math.max(0, crashPayout(end.bet / POINTS_SCALE, Math.floor(mult + 1e-9)) - end.payout) : 0);
+	/** `tail`: cashed out, still climbing; `missed`: it then crashed; `won`: nothing more was to be had. */
+	const mood = $derived.by(() => {
+		if (!end) return running ? 'running' : 'idle';
+		if (end.payout === 0) return 'lost';
+		if (tail) return 'tail';
+		return missed > 0 ? 'missed' : 'won';
+	});
 	const action = $derived.by(() => {
 		if (round) return { label: `Cash out · ${formatTenths(crashPayout(betCoins, crashAt(ms)))}`, free: true, tone: 'cash' as const, disabled: casino.busy };
 		return { label: casino.busy ? 'Starting…' : 'Place bet', disabled: casino.busy || cooling };
 	});
 
+	function climb(from: number, top: number) {
+		ms = Math.min(crashTime(top), Math.max(0, performance.now() - from));
+		const whole = Math.floor(crashCurve(ms) / CRASH.one);
+		if (whole <= ticked) return;
+		ticked = whole;
+		api.casinoSound('tick');
+	}
+
+	/** After a cash-out: on to where it crashes. The next bet cuts it short. */
+	function follow(o: Extract<CasinoOutcome, { game: 'crash' }>, from: number) {
+		tail = true;
+		const step = () => {
+			climb(from, o.crash);
+			if (ms < crashTime(o.crash)) {
+				raf = requestAnimationFrame(step);
+				return;
+			}
+			tail = false;
+			api.casinoSound('crash');
+		};
+		step();
+	}
+
 	// A running round (also one that started before the menu was opened).
 	$effect(() => {
 		const r = casino.crash;
 		if (!r) return;
+		cancelAnimationFrame(raf);
 		end = null;
+		tail = false;
 		ticked = 1;
+		startedAt = r.startedAt;
 		const step = () => {
-			ms = Math.min(crashTime(CRASH.cap), Math.max(0, performance.now() - r.startedAt));
-			const whole = Math.floor(crashCurve(ms) / CRASH.one);
-			if (whole > ticked) {
-				ticked = whole;
-				api.casinoSound('tick');
-			}
+			climb(r.startedAt, CRASH.cap);
 			raf = requestAnimationFrame(step);
 		};
 		untrack(step);
@@ -82,8 +115,11 @@
 			cooling = true;
 			clearTimeout(coolTimer);
 			coolTimer = setTimeout(() => (cooling = false), BET_AFTER_MS);
-			ms = crashTime(o.at ?? o.crash);
 			api.casinoSound(o.payout === 0 ? 'crash' : o.payout >= o.bet * 10 ? 'big' : 'win');
+			cancelAnimationFrame(raf);
+			if (o.at !== null && o.crash > o.at && startedAt !== null) follow(o, startedAt);
+			else ms = crashTime(o.crash);
+			startedAt = null;
 		});
 	});
 	onDestroy(() => {
@@ -137,11 +173,16 @@
 						<line x1="0" x2={w} y1={y} y2={y} class="autoline" />
 						<text x={w - 6} y={y - 5} class="tick autotext">auto {formatMult(round.auto)}</text>
 					{/if}
+					{#if end && end.at !== null && mood !== 'won'}
+						{@const y = h - ((end.at - CRASH.one) / (frame.mult - CRASH.one)) * h}
+						<line x1="0" x2={w} y1={y} y2={y} class="outline" />
+						<text x={w - 6} y={y - 5} class="tick outtext">out {formatMult(end.at)}</text>
+					{/if}
 					{#if mood !== 'idle'}
 						<path d="{frame.path}L{frame.x.toFixed(1)} {h}L0 {h}Z" fill="url(#crash-fill)" />
 						<path d={frame.path} class="curve" />
 						<g transform="translate({frame.x.toFixed(1)} {frame.y.toFixed(1)})" class="tip">
-							{#if mood === 'lost'}
+							{#if mood === 'lost' || mood === 'missed'}
 								{#each [0, 45, 90, 135, 180, 225, 270, 315] as a (a)}<line x1="0" y1="-9" x2="0" y2="-24" transform="rotate({a})" class="burst" />{/each}
 							{:else}
 								<circle r="13" class="halo" />
@@ -152,9 +193,15 @@
 				</svg>
 				<div class="readout" role="status">
 					<span class="mult ss-num" aria-hidden={mood === 'running'}>{formatMult(mult)}</span>
-					{#if mood === 'won' && end}
-						<span class="msg">Cashed out: <b>+{formatTenths(end.payout - end.bet)}</b> coins</span>
-						<span class="sub">{end.crash >= CRASH.cap ? 'It went all the way to 100×.' : `It would have crashed at ${formatMult(end.crash)}.`}</span>
+					{#if end && end.at !== null && mood !== 'lost'}
+						<span class="msg">Cashed out at {formatMult(end.at)}: <b>+{formatTenths(end.payout - end.bet)}</b> coins</span>
+						{#if mood === 'tail'}
+							<span class="sub regret" aria-hidden="true">Still climbing… you are missing <b class="ss-num">{formatTenths(missed)}</b> coins</span>
+						{:else if mood === 'missed'}
+							<span class="sub regret">{end.crash >= CRASH.cap ? 'It went all the way to 100×' : `Crashed at ${formatMult(end.crash)}`}. You missed <b class="ss-num">{formatTenths(missed)}</b> coins.</span>
+						{:else}
+							<span class="sub">{end.crash >= CRASH.cap ? 'It went all the way to 100×!' : 'Perfect timing: nothing more was to be had.'}</span>
+						{/if}
 					{:else if mood === 'lost' && end}
 						<span class="msg">Crashed. You lose <b>{formatTenths(end.bet)}</b> coins.</span>
 					{:else if running}
@@ -200,6 +247,13 @@
 		--line: var(--bad);
 		background: rgba(255, 90, 78, 0.1);
 	}
+	.graph.tail {
+		--line: #ffb13d;
+	}
+	.graph.missed {
+		--line: var(--bad);
+	}
+	.graph.missed:not(.calm),
 	.graph.lost:not(.calm) {
 		animation: shake 0.32s linear;
 	}
@@ -249,6 +303,15 @@
 		text-anchor: end;
 		fill: var(--info);
 	}
+	.outline {
+		stroke: var(--good);
+		stroke-dasharray: 5 5;
+		opacity: 0.8;
+	}
+	.outtext {
+		text-anchor: end;
+		fill: var(--good);
+	}
 	.curve {
 		fill: none;
 		stroke: var(--line);
@@ -263,6 +326,7 @@
 		fill: var(--line);
 		opacity: 0.45;
 	}
+	.tail:not(.calm) .halo,
 	.running:not(.calm) .halo {
 		animation: pulse 0.9s ease-in-out infinite;
 	}
@@ -277,6 +341,7 @@
 		stroke-width: 4;
 		stroke-linecap: round;
 	}
+	.missed:not(.calm) .burst,
 	.lost:not(.calm) .burst {
 		animation: burst 0.4s ease-out;
 	}
@@ -310,9 +375,12 @@
 		color: var(--text-faint);
 	}
 	.won .mult,
-	.won .msg {
+	.won .msg,
+	.tail .msg,
+	.missed .msg {
 		color: var(--good);
 	}
+	.missed .mult,
 	.lost .mult,
 	.lost .msg {
 		color: var(--bad);
@@ -323,6 +391,10 @@
 	.sub {
 		font-size: 15px;
 		color: var(--text-dim);
+	}
+	.regret {
+		font-size: 17px;
+		color: #ffb13d;
 	}
 	.auto {
 		display: flex;
