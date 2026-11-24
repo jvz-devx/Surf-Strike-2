@@ -20,10 +20,12 @@ const THUMB: Record<CosmeticSlot, readonly [number, number, number]> = {
 	glasses: [66.2, 13, -25],
 	top: [49, 32, -20],
 	bottom: [21, 46, -38],
-	shoes: [4.6, 20, -48]
+	shoes: [4.6, 20, -48],
+	effect: [38, 92, -20]
 };
 const BOX_THUMB = [9, 30, -35] as const;
 const THUMB_PX = 192;
+const DARK = new THREE.Color(0x171c24);
 let opened = 0;
 
 export class CharacterPreview {
@@ -80,6 +82,8 @@ export class CharacterPreview {
 		if (!item && !box) return;
 		const [y, height, turn] = item ? THUMB[item.slot] : BOX_THUMB;
 		if (item) applyLoadout(this.model, { ...emptyLoadout(), [item.slot]: id });
+		// Light on a transparent picture would be lost: effects get a dark ground.
+		if (item?.slot === 'effect') this.scene.background = DARK;
 		const subject = box?.group ?? this.model.group;
 		if (box) {
 			this.model.group.visible = false;
@@ -101,6 +105,7 @@ export class CharacterPreview {
 		out.width = out.height = THUMB_PX;
 		out.getContext('2d')?.drawImage(c, 0, c.height - px, px, px, 0, 0, THUMB_PX, THUMB_PX);
 		const url = out.toDataURL();
+		this.scene.background = null;
 		if (box) {
 			this.scene.remove(box.group);
 			box.dispose();

@@ -142,9 +142,9 @@
 		gap: 14px;
 		padding-right: 4px;
 	}
-	/* Six tabs fit in one line at 1280 wide. */
+	/* Seven tabs fit in one line at 1280 wide. */
 	.main :global(.tabs button) {
-		padding-inline: 9px;
+		padding-inline: 7px;
 		letter-spacing: 0.07em;
 	}
 	/* Shared by the two menus. */

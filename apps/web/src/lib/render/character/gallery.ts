@@ -80,7 +80,7 @@ export class CharacterGallery {
 			const model = new CharacterModel(person, this.assets, { ghost: a.role === 'ghost' });
 			if (a.role) model.setRole(a.role);
 			model.setHeld(a.held ?? null);
-			if (a.samples) applyLoadout(model, { ...SAMPLE_IDS });
+			if (a.samples) applyLoadout(model, { ...emptyLoadout(), ...SAMPLE_IDS });
 			else if (a.loadout) applyLoadout(model, { ...emptyLoadout(), ...a.loadout });
 			model.group.position.set(a.x ?? 0, 0, a.z ?? 0);
 			this.scene.add(model.group);

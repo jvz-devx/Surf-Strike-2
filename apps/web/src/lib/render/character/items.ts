@@ -17,6 +17,10 @@ export interface ItemMesh {
 	hides?: readonly BodyRegion[];
 	/** Fixed colours, or derived from the player's own tint (default clothes). */
 	colors: ItemColors | ((tint: PlayerTint) => ItemColors);
+	/** Glow per colour, 0 (plain cloth) to 1 (unlit); see CharacterMaterial. */
+	glow?: readonly number[];
+	/** Hat that covers the whole face: worn glasses are not drawn. */
+	coversFace?: boolean;
 	/** Add the geometry. Clothes are skinned; hats and glasses use `b.socket(...)`. */
 	build(b: PartBuilder): void;
 }
@@ -47,7 +51,7 @@ export function drawnItem(loadout: Loadout, slot: CosmeticSlot): string | null {
 	return defaultItem(slot)?.id ?? null;
 }
 
-/** Drawn item per slot. */
+/** Drawn item per slot (effects are not geometry: always null here, see effects.ts). */
 export function drawnItems(loadout: Loadout): Record<CosmeticSlot, string | null> {
 	return Object.fromEntries(COSMETIC_SLOTS.map((s) => [s, drawnItem(loadout, s)])) as Record<CosmeticSlot, string | null>;
 }

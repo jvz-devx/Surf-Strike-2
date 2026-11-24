@@ -96,6 +96,7 @@ export class RemotePlayers {
 	private avatars = new Map<number, Avatar>();
 	private loadouts = new Map<number, Loadout>();
 	private hidden = false;
+	private effects = true;
 
 	constructor(private readonly assets: HeldAssets) {
 		this.group.name = 'players';
@@ -112,6 +113,7 @@ export class RemotePlayers {
 
 	private create(id: number, name: string): Avatar {
 		const model = new CharacterModel(personOf(id), this.assets);
+		model.setEffects(this.effects);
 		const loadout = this.loadouts.get(id);
 		if (loadout) applyLoadout(model, loadout);
 
@@ -199,6 +201,12 @@ export class RemotePlayers {
 		else this.loadouts.delete(id);
 		const a = this.avatars.get(id);
 		if (a) applyLoadout(a.model, loadout ?? emptyLoadout());
+	}
+
+	/** Draw body effects (docs/characters.md#effects); off in hide and seek. */
+	setEffects(on: boolean): void {
+		this.effects = on;
+		for (const a of this.avatars.values()) a.model.setEffects(on);
 	}
 
 	/** Hide and seek: mark a seeker (red tint and SEEKER tag) or a hider. */

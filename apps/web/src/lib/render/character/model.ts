@@ -6,6 +6,7 @@
 import { COSMETIC_SLOTS, emptyLoadout, type CosmeticSlot, type Loadout } from '@surf/shared';
 import * as THREE from 'three';
 import { CharacterAnimator, type MotionState, type Posture } from './animator.js';
+import { CharacterEffect, effectDef } from './effects.js';
 import { HAIR_STYLES, type HairStyle } from './body.js';
 import { acquireLook, lookKey, type LookGeometry, type LookSpec } from './geometry.js';
 import { HeldAssets, type HeldItem } from './held.js';
@@ -14,6 +15,9 @@ import { CharacterMaterial } from './material.js';
 import { PAL, type Lod } from './mesh-kit.js';
 import './shop-items.js';
 import './common/index.js';
+import './uncommon/index.js';
+import './rare/index.js';
+import './epic/index.js';
 import { commitPose, createSkeleton, type CharacterSkeleton, type SocketName } from './skeleton.js';
 
 /** Gameplay looks. They override clothing colours, so they read at any distance. */
@@ -54,7 +58,7 @@ export function personOf(id: number): Person {
 	};
 }
 
-const SLOT_PAL: Record<CosmeticSlot, number> = { hat: PAL.hatA, glasses: PAL.glassesA, top: PAL.topA, bottom: PAL.bottomA, shoes: PAL.shoesA };
+const SLOT_PAL: Record<Exclude<CosmeticSlot, 'effect'>, number> = { hat: PAL.hatA, glasses: PAL.glassesA, top: PAL.topA, bottom: PAL.bottomA, shoes: PAL.shoesA };
 const c1 = new THREE.Color();
 const c2 = new THREE.Color();
 
@@ -158,6 +162,9 @@ export class CharacterModel {
 	private loadout: Loadout = emptyLoadout();
 	private role: CharacterRole = 'none';
 	private claws = false;
+	private effect: CharacterEffect | null = null;
+	private effectId: string | null = null;
+	private effectsOn = true;
 	private heldMesh: THREE.Mesh | null = null;
 	private heldShown: HeldItem | null = null;
 	/** Seconds of animation not yet applied (throttled far characters). */
@@ -190,7 +197,8 @@ export class CharacterModel {
 
 	private spec(): LookSpec {
 		const items = drawnItems(this.loadout);
-		if (ROLES[this.role].bareEyes) items.glasses = null;
+		// A mask over the whole face leaves no room for glasses.
+		if (ROLES[this.role].bareEyes || (items.hat && itemMesh(items.hat)?.coversFace)) items.glasses = null;
 		return { hair: this.person.style, items, claws: this.claws, ...(this.opts.tag ? { tag: this.opts.tag } : {}) };
 	}
 
@@ -200,6 +208,7 @@ export class CharacterModel {
 			const old = this.look;
 			this.look = acquireLook(spec);
 			this.mesh.geometry = this.look.get(this.lod);
+			this.effect?.setGeometry(this.mesh.geometry);
 			old.release();
 		}
 		this.recolor();
@@ -210,6 +219,7 @@ export class CharacterModel {
 		if (COSMETIC_SLOTS.every((s) => this.loadout[s] === loadout[s])) return;
 		this.loadout = { ...loadout };
 		this.rebuild();
+		this.syncEffect();
 	}
 
 	getLoadout(): Loadout {
@@ -226,6 +236,25 @@ export class CharacterModel {
 		this.role = role;
 		this.animator.posture = ROLES[role].posture;
 		this.rebuild();
+		this.syncEffect();
+	}
+
+	/** Draw worn effects or not (not in hide and seek: they would give hiders away). */
+	setEffects(on: boolean): void {
+		if (on === this.effectsOn) return;
+		this.effectsOn = on;
+		this.syncEffect();
+	}
+
+	/** Role looks must read at any distance, and the ghost is see-through: no effects on them. */
+	private syncEffect(): void {
+		const def = this.effectsOn && this.role === 'none' ? effectDef(this.loadout.effect) : null;
+		const id = def ? this.loadout.effect : null;
+		if (id === this.effectId) return;
+		this.effectId = id;
+		this.effect?.dispose();
+		this.effect = def ? new CharacterEffect(def, this.mesh.geometry, this.sk.skeleton) : null;
+		if (this.effect) this.group.add(...this.effect.objects);
 	}
 
 	getRole(): CharacterRole {
@@ -265,6 +294,7 @@ export class CharacterModel {
 		hex(PAL.mouth, r.claws || this.claws ? 0x1a1214 : 0x5d2a26);
 		const items = drawnItems(this.loadout);
 		for (const slot of COSMETIC_SLOTS) {
+			if (slot === 'effect') continue;
 			const base = SLOT_PAL[slot];
 			const over = slot === 'glasses' ? undefined : r[slot];
 			const glow = slot === 'top' ? (r.topGlow ?? 0) : slot === 'bottom' ? (r.bottomGlow ?? 0) : slot === 'hat' ? (r.topGlow ?? 0) : 0;
@@ -272,7 +302,7 @@ export class CharacterModel {
 			const own = typeof def?.colors === 'function' ? def.colors(p.tint) : (def?.colors ?? []);
 			for (let i = 0; i < 4; i++) {
 				const h = over?.[i] ?? own[i] ?? own[0] ?? 0xffffff;
-				hex(base + i, h, over ? glow : 0);
+				hex(base + i, h, over ? glow : (def?.glow?.[i] ?? 0));
 			}
 		}
 		if (this.role === 'ghost') this.ghostTint();
@@ -303,7 +333,9 @@ export class CharacterModel {
 		if (lod !== this.lod) {
 			this.lod = lod;
 			this.mesh.geometry = this.look.get(lod);
+			this.effect?.setGeometry(this.mesh.geometry);
 		}
+		this.effect?.update(dtSec, dist, s.vx, s.vy, s.vz);
 		this.pending += dtSec;
 		if (--this.skip <= 0) {
 			this.skip = animateEvery(dist);
@@ -356,6 +388,7 @@ export class CharacterModel {
 
 	dispose(): void {
 		this.group.removeFromParent();
+		this.effect?.dispose();
 		this.look.release();
 		this.sk.skeleton.dispose();
 		this.material.dispose();

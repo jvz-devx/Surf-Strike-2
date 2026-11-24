@@ -75,6 +75,7 @@ export class GameRenderer {
 	}
 
 	loadMap(map: MapDef): void {
+		this.players.setEffects(map.kind !== 'hns');
 		this.unloadMap();
 		const t = map.theme;
 		this.sky.setTheme(t);

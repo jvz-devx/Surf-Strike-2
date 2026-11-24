@@ -10,10 +10,11 @@ Every humanoid in the game (remote players, turned players, infected, AI zombies
 | `outfit.ts` | Default tee, trousers, sneakers, plus reusable torso, sleeve, leg and seat builders |
 | `items.ts` | Client item meshes: `registerItemMesh`, `ItemMesh` |
 | `shop-items.ts` | Meshes of the shop's items, and helpers shared with `common/` |
-| `common/` | Meshes of the Common items, one file per item, listed in `common/index.ts` |
+| `common/`, `uncommon/`, `rare/`, `epic/` | Meshes of the other items, one file per item, listed in their `index.ts` |
 | `preview.ts` | Shop turntable and item pictures (own small WebGL context) |
 | `geometry.ts` | Merges the parts of a look into one shared, reference-counted geometry per LOD |
 | `material.ts` | One Lambert-based material per character: palette, baked shade, rim light |
+| `effects.ts` | Auras and flames of the `effect` slot |
 | `animator.ts` | Procedural animation |
 | `held.ts` | Third-person weapons (grip space) |
 | `model.ts` | `CharacterModel`, `applyLoadout`, roles, persons, LOD |
@@ -25,7 +26,7 @@ Every humanoid in the game (remote players, turned players, infected, AI zombies
 Data, shared by server and client (`packages/shared/src/cosmetics.ts`):
 
 ```ts
-COSMETIC_SLOTS                 // ['hat', 'glasses', 'top', 'bottom', 'shoes']
+COSMETIC_SLOTS                 // ['hat', 'glasses', 'top', 'bottom', 'shoes', 'effect']
 type Loadout                   // Record<CosmeticSlot, string | null>; null = the slot's default
 interface CosmeticItem         // { id, slot, name, isDefault?, rarity? }
 RARITIES                       // { basic, common, uncommon, rare, epic: { name, color, price } }; price null = loot only
@@ -40,13 +41,14 @@ sanitizeLoadout(untrusted)     // always a valid Loadout; use it on everything r
 
 The registry holds `top_default`, `bottom_default`, `shoes_default` and the shop's items (`SHOP_ITEMS`). Hat and glasses are empty by default. Buying, storage and messages: [economy.md](economy.md#shop). Guests wear the default look. Both ends run `sanitizeLoadout` on everything received or stored, so an item the other side does not know is simply not worn.
 
-| Slot | Items (Basic, 30 coins; Common ones only come from loot boxes) |
+| Slot | Items (Basic, 30 coins; all others only come from loot boxes) |
 | --- | --- |
-| hat | Breakline cap, Pom beanie, Straw hat; Common: Fry cook hat, Palm bucket hat, Trilby, Wave bandana |
-| glasses | Glare shades, Round shades; Common: Gold aviators, Sport wraps |
-| top | Sunset tee, Half-and-half tee, Checker tee; Common: Zip hoodie, Floral shirt, Varsity jacket |
-| bottom | Boardshorts, Joggers, Cargo pants; Common: Cuffed jeans, Track pants |
-| shoes | High-tops, Beach slides, Trail boots, Slip-ons; Common: Pulse runners, Chelsea boots |
+| hat | Breakline cap, Pom beanie, Straw hat; Common: Fry cook hat, Palm bucket hat, Trilby, Wave bandana, Newsboy cap, Backwards snapback, Headphones; Uncommon: Shark bite hat, Propeller cap; Epic: Dark lord helmet, Clown prince mask |
+| glasses | Glare shades, Round shades; Common: Gold aviators, Sport wraps, Cat-eye shades, Reading glasses; Uncommon: Pixel shades; Rare: Executive shades |
+| top | Sunset tee, Half-and-half tee, Checker tee; Common: Zip hoodie, Floral shirt, Varsity jacket, Denim jacket, Flannel shirt, Rugby shirt; Uncommon: Skeleton hoodie; Rare: Tailored suit jacket |
+| bottom | Boardshorts, Joggers, Cargo pants; Common: Cuffed jeans, Track pants, Corduroy pants, Court shorts; Uncommon: Lava pants; Rare: Tailored suit trousers |
+| shoes | High-tops, Beach slides, Trail boots, Slip-ons; Common: Pulse runners, Chelsea boots, Penny loafers, Skate shoes; Uncommon: Rubber duck slippers; Rare: Polished oxfords |
+| effect | Rare: Blue, Yellow, Red, Purple, Black, Orange, Pink, White, Green and Gray aura; Epic: Living flame |
 
 The own player is never drawn in the game, except as the shop preview and as the race ghost of an own run (your PB, or your record), which wears what you wear now.
 
@@ -98,6 +100,14 @@ registerItemMesh('cap_red', {
 
 `model.attach(socket, object)` hangs a separate mesh on a socket (held weapons). The model does not dispose attached objects.
 
+## Effects
+
+The `effect` slot puts a glow or fire over the whole body (`effects.ts`; loot only: ten Rare auras, the Epic "Living flame"). It is not part of the body geometry: a shell that shares the character's geometry and skeleton and shows only as a halo around the outline, and camera-facing flame quads instanced on the bones. Two more draw calls per wearer, animated in the shaders, premultiplied blending (`solid`: 0 light, 1 smoke, for black and gray). Flames trail the movement, thin out from 700 u and are gone at 2,400 u; the halo fades out at 4,000 u.
+
+To add one: a `SHOP_ITEMS` line with `slot: 'effect'` and an entry in `EFFECTS`.
+
+Not drawn: on role looks (IT, seeker, zombies, infected: they must read), on the race ghost, and for anyone in Hide and Seek (it would give hiders away).
+
 ## Roles
 
 `model.setRole('none' | 'it' | 'seeker' | 'zombie' | 'infected' | 'alpha' | 'ghost')`. A role overrides the palette of `top`, `bottom`, `shoes` and `hat` (and skin, hair and eyes for zombie looks), whatever is worn, so it reads at any distance; the shapes stay. IT and seekers are bright red. Zombies, infected and Patient Zero have glowing, unfogged eyes, so their glasses are not drawn. Posture (hunch, zombie arms) follows the role. The loadout comes back when the role ends.
@@ -115,7 +125,7 @@ Computed every frame from velocity, view angles, ground and duck flags; nothing 
 
 ## Cost
 
-One draw call per character (plus the name tag, and one for a held item). About 7,200 / 2,700 / 1,100 triangles at LOD 0 / 1 / 2, up to 9,750 / 3,700 / 1,800 fully dressed in shop items (switch at about 700 and 1,950 units, closer in a crowd: `crowdScale`). Far characters animate on every 2nd to 4th frame and off-screen ones not at all. Bones are not scene objects. Geometry is shared per look and freed with its last user.
+One draw call per character (plus the name tag, one for a held item, and two for an effect). About 7,200 / 2,700 / 1,100 triangles at LOD 0 / 1 / 2, up to 16,700 / 5,400 / 2,300 in the heaviest items (switch at about 700 and 1,950 units, closer in a crowd: `crowdScale`). Far characters animate on every 2nd to 4th frame and off-screen ones not at all. Bones are not scene objects. Geometry is shared per look and freed with its last user.
 
 ## Dev gallery
 

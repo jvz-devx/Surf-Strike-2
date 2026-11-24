@@ -14,7 +14,7 @@ describe('cosmetics', () => {
 			expect(awardLabel(`shop:${i.id}`)).toBe(`Shop: ${i.name}`);
 		}
 		expect(listCosmetics().filter((i) => i.isDefault).map((i) => i.id)).toEqual(['top_default', 'bottom_default', 'shoes_default']);
-		expect(listCosmetics()).toHaveLength(31);
+		expect(listCosmetics()).toHaveLength(66);
 		// Default items are never for sale, whatever their rarity.
 		expect(cosmeticPrice({ id: 'x', slot: 'top', name: 'x', isDefault: true, rarity: 'basic' })).toBeNull();
 		for (const r of Object.values(RARITIES)) expect((r.price === null || (Number.isInteger(r.price) && r.price > 0)) && /^#[0-9a-f]{6}$/.test(r.color) && r.name !== '').toBe(true);
@@ -29,11 +29,11 @@ describe('cosmetics', () => {
 
 	it('a loot box holds every common or better item, never basic or default ones', () => {
 		const items = lootItems();
-		expect(items).toHaveLength(13);
-		expect(items.every((i) => i.rarity === 'common' && !i.isDefault)).toBe(true);
+		expect(items).toHaveLength(48);
+		expect(items.every((i) => i.rarity !== 'basic' && !i.isDefault)).toBe(true);
+		expect(items.filter((i) => i.slot === 'effect').map((i) => i.rarity)).toEqual([...Array<string>(10).fill('rare'), 'epic']);
 		for (const r of Object.keys(LOOTBOX.odds) as (keyof typeof LOOTBOX.odds)[]) expect(LOOTBOX.refund[r]).toBeLessThanOrEqual(LOOTBOX.price);
-		// Only commons exist: they are certain.
-		expect(lootChances().map((g) => [g.rarity, g.chance])).toEqual([['common', 1]]);
+		expect(lootChances().map((g) => [g.rarity, g.items.length])).toEqual([['common', 25], ['uncommon', 6], ['rare', 14], ['epic', 3]]);
 	});
 
 	it('rolls by weight, whatever the odds add up to', () => {
@@ -71,14 +71,19 @@ describe('cosmetics', () => {
 				'hat_cap', 'hat_beanie', 'hat_straw', 'hat_frycook', 'glasses_shades', 'glasses_round', 'top_sunset', 'top_halves', 'top_checker',
 				'bottom_boardshorts', 'bottom_joggers', 'bottom_cargo', 'shoes_hightops', 'shoes_slides', 'shoes_boots', 'shoes_slipons',
 				'hat_bucket', 'hat_trilby', 'hat_bandana', 'glasses_aviator', 'glasses_wrap', 'top_hoodie',
-				'top_floral', 'top_varsity', 'bottom_jeans', 'bottom_track', 'shoes_runners', 'shoes_chelsea'
+				'top_floral', 'top_varsity', 'bottom_jeans', 'bottom_track', 'shoes_runners', 'shoes_chelsea',
+				'hat_newsboy', 'hat_snapback', 'hat_headphones', 'glasses_cateye', 'glasses_reading', 'top_denim',
+				'top_flannel', 'top_rugby', 'bottom_corduroy', 'bottom_court', 'shoes_loafers', 'shoes_skate',
+				'hat_shark', 'hat_propeller', 'glasses_pixel', 'top_skeleton', 'bottom_lava', 'shoes_duck',
+				'glasses_suit', 'top_suit', 'bottom_suit', 'shoes_suit', 'hat_darkhelm', 'hat_joker',
+				'effect_blue', 'effect_yellow', 'effect_red', 'effect_purple', 'effect_black', 'effect_orange', 'effect_pink', 'effect_white', 'effect_green', 'effect_gray', 'effect_fire'
 			])
 		);
 	});
 
 	it('has defaults for clothing and none for accessories', () => {
-		expect(COSMETIC_SLOTS.map((s) => defaultItem(s)?.id ?? null)).toEqual([null, null, 'top_default', 'bottom_default', 'shoes_default']);
-		expect(emptyLoadout()).toEqual({ hat: null, glasses: null, top: null, bottom: null, shoes: null });
+		expect(COSMETIC_SLOTS.map((s) => defaultItem(s)?.id ?? null)).toEqual([null, null, 'top_default', 'bottom_default', 'shoes_default', null]);
+		expect(emptyLoadout()).toEqual({ hat: null, glasses: null, top: null, bottom: null, shoes: null, effect: null });
 	});
 
 	it('refuses duplicate ids', () => {

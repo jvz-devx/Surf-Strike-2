@@ -9,10 +9,10 @@
  */
 
 /** Every cosmetic slot, in display order. */
-export const COSMETIC_SLOTS = ['hat', 'glasses', 'top', 'bottom', 'shoes'] as const;
+export const COSMETIC_SLOTS = ['hat', 'glasses', 'top', 'bottom', 'shoes', 'effect'] as const;
 export type CosmeticSlot = (typeof COSMETIC_SLOTS)[number];
 
-/** Slot to item id. `null` is the slot's default look (nothing for hat and glasses). */
+/** Slot to item id. `null` is the slot's default look (nothing for hat, glasses and effect). */
 export type Loadout = Record<CosmeticSlot, string | null>;
 
 export interface Rarity {
@@ -122,7 +122,7 @@ export function defaultItem(slot: CosmeticSlot): CosmeticItem | null {
 
 /** The default look: nothing equipped. */
 export function emptyLoadout(): Loadout {
-	return { hat: null, glasses: null, top: null, bottom: null, shoes: null };
+	return { hat: null, glasses: null, top: null, bottom: null, shoes: null, effect: null };
 }
 
 /**
@@ -174,6 +174,41 @@ const SHOP_ITEMS: readonly Required<Omit<CosmeticItem, 'isDefault'>>[] = [
 	{ id: 'bottom_jeans', slot: 'bottom', name: 'Cuffed jeans', rarity: 'common' },
 	{ id: 'bottom_track', slot: 'bottom', name: 'Track pants', rarity: 'common' },
 	{ id: 'shoes_runners', slot: 'shoes', name: 'Pulse runners', rarity: 'common' },
-	{ id: 'shoes_chelsea', slot: 'shoes', name: 'Chelsea boots', rarity: 'common' }
+	{ id: 'shoes_chelsea', slot: 'shoes', name: 'Chelsea boots', rarity: 'common' },
+	{ id: 'hat_newsboy', slot: 'hat', name: 'Newsboy cap', rarity: 'common' },
+	{ id: 'hat_snapback', slot: 'hat', name: 'Backwards snapback', rarity: 'common' },
+	{ id: 'hat_headphones', slot: 'hat', name: 'Headphones', rarity: 'common' },
+	{ id: 'glasses_cateye', slot: 'glasses', name: 'Cat-eye shades', rarity: 'common' },
+	{ id: 'glasses_reading', slot: 'glasses', name: 'Reading glasses', rarity: 'common' },
+	{ id: 'top_denim', slot: 'top', name: 'Denim jacket', rarity: 'common' },
+	{ id: 'top_flannel', slot: 'top', name: 'Flannel shirt', rarity: 'common' },
+	{ id: 'top_rugby', slot: 'top', name: 'Rugby shirt', rarity: 'common' },
+	{ id: 'bottom_corduroy', slot: 'bottom', name: 'Corduroy pants', rarity: 'common' },
+	{ id: 'bottom_court', slot: 'bottom', name: 'Court shorts', rarity: 'common' },
+	{ id: 'shoes_loafers', slot: 'shoes', name: 'Penny loafers', rarity: 'common' },
+	{ id: 'shoes_skate', slot: 'shoes', name: 'Skate shoes', rarity: 'common' },
+	{ id: 'hat_shark', slot: 'hat', name: 'Shark bite hat', rarity: 'uncommon' },
+	{ id: 'hat_propeller', slot: 'hat', name: 'Propeller cap', rarity: 'uncommon' },
+	{ id: 'glasses_pixel', slot: 'glasses', name: 'Pixel shades', rarity: 'uncommon' },
+	{ id: 'top_skeleton', slot: 'top', name: 'Skeleton hoodie', rarity: 'uncommon' },
+	{ id: 'bottom_lava', slot: 'bottom', name: 'Lava pants', rarity: 'uncommon' },
+	{ id: 'shoes_duck', slot: 'shoes', name: 'Rubber duck slippers', rarity: 'uncommon' },
+	{ id: 'glasses_suit', slot: 'glasses', name: 'Executive shades', rarity: 'rare' },
+	{ id: 'top_suit', slot: 'top', name: 'Tailored suit jacket', rarity: 'rare' },
+	{ id: 'bottom_suit', slot: 'bottom', name: 'Tailored suit trousers', rarity: 'rare' },
+	{ id: 'shoes_suit', slot: 'shoes', name: 'Polished oxfords', rarity: 'rare' },
+	{ id: 'hat_darkhelm', slot: 'hat', name: 'Dark lord helmet', rarity: 'epic' },
+	{ id: 'hat_joker', slot: 'hat', name: 'Clown prince mask', rarity: 'epic' },
+	{ id: 'effect_blue', slot: 'effect', name: 'Blue aura', rarity: 'rare' },
+	{ id: 'effect_yellow', slot: 'effect', name: 'Yellow aura', rarity: 'rare' },
+	{ id: 'effect_red', slot: 'effect', name: 'Red aura', rarity: 'rare' },
+	{ id: 'effect_purple', slot: 'effect', name: 'Purple aura', rarity: 'rare' },
+	{ id: 'effect_black', slot: 'effect', name: 'Black aura', rarity: 'rare' },
+	{ id: 'effect_orange', slot: 'effect', name: 'Orange aura', rarity: 'rare' },
+	{ id: 'effect_pink', slot: 'effect', name: 'Pink aura', rarity: 'rare' },
+	{ id: 'effect_white', slot: 'effect', name: 'White aura', rarity: 'rare' },
+	{ id: 'effect_green', slot: 'effect', name: 'Green aura', rarity: 'rare' },
+	{ id: 'effect_gray', slot: 'effect', name: 'Gray aura', rarity: 'rare' },
+	{ id: 'effect_fire', slot: 'effect', name: 'Living flame', rarity: 'epic' }
 ];
 for (const item of SHOP_ITEMS) registerCosmetic(item);

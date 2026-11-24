@@ -85,10 +85,11 @@ export function missingCoins(price: number, balance: number): string {
 
 export const SHOP_CATEGORIES: readonly { slot: CosmeticSlot; label: string }[] = [
 	{ slot: 'hat', label: 'Hats' },
-	{ slot: 'glasses', label: 'Sunglasses' },
+	{ slot: 'glasses', label: 'Glasses' },
 	{ slot: 'top', label: 'Tops' },
 	{ slot: 'bottom', label: 'Pants' },
-	{ slot: 'shoes', label: 'Shoes' }
+	{ slot: 'shoes', label: 'Shoes' },
+	{ slot: 'effect', label: 'Effects' }
 ];
 
 export interface ShopEntry {
@@ -127,7 +128,7 @@ export interface InventoryEntry {
 	worn: boolean;
 }
 
-const NO_ITEM: Partial<Record<CosmeticSlot, string>> = { hat: 'No hat', glasses: 'No glasses' };
+const NO_ITEM: Partial<Record<CosmeticSlot, string>> = { hat: 'No hat', glasses: 'No glasses', effect: 'No effect' };
 /** Most common first. */
 const RARITY_ORDER = Object.keys(RARITIES) as RarityId[];
 const rarityRank = (r: RarityId | null) => (r === null ? -1 : RARITY_ORDER.indexOf(r));

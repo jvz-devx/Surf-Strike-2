@@ -78,6 +78,7 @@ function mockRows(mode: GameModeId, n: number, self: number, old: boolean): Scor
 
 /** What the shop sells (before mockOwned() adds made-up items). */
 const MOCK_OFFERS = shopItems().map((i) => ({ id: i.id, price: cosmeticPrice(i)! }));
+const MOCK_SLOTS = COSMETIC_SLOTS.filter((s) => s !== 'effect');
 const MOCK_WORDS = ['Coral', 'Midnight', 'Neon', 'Dune', 'Frost', 'Ember', 'Moss', 'Violet', 'Salt', 'Copper', 'Glass'];
 
 /** `n` owned items: a few from the shop, all loot, then made-up loot drawn like a real item. */
@@ -86,9 +87,9 @@ function mockOwned(n: number): string[] {
 	const ids = ['hat_cap', 'top_sunset', 'shoes_slides', ...real.filter((i) => cosmeticPrice(i) === null).map((i) => i.id)].slice(0, n);
 	const rarities: RarityId[] = ['common', 'common', 'uncommon', 'common', 'rare', 'uncommon', 'common', 'epic'];
 	for (let i = 0; ids.length < n; i++) {
-		const slot = COSMETIC_SLOTS[i % COSMETIC_SLOTS.length]!;
+		const slot = MOCK_SLOTS[i % MOCK_SLOTS.length]!;
 		const like = real.filter((r) => r.slot === slot);
-		const base = like[Math.floor(i / COSMETIC_SLOTS.length) % like.length]!;
+		const base = like[Math.floor(i / MOCK_SLOTS.length) % like.length]!;
 		const id = `mock_${slot}_${i}`;
 		if (!getCosmetic(id)) {
 			registerCosmetic({ id, slot, name: `${MOCK_WORDS[i % MOCK_WORDS.length]} ${base.name.toLowerCase()}`, rarity: rarities[i % rarities.length]! });

@@ -87,7 +87,7 @@ describe('loot box', () => {
 
 	it('contents: real chances, complete once everything is owned', () => {
 		const c = boxContents(box, ['hat_trilby']);
-		expect(c.groups.map((g) => [g.rarity, chanceLabel(g.chance)])).toEqual([['common', '100 %']]);
+		expect(c.groups.map((g) => [g.rarity, chanceLabel(g.chance)])).toEqual([['common', '83.3 %'], ['uncommon', '10.4 %'], ['rare', '5.21 %'], ['epic', '1.04 %']]);
 		expect(c.items).toHaveLength(box.items.length);
 		expect(c.complete).toBe(false);
 		expect(boxContents(box, box.items).complete).toBe(true);
@@ -121,7 +121,7 @@ describe('inventory', () => {
 	});
 
 	it('marks one worn entry per slot', () => {
-		expect(keys(all.filter((e) => e.worn))).toEqual(['default:glasses', 'default:top', 'default:bottom', 'default:shoes', 'hat_frycook']);
+		expect(keys(all.filter((e) => e.worn))).toEqual(['default:glasses', 'default:top', 'default:bottom', 'default:shoes', 'default:effect', 'hat_frycook']);
 	});
 
 	it('filters by slot, rarity and text', () => {

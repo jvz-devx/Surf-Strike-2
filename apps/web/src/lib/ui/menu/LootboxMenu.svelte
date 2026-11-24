@@ -188,15 +188,23 @@
 				{#if error}<p class="hint bad" role="status">{error}</p>{/if}
 			</div>
 		</div>
-		<h3 class="ss-label">Contains one of these</h3>
+		<h3 class="ss-label">Contains one of these {contents.items.length} items</h3>
 		<div class="inside">
-			<div class="grid">
-				{#each contents.items as i (i.id)}
-					<ItemCard {pictures} drawn={i.id} name={i.name} rarity={i.rarity ?? 'common'} dim={shop.owned.includes(i.id)} onclick={() => {}}>
-						{#if shop.owned.includes(i.id)}<span class="owned">Owned</span>{/if}
-					</ItemCard>
-				{/each}
-			</div>
+			{#each [...contents.groups].reverse() as g (g.rarity)}
+				<section>
+					<h4 style:color={RARITIES[g.rarity].color}>
+						{RARITIES[g.rarity].name} <span class="ss-num">{chanceLabel(g.chance)}</span>
+						<span class="count">{g.items.filter((i) => shop.owned.includes(i.id)).length} / {g.items.length} owned</span>
+					</h4>
+					<div class="grid">
+						{#each g.items as i (i.id)}
+							<ItemCard {pictures} drawn={i.id} name={i.name} rarity={g.rarity} dim={shop.owned.includes(i.id)} onclick={() => {}}>
+								{#if shop.owned.includes(i.id)}<span class="owned">Owned</span>{/if}
+							</ItemCard>
+						{/each}
+					</div>
+				</section>
+			{/each}
 		</div>
 		<button type="button" class="ss-button plain back" disabled={phase === 'waiting'} onclick={onclose}>Back to the shop</button>
 	{:else}
@@ -345,6 +353,22 @@
 		min-height: 0;
 		overflow-y: auto;
 		padding-right: 4px;
+	}
+	.inside section + section {
+		margin-top: 12px;
+	}
+	h4 {
+		margin: 0 0 6px;
+		font: 700 14px/1 var(--ui-font);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+	.count {
+		margin-left: 8px;
+		font-weight: 500;
+		letter-spacing: 0;
+		text-transform: none;
+		color: var(--text-dim);
 	}
 	.grid {
 		display: grid;

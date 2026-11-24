@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CharacterAnimator, cycleDistance, emptyMotion, footOffset, gaitShape, type MotionState, type Posture } from './animator.js';
 import { crowdScale } from './crowd.js';
+import { effectDef } from './effects.js';
 import { acquireLook, liveLooks, lookParts, mergeParts, type LookSpec } from './geometry.js';
 import { HELD, HeldAssets, type HeldItem } from './held.js';
 import { drawnItems, itemMesh } from './items.js';
@@ -261,11 +262,13 @@ describe('cosmetics', () => {
 	const wear = (l: Partial<Loadout>): Loadout => ({ ...emptyLoadout(), ...l });
 
 	it('every shop item has a mesh in its slot that builds at every LOD, within budget, in its own colours', () => {
-		const budget = [2600, 800, 420];
-		const items = [...ids].map((id) => getCosmetic(id)!).filter((i) => !i.isDefault);
-		expect(items).toHaveLength(28);
+		const items = [...ids].map((id) => getCosmetic(id)!).filter((i) => !i.isDefault && i.slot !== 'effect');
+		expect(items).toHaveLength(52);
 		for (const item of items) {
+			if (item.slot === 'effect') continue;
 			const mesh = itemMesh(item.id)!;
+			// Epic masks cover the whole head.
+			const budget = item.rarity === 'epic' ? [4200, 1300, 600] : [2600, 800, 420];
 			expect(mesh, item.id).toBeDefined();
 			expect(mesh.colors, item.id).toHaveLength(4);
 			expect(drawnItems(wear({ [item.slot]: item.id }))[item.slot]).toBe(item.id);
@@ -290,8 +293,8 @@ describe('cosmetics', () => {
 				expect(vol, `${item.id} faces outwards`).toBeGreaterThan(0);
 				mergeParts(lookParts({ ...LOOK, items: drawnItems(wear({ [item.slot]: item.id })) }, lod)).dispose();
 			}
-			// The fry cook hat is small and sits on top of the hair.
-			if (item.slot === 'hat' && item.id !== 'hat_frycook') expect(mesh.hides).toContain('hair');
+			// The fry cook hat and the headphones sit on top of the hair.
+			if (item.slot === 'hat' && item.id !== 'hat_frycook' && item.id !== 'hat_headphones') expect(mesh.hides).toContain('hair');
 		}
 	});
 
@@ -340,7 +343,8 @@ describe('cosmetics', () => {
 			glasses: null,
 			top: 'top_default',
 			bottom: 'bottom_default',
-			shoes: 'sample_boots'
+			shoes: 'sample_boots',
+			effect: null
 		});
 	});
 
@@ -366,9 +370,43 @@ describe('cosmetics', () => {
 		}
 	});
 
+	it('every effect item has an effect; only the plain look draws it, and it goes with the character', () => {
+		const fx = [...ids].map((id) => getCosmetic(id)!).filter((i) => i.slot === 'effect');
+		expect(fx).toHaveLength(11);
+		expect(fx.filter((i) => i.rarity === 'rare')).toHaveLength(10);
+		expect(effectDef('effect_nope')).toBeNull();
+		expect(effectDef('toString')).toBeNull();
+		for (const i of fx) expect(effectDef(i.id), i.id).not.toBeNull();
+		const m = new CharacterModel(personOf(4), assets);
+		const drawn = () => m.group.children.filter((c) => c.name.startsWith('effect-'));
+		expect(drawn()).toHaveLength(0);
+		applyLoadout(m, wear({ effect: 'effect_fire' }));
+		expect(drawn()).toHaveLength(2);
+		// The shell follows clothes and LOD.
+		applyLoadout(m, wear({ effect: 'effect_fire', top: 'top_sunset' }));
+		m.update(1 / 60, emptyMotion(), 3000);
+		const shell = drawn().find((c) => c.name === 'effect-shell') as THREE.SkinnedMesh;
+		expect(shell.geometry).toBe(m.mesh.geometry);
+		expect(drawn().find((c) => c.name === 'effect-flames')!.visible).toBe(false);
+		m.setRole('it');
+		expect(drawn()).toHaveLength(0);
+		m.setRole('none');
+		expect(drawn()).toHaveLength(2);
+		m.setEffects(false);
+		expect(drawn()).toHaveLength(0);
+		m.setEffects(true);
+		applyLoadout(m, wear({ effect: 'effect_blue' }));
+		expect(drawn()).toHaveLength(2);
+		m.dispose();
+		const ghost = new CharacterModel(personOf(4), assets, { ghost: true });
+		applyLoadout(ghost, wear({ effect: 'effect_fire' }));
+		expect(ghost.group.children.some((c) => c.name.startsWith('effect-'))).toBe(false);
+		ghost.dispose();
+	});
+
 	it('roles override clothing colours and keep the loadout', () => {
 		const m = new CharacterModel(personOf(3), assets);
-		applyLoadout(m, { ...SAMPLE_IDS });
+		applyLoadout(m, wear(SAMPLE_IDS));
 		const color = (i: number) => m.material.palette[i]!.clone();
 		const own = color(PAL.topA);
 		const lens = color(PAL.glassesB);
@@ -384,7 +422,7 @@ describe('cosmetics', () => {
 		m.setRole('none');
 		expect(color(PAL.topA).equals(own)).toBe(true);
 		expect(color(PAL.glassesB).equals(lens)).toBe(true);
-		expect(m.getLoadout()).toEqual({ ...SAMPLE_IDS });
+		expect(m.getLoadout()).toEqual(wear(SAMPLE_IDS));
 		m.dispose();
 	});
 
