@@ -1107,11 +1107,13 @@ export class Lobby {
 	// Periodic sends
 
 	sendSnapshot(): void {
+		const now = this.now();
 		const entries: SnapshotEntry[] = [];
 		for (const c of this.clients) {
 			if (c.helloed && !c.spectating && c.state) entries.push({ id: c.id, ...c.state });
 		}
 		if (entries.length === 0) return;
+		this.mode.snapshot?.(entries, now);
 		const buf = Buffer.from(encodeSnapshot(entries));
 		for (const c of this.clients) if (c.helloed) this.sendRaw(c, buf);
 	}
