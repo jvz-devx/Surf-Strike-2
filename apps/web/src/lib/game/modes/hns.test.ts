@@ -325,11 +325,11 @@ describe('HnsMode', () => {
 	});
 
 	describe('dress', () => {
-		it('only updates the held knife of players who are not drawn', () => {
+		it('keeps the knife and the seeker mark of players who are not drawn, without tracing', () => {
 			const { mode, state, log } = setup();
 			state('seeking', [2], [1, 3]);
-			expect(dressed(mode, remote(2, 100), false)).toEqual({ setHeld: 'knife' });
-			expect(dressed(mode, remote(3, 100), false)).toEqual({ setHeld: null });
+			expect(dressed(mode, remote(2, 100), false)).toEqual({ setHeld: 'knife', setSeeker: true });
+			expect(dressed(mode, remote(3, 100), false)).toEqual({ setHeld: null, setSeeker: false });
 			expect(log.traces).toEqual([]);
 		});
 

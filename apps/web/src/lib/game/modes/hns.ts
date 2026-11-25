@@ -66,8 +66,8 @@ export class HnsMode implements ClientMode {
 		const { client, host } = this;
 		const role = client.roleOf(p.id);
 		players.setHeld(p.id, role === 'seeker' ? 'knife' : null);
-		if (!visible) return;
 		players.setSeeker(p.id, role === 'seeker');
+		if (!visible) return;
 		const eye = host.spec ? host.spec.pos : host.eye;
 		const head = { x: p.sample.x, y: p.sample.y, z: p.sample.z + 64 };
 		const dist = Math.hypot(head.x - eye.x, head.y - eye.y, head.z - eye.z);
