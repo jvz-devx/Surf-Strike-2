@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { it } from 'node:test';
+import { renderTimeBudgetMs } from '@surf/shared';
+import { AdaptiveDelay } from '../../web/src/lib/net/adaptive.ts';
+import { ServerClock } from '../../web/src/lib/net/clock.ts';
 import { observeRenderTime, renderRewindMs, type ModePlayer } from './modes/types.ts';
 
 const history = 400;
@@ -23,7 +26,6 @@ it('keeps an invalid timestamp on the established timeline', () => {
 	assert.equal(renderRewindMs(800, 1400, p, history, 0), 110);
 });
 
-
 it('uses recent states to bound attacks even when the shooter changes claim formats', () => {
 	const p = peer();
 	for (let now = 1000; now <= 2000; now += 20) {
@@ -31,4 +33,39 @@ it('uses recent states to bound attacks even when the shooter changes claim form
 		assert.equal(renderRewindMs(now - 290, now, p, history, 0), 142);
 		assert.equal(renderRewindMs(undefined, now, p, history, 0), 78);
 	}
+});
+
+it('reanchors rewind after a 130 ms to 10 ms downlink correction', () => {
+	const p = { ping: 140, hasRttSample: true } as ModePlayer;
+	const clock = new ServerClock();
+	const delay = new AdaptiveDelay();
+	const step = 1000 / 64;
+	const uplink = 10;
+	let seq = 0;
+	let maxSettledError = 0;
+	for (let i = 0; i < 128; i++) {
+		const local = 1000 + i * step;
+		const downlink = i < 64 ? 130 : 10;
+		if (i % 2 === 0) {
+			const obs = clock.observeSnapshot(local, local - downlink, ++seq);
+			delay.observeSnapshot(local, { ...obs, jitterMs: clock.jitter, rttMs: downlink + uplink });
+		}
+		const claim = clock.renderTime(local, delay.update(local, step));
+		const now = local + uplink;
+		observeRenderTime(claim, now, p);
+		const rewind = renderRewindMs(claim, now, p, history, 0);
+		assert.ok(rewind <= renderTimeBudgetMs(p.ping));
+		if (i >= 64 + 20) maxSettledError = Math.max(maxSettledError, Math.abs(rewind - (now - claim)));
+	}
+	assert.ok(maxSettledError < 2, `rewind still differs by ${maxSettledError} ms after 313 ms`);
+});
+
+it('discards the old rewind window after a gap in combat states', () => {
+	const p = peer();
+	observeRenderTime(780, 1000, p);
+	assert.equal(renderRewindMs(780, 1000, p, history, 0), 220);
+
+	assert.equal(renderRewindMs(2031, 2101, p, history, 84), 84);
+	observeRenderTime(2031, 2101, p);
+	assert.equal(renderRewindMs(2031, 2101, p, history, 0), 70);
 });

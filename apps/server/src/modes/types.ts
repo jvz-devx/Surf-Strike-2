@@ -100,6 +100,11 @@ export type ModeClientMessage = Extract<ClientMessage, { type: 'fire' | 'reload'
 
 /** State packets arrive at 64 Hz. Briefly keep using their estimate during an uplink stall. */
 const RENDER_STATE_FRESH_MS = 100;
+const RENDER_STATE_RESET_MS = 1000;
+const RENDER_REANCHOR_SAMPLES = 3;
+const RENDER_REANCHOR_RANGE_MS = 4;
+/** Three 64 Hz states span about 31 ms. A burst alone cannot re-anchor the window. */
+const RENDER_REANCHOR_MIN_SPAN_MS = 25;
 /** A packet after a pause cannot spend the whole pause steering the estimate. */
 const RENDER_MAX_STEP_MS = 50;
 /** Allow the clock estimate to move as well as the client's interpolation delay. */
@@ -109,22 +114,52 @@ class RenderTimeline {
 	private offset: number | undefined;
 	private updatedAt = -Infinity;
 	private stateAt = -Infinity;
+	private candidate: { since: number; min: number; max: number; count: number } | undefined;
 
-	private update(age: number, now: number): void {
+	private update(age: number, now: number): number {
 		const dt = Math.min(RENDER_MAX_STEP_MS, Math.max(0, now - this.updatedAt));
 		const offset = this.offset ?? age;
 		const lo = offset - (RENDER_DELAY_SHRINK_RATE + RENDER_CLOCK_RATE) * dt;
 		const hi = offset + (RENDER_DELAY_GROW_RATE + RENDER_CLOCK_RATE) * dt;
 		this.offset = Math.max(lo, Math.min(hi, age));
 		this.updatedAt = now;
+		return this.offset;
 	}
 
 	observeState(age: number, now: number): void {
-		this.update(age, now);
+		const gap = now - this.stateAt;
 		this.stateAt = now;
+		if (gap > RENDER_STATE_RESET_MS) {
+			this.offset = age;
+			this.updatedAt = now;
+			this.candidate = undefined;
+			return;
+		}
+
+		const offset = this.update(age, now);
+		// Fast clock corrections can leave the client's render time outside the slew window.
+		// Only a consistent run of state claims can re-anchor it.
+		if (Math.abs(age - offset) <= RENDER_TIME_SLACK_MS) {
+			this.candidate = undefined;
+			return;
+		}
+		const candidate = this.candidate;
+		if (!candidate || gap > RENDER_STATE_FRESH_MS ||
+			Math.max(candidate.max, age) - Math.min(candidate.min, age) > RENDER_REANCHOR_RANGE_MS) {
+			this.candidate = { since: now, min: age, max: age, count: 1 };
+			return;
+		}
+		candidate.min = Math.min(candidate.min, age);
+		candidate.max = Math.max(candidate.max, age);
+		candidate.count++;
+		if (candidate.count >= RENDER_REANCHOR_SAMPLES && now - candidate.since >= RENDER_REANCHOR_MIN_SPAN_MS) {
+			this.offset = age;
+			this.candidate = undefined;
+		}
 	}
 
-	rewind(age: number | null, now: number, max: number): number {
+	rewind(age: number | null, now: number, max: number, fallback: number): number {
+		if (this.stateAt !== -Infinity && now - this.stateAt > RENDER_STATE_RESET_MS) return fallback;
 		const offset = this.offset ?? age ?? 0;
 		if (age === null) return Math.min(max, offset);
 		if (now - this.stateAt > RENDER_STATE_FRESH_MS) this.update(age, now);
@@ -152,13 +187,14 @@ export function observeRenderTime(claim: number, now: number, p: ModePlayer): vo
 export function renderRewindMs(claim: unknown, now: number, p: ModePlayer, historyMs: number, fallbackMs: number): number {
 	const rtt = p.ping;
 	const max = Math.min(historyMs, renderTimeBudgetMs(rtt));
+	const fallback = Math.max(0, Math.min(max, fallbackMs));
 	let age: number | null;
-	if (claim === undefined || p.hasRttSample === false) age = Math.max(0, Math.min(max, fallbackMs));
+	if (claim === undefined || p.hasRttSample === false) age = fallback;
 	else {
 		const at = typeof claim === 'number' ? clampRenderTime(claim, now, rtt, historyMs) : null;
 		age = at === null ? null : now - at;
 	}
-	return renderTimeline(p).rewind(age, now, max);
+	return renderTimeline(p).rewind(age, now, max, fallback);
 }
 
 export const EMPTY_RECORDS: MapRecordInfo = Object.freeze({
