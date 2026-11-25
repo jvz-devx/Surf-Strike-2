@@ -220,7 +220,8 @@ export class TagGame {
 	/**
 	 * Advance to `now`. `active` holds every non-spectating player in the map
 	 * with their latest position (null = no state received yet: counts as a
-	 * player but cannot tag or be tagged). A discontinuity breaks the movement segment.
+	 * player but cannot tag or be tagged). Pass IDs with stale or discontinuous
+	 * poses in `discontinuous` to check only their endpoint contact this tick.
 	 */
 	update(now: number, active: ReadonlyMap<number, TagPos | null>, discontinuous?: ReadonlySet<number>): TagEvent[] {
 		const events: TagEvent[] = [];

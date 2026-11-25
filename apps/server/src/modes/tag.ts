@@ -142,6 +142,8 @@ export class TagMode implements ServerMode {
 			if (p.spectating) continue;
 			playing.set(p.id, p);
 			const s = p.state;
+			const pose = this.poses.get(p.id);
+			if (s && (!pose || now - pose.at > TAG_MAX_SWEEP_MS)) this.discontinuous.add(p.id);
 			active.set(p.id, s ? { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0 } : null);
 		}
 		const events = this.game.update(now, active, this.discontinuous);

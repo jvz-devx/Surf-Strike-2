@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import type { MapDef, ServerMessage } from '@surf/shared';
-import { FLAG_TELEPORTED, Status, TAG_IMMUNITY_SECS, TAG_INTERMISSION_SECS, TAG_ROUND_SECS } from '@surf/shared';
+import { FLAG_TELEPORTED, Status, TAG_IMMUNITY_SECS, TAG_INTERMISSION_SECS, TAG_MAX_SWEEP_MS, TAG_ROUND_SECS } from '@surf/shared';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
 import { netState, sleep, TestClient, testMap } from './test-helpers.ts';
@@ -224,7 +224,7 @@ describe('tag mode', () => {
 });
 
 describe('tag sweep packet timing', () => {
-	async function crossing({ gap = 31.25, flags = 0, wall = false } = {}) {
+	async function crossing({ gap = 31.25, flags = 0, wall = false, taggerMoves = false, end = 50 } = {}) {
 		let now = 1000;
 		const map = tagMap();
 		map.zones.push({
@@ -242,19 +242,24 @@ describe('tag sweep packet timing', () => {
 			const wa = await a.hello('Tagger');
 			const wb = await b.hello('Runner');
 			now += TAG_INTERMISSION_SECS * 1000;
-			const put = async (c: TestClient, id: number, tick: number, x: number, y: number, stateFlags = 0) => {
-				c.sendState(netState(tick, x, { y, flags: stateFlags }));
-				await c.until(() => [...s.lobby.clients].find((p) => p.id === id)?.state?.tick === tick);
+			const tagger = { client: a, id: wa.selfId, y: wall ? -19 : 0 };
+			const runner = { client: b, id: wb.selfId, y: wall ? 19 : 0 };
+			const [moving, stationary] = taggerMoves ? [tagger, runner] : [runner, tagger];
+			const put = async ({ client, id, y }: typeof tagger, tick: number, x: number, stateFlags = 0) => {
+				client.sendState(netState(tick, x, { y, flags: stateFlags }));
+				await client.until(() => [...s.lobby.clients].find((p) => p.id === id)?.state?.tick === tick);
 			};
-			await put(a, wa.selfId, 1, 0, wall ? -19 : 0);
-			await put(b, wb.selfId, 1, -50, wall ? 19 : 0);
+			let tick = 1;
+			await put(stationary, tick, 0);
+			await put(moving, tick, -50);
 			s.lobby.tickMode();
 			for (let elapsed = 31.25; elapsed < gap; elapsed += 31.25) {
 				now += 31.25;
+				if (taggerMoves) await put(moving, ++tick, -50);
 				s.lobby.tickMode();
 			}
 			now = 1000 + TAG_INTERMISSION_SECS * 1000 + gap;
-			await put(b, wb.selfId, 2, 50, wall ? 19 : 0, flags);
+			await put(moving, ++tick, end, flags);
 			s.lobby.tickMode();
 			return s.lobby.scoreRows().find((p) => p.it)?.id === wb.selfId;
 		} finally {
@@ -270,6 +275,22 @@ describe('tag sweep packet timing', () => {
 
 	it('does not sweep a new pose across a 281 ms packet gap', async () => {
 		assert.equal(await crossing({ gap: 281 }), false);
+	});
+
+	it('does not sweep a fresh tagger across a stalled runner', async () => {
+		assert.equal(await crossing({ taggerMoves: true, gap: TAG_MAX_SWEEP_MS + 1 }), false);
+	});
+
+	it('tags a stalled runner when the tagger ends in contact', async () => {
+		assert.equal(await crossing({ taggerMoves: true, gap: TAG_MAX_SWEEP_MS + 1, end: 30 }), true);
+	});
+
+	it('sweeps a fast tagger across a runner with a fresh pose', async () => {
+		assert.equal(await crossing({ taggerMoves: true }), true);
+	});
+
+	it('sweeps across a runner whose pose is exactly at the age limit', async () => {
+		assert.equal(await crossing({ taggerMoves: true, gap: TAG_MAX_SWEEP_MS }), true);
 	});
 
 	it('does not tag a runner across a solid wall at contact', async () => {
