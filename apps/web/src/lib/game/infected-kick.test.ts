@@ -190,7 +190,7 @@ describe('the recoil kick cannot be reduced', () => {
 		vi.stubGlobal('matchMedia', (query: string) => ({ matches: /reduce/.test(query), media: query, addEventListener: () => {}, removeEventListener: () => {} }));
 		expect(spray('lmg', 1200)).toEqual(baseline);
 		// The modules that make and apply the kick never ask.
-		for (const file of ['./gunfeel.ts', './infected.ts', './game.ts']) expect(text(file).match(/reduced[\s-]?motion|matchMedia/gi) ?? [], file).toEqual([]);
+		for (const file of ['./gunfeel.ts', './infected.ts', './modes/infected.ts', './game.ts']) expect(text(file).match(/reduced[\s-]?motion|matchMedia/gi) ?? [], file).toEqual([]);
 	});
 
 	it('no cvar, settings entry or console command for it', () => {
@@ -213,18 +213,18 @@ describe('the recoil kick cannot be reduced', () => {
 		// Compile-time: this line stops type-checking when InfHost gets the member back.
 		const noScale: 'viewKickScale' extends keyof InfHost ? false : true = true;
 		expect(noScale).toBe(true);
-		for (const file of ['./cvars.ts', './gunfeel.ts', './infected.ts', './game.ts', './commands.ts', '../ui/menu/menu.ts', '../ui/menu/SettingsMenu.svelte']) {
+		for (const file of ['./cvars.ts', './gunfeel.ts', './infected.ts', './modes/infected.ts', './game.ts', './commands.ts', '../ui/menu/menu.ts', '../ui/menu/SettingsMenu.svelte']) {
 			expect(text(file).match(/cl_viewkick|viewKickScale|kickScale|hiddenKick/g) ?? [], file).toEqual([]);
 		}
-		// game.ts: the infected host stores the kick unscaled and reads no cvar but the zoom's `fov`.
-		const game = text('./game.ts');
-		const from = game.indexOf('const host: InfHost = {');
-		const host = game.slice(from, game.indexOf('this.inf = new InfectedClient(', from));
+		// The infected host stores the kick unscaled and reads no cvar but the zoom's `fov`.
+		const mode = text('./modes/infected.ts');
+		const from = mode.indexOf('const inf: InfHost = {');
+		const host = mode.slice(from, mode.indexOf('this.client = new InfectedClient(', from));
 		expect(from).toBeGreaterThan(0);
-		expect(host).toMatch(/setViewKick: \(pitch, yaw, roll\) => \{\s*this\.kickPitch = pitch;\s*this\.kickYaw = yaw;\s*this\.kickRoll = roll;\s*\}/);
-		expect([...host.matchAll(/cvars\.\w+\('([^']+)'\)/g)].map((m) => m[1])).toEqual(['fov']);
+		expect(host).toMatch(/setViewKick: \(pitch, yaw, roll\) => \{\s*view\.kickPitch = pitch;\s*view\.kickYaw = yaw;\s*view\.kickRoll = roll;\s*\}/);
+		expect([...host.matchAll(/\bcvar\('([^']+)'\)/g)].map((m) => m[1])).toEqual(['fov']);
 		// The camera adds exactly that offset to the view angles.
-		expect(game).toMatch(/kickedPitch\(this\.pitch, this\.kickPitch\), this\.yaw \+ this\.kickYaw, this\.kickRoll\)/);
+		expect(text('./game.ts')).toMatch(/const v = this\.client\.view \?\? NO_VIEW;\s*r\?\.setView\([^;]*kickedPitch\(this\.pitch, v\.kickPitch\), this\.yaw \+ v\.kickYaw, v\.kickRoll\)/);
 		// The renderer turns the camera by that roll.
 		expect(text('../render/renderer.ts')).toMatch(/this\.camera\.rotation\.z = roll \* \(Math\.PI \/ 180\);/);
 		// The calibration reads a constant FOV, never the `fov` cvar: gun feel touches no cvar at all.

@@ -26,7 +26,7 @@ export class GameRenderer {
 	private readonly held = new HeldAssets();
 	private readonly crowd = new CrowdView();
 	readonly players = new RemotePlayers(this.held);
-	/** Race ghost (docs/gameplay.md#ghosts); posed by game.ts every frame. */
+	/** Race ghost (docs/gameplay.md#ghosts); posed by the race mode every frame. */
 	readonly ghost = new GhostAvatar(this.held);
 	/** Zombies mode: zombies, corpses, tracers and the first-person viewmodel (docs/modes.md#zombies). */
 	readonly zombies = new ZombieRenderer(this.held);

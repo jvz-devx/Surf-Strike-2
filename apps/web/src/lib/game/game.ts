@@ -10,19 +10,12 @@ import {
 	DUCK_VIEW_HEIGHT,
 	encodeState,
 	eyeHeight,
-	clampInfVelocity,
 	FLAG_DUCKED,
 	FLAG_ON_GROUND,
-	FINISH_RESET_DELAY,
 	FLAG_TELEPORTED,
 	formatTenths,
 	formatTicks,
-	GhostRecorder,
-	inflateGhost,
-	unpackGhost,
 	getMap,
-	hnsSpawns,
-	HNS_NAMETAG_RANGE,
 	hullInBox,
 	CLOSE_IP_LIMIT,
 	MAP_IDS,
@@ -40,15 +33,12 @@ import {
 	passwordError,
 	playerMove,
 	usernameError,
-	randomSpawn,
 	mapTitle,
-	RunTracker,
 	sanitizeLoadout,
 	sanitizeText,
 	Status,
 	SURF_CVARS,
 	SV_BOOL_CVARS,
-	tagSpawns,
 	TICK_INTERVAL,
 	TICK_RATE,
 	VIEW_HEIGHT,
@@ -57,23 +47,19 @@ import {
 	type CollisionWorld,
 	type Cvars,
 	type GameModeDef,
-	type GhostFrame,
 	type Loadout,
 	type Spawn,
-	type TagModeState,
 	type MapDef,
 	type MapRecordInfo,
 	type NetState,
 	type PlayerState,
 	type RotationEvent,
-	type RunEvent,
 	type ScoreRow,
 	type ServerMessage,
 	type SnapshotEntry,
 	type UserCmd,
 	type Vec3,
-	type VoteOption,
-	type WeaponId
+	type VoteOption
 } from '@surf/shared';
 import { GameAudio } from '../audio/audio.js';
 import { GameFullscreen } from '../input/fullscreen.js';
@@ -95,7 +81,7 @@ import { CharacterPreview, disposeItemPictures, itemPicture, warmItemPictures } 
 import { parseBoxNews, parseCasinoNews, pushBoxNews } from './box-news.js';
 import { applyAward, awardPopup, countdown, noticePopup, pushPopup } from './coins.js';
 import { DevConsole, type PrintKind } from './console.js';
-import type { CharacterPreviewHandle, ChatLine, ConsoleLine, GameApi, TagView } from './contract.js';
+import type { CharacterPreviewHandle, ChatLine, ConsoleLine, GameApi } from './contract.js';
 import { ClientCvars } from './cvars.js';
 import { HudState } from './hud.svelte.js';
 import {
@@ -111,21 +97,18 @@ import {
 	type StoredSession
 } from './identity.js';
 import { FixedStep } from './loop.js';
-import { chooseGhost, ghostLabel, GhostPlayback, type GhostSource } from './ghost.js';
 import { browserGhostStore, type GhostStore } from './ghost-store.js';
-import { addKnockback, kickedPitch, zoomFov, zoomSensitivity } from './gunfeel.js';
-import { loadSoloPb, mergeRecordsPush, recordFields, saveSoloPb, splitDelta, type LocalPb } from './records.js';
+import { kickedPitch, zoomFov, zoomSensitivity } from './gunfeel.js';
+import { createClientMode, startSpawn } from './modes/index.js';
+import type { ClientMode, ClientModeHost, ModeView } from './modes/types.js';
+import { loadSoloPb, mergeRecordsPush, recordFields, saveSoloPb, type LocalPb } from './records.js';
 import { cycleTarget, findTargetByName, specTargets } from './spectate.js';
 import { browserStore, STORAGE_KEYS, type KeyValueStore } from './storage.js';
 import { mapLabel, routeVoteKey, voteLabel } from './vote.js';
-import { HnsClient, type HnsHost } from './hns.js';
-import { hnsTagVisible } from './hns-view.js';
-import { InfectedClient, type InfHost } from './infected.js';
-import { soundListener, soundSource } from './infected-listener.js';
-import { ZombiesClient, type ZmHost } from './zombies.js';
 
 const FREEFLY_SPEED = 1000;
-const ZERO_VEC: Vec3 = { x: 0, y: 0, z: 0 };
+/** Camera of a mode without effects. */
+const NO_VIEW: Readonly<ModeView> = Object.freeze({ zoomFov: 0, zoomT: 0, kickPitch: 0, kickYaw: 0, kickRoll: 0 });
 const MAX_CHAT_LINES = 100;
 const MAX_CONSOLE_LINES = 500;
 const SOLO_VOTER = 'local';
@@ -161,18 +144,6 @@ function vlerp(a: Vec3, b: Vec3, t: number, out: Vec3): Vec3 {
 	return out;
 }
 
-function phaseStatus(phase: RunTrackerPhase): Status {
-	switch (phase) {
-		case 'start':
-			return Status.StartZone;
-		case 'running':
-			return Status.Running;
-		case 'finished':
-			return Status.Finished;
-		default:
-			return Status.Idle;
-	}
-}
 type RunTrackerPhase = 'start' | 'running' | 'finished' | 'idle';
 
 function statusPhase(s: number): RunTrackerPhase {
@@ -228,22 +199,11 @@ export class Game implements CommandContext {
 	private map!: MapDef;
 	private world!: CollisionWorld;
 	private player!: PlayerState;
-	private tracker!: RunTracker;
-	/** Gamemode of the loaded map (docs/modes.md); race modes use `tracker`. */
+	/** Gamemode of the loaded map (docs/modes.md). */
 	private gameMode: GameModeDef = modeOf({ kind: 'surf' });
-	/** Tag: latest server mode state (null offline / race) and when it arrived. */
-	private tagState: TagModeState | null = null;
-	private tagStateAt = 0;
-	private tagFlash: TagView['flash'] = null;
-	private tagViewKey = '';
-	/** Zombies mode client (docs/modes.md#zombies); null on other maps. */
-	private zm: ZombiesClient | null = null;
-	/** Infected mode client (docs/modes.md#infected); null on other maps. */
-	private inf: InfectedClient | null = null;
-	/** Hide and seek client (docs/modes.md#hide-and-seek); null on other maps. */
-	private hns: HnsClient | null = null;
-	/** Physics cvars with the held weapon's max speed (zombies). */
-	private zmSv: Cvars = { ...SURF_CVARS };
+	/** Everything that mode decides. */
+	private client!: ClientMode;
+	private readonly modeHost = this.createModeHost();
 	private sv: Cvars = { ...SURF_CVARS };
 	private tick = 0;
 	private pitch = 0;
@@ -292,21 +252,8 @@ export class Game implements CommandContext {
 	private rotation: MapRotation | null = null;
 	private soloPb: LocalPb | null = null;
 
-	// Ghosts (docs/gameplay.md#ghosts)
-	private ghost = new GhostPlayback();
-	private ghostRec = new GhostRecorder();
+	// Ghosts (docs/gameplay.md#ghosts): played by the race mode
 	private ghostStore: GhostStore = browserGhostStore();
-	/** The server's record ghost for the current map (online). */
-	private recordGhost: GhostSource | null = null;
-	/** This browser's best run on the current map. */
-	private localGhost: GhostSource | null = null;
-	/** Set on the finish tick: the recorded run is closed after this tick's sample. */
-	private ghostFinish: number | null = null;
-	/** A teleport happened since the last recorded sample. */
-	private ghostTp = false;
-	/** Bumped per map load / ghost frame so late async results are dropped. */
-	private ghostSeq = 0;
-	private ghostFrameSeq = 0;
 	private ghostWarned = false;
 	/** What the record ghost's holder wears. */
 	private ghostLook: { map: string; loadout: Loadout } | null = null;
@@ -348,12 +295,7 @@ export class Game implements CommandContext {
 			this.renderer = new GameRenderer(canvas);
 			this.renderer.setFov(this.cvars.num('fov'));
 			// A case that falls is heard where it lands.
-			this.renderer.zombies.casings.onLand = (kind, at) => {
-				const name = kind === 'shell' ? 'shell' : 'casing';
-				const ears = soundListener(this.spec, this.currEye);
-				if (this.inf) this.audio.infected(name, at, ears, this.yaw);
-				else if (this.zm) this.audio.zombies(name, at, ears, this.yaw);
-			};
+			this.renderer.zombies.casings.onLand = (kind, at) => this.client.caseLanded?.(kind, at);
 			this.renderer.players.setHidden(this.cvars.num('cl_hideplayers') !== 0);
 		} catch (e) {
 			this.renderer = null;
@@ -390,8 +332,8 @@ export class Game implements CommandContext {
 				open: (c) => this.onOpen(c),
 				message: (m) => this.onMessage(m),
 				snapshot: (e, t) => this.onSnapshot(e, t),
-				ghost: (f) => this.onGhostFrame(f),
-				zombies: (f, t) => this.zm?.onZombies(f, t),
+				ghost: (f) => this.client.ghostFrame?.(f),
+				zombies: (f, t) => this.client.zombies?.(f, t),
 				closed: (wasOpen, _url, code) => this.onClosed(wasOpen, code)
 			},
 			{
@@ -555,17 +497,9 @@ export class Game implements CommandContext {
 		this.store.set(STORAGE_KEYS.lastMap, def.id);
 		this.world = buildCollisionWorld(def);
 		this.player = createPlayer({ ...def.spawn.pos });
-		this.tracker = new RunTracker(def);
 		this.gameMode = modeOf(def);
 		this.sv = { ...mapCvars(def), ...(serverCvars ?? {}) };
-		this.pitch = 0;
-		this.yaw = def.spawn.yaw;
-		if (this.gameMode.id === 'zombies') this.placeAt(def.spawn);
-		else if (this.gameMode.family === 'hns') {
-			const hiders = hnsSpawns(def).hiders;
-			this.placeAt(hiders[Math.floor(Math.random() * hiders.length)]!);
-		}
-		else if (!this.isRace()) this.placeAt(randomSpawn(def));
+		this.placeAt(startSpawn(def));
 		this.teleported = true;
 		this.snapEye();
 		this.step.reset();
@@ -577,12 +511,6 @@ export class Game implements CommandContext {
 		h.gameMode = this.gameMode.id;
 		h.modeFamily = this.gameMode.family;
 		h.modeState = null;
-		this.tagState = null;
-		this.tagFlash = null;
-		this.refreshTagView(performance.now());
-		this.resetZombies();
-		this.resetInfected();
-		this.resetHns();
 		h.unofficial = false;
 		h.splitPopup = null;
 		const staged = def.layout === 'staged';
@@ -601,7 +529,14 @@ export class Game implements CommandContext {
 			this.soloPb = loadSoloPb(this.store, def.id);
 		} else this.records = records ?? null;
 		this.applyRecords();
-		this.loadGhosts();
+		this.startMode();
+	}
+
+	/** (Re)create the mode of the current map and connection. */
+	private startMode(): void {
+		this.client?.dispose();
+		this.client = createClientMode(this.modeHost);
+		if (this.client.world) this.world = this.client.world;
 	}
 
 	private applyRecords(): void {
@@ -612,10 +547,6 @@ export class Game implements CommandContext {
 		h.recordTicks = f.recordTicks;
 		h.recordName = f.recordName;
 		h.recordTop = f.recordTop;
-	}
-
-	private pbSplits(): number[] | null {
-		return this.mode === 'online' ? (this.records?.pbSplits ?? null) : (this.soloPb?.splits ?? null);
 	}
 
 	/** Online and the only connected client (spectators count). */
@@ -785,12 +716,7 @@ export class Game implements CommandContext {
 			case 'attack2':
 				if (this.spec) {
 					if (is) this.cycleSpectate(action === 'attack' ? 1 : -1);
-				} else if (this.hns) {
-					if (action === 'attack') this.hns.press(is, performance.now(), this.currEye, this.pitch, this.yaw);
-				} else {
-					this.zm?.press(action, is, performance.now());
-					this.inf?.press(action, is, performance.now());
-				}
+				} else this.client.press?.(action, is, performance.now());
 				break;
 		}
 	}
@@ -798,8 +724,7 @@ export class Game implements CommandContext {
 	private releaseAll(): void {
 		for (const a of HOLD_ACTIONS) this.held[a] = 0;
 		this.pressedKeys.clear();
-		// A held aim lets go with the button (pointer lock lost); a toggled one stays.
-		this.inf?.press('attack2', false, performance.now());
+		this.client.release?.(performance.now());
 		this.sampler.releaseAll(performance.now());
 		this.hud.scoreboardOpen = false;
 	}
@@ -1034,22 +959,6 @@ export class Game implements CommandContext {
 		}
 	}
 
-	/** The ghost looks like the player whose run it shows: this one, one who is here, or as the server describes them. */
-	private dressGhost(): void {
-		const g = this.ghost.source;
-		if (!g || !this.renderer) return;
-		const { players, ghost } = this.renderer;
-		if (g.kind === 'pb' || (this.hud.account !== null && g.name === this.hud.account.username)) {
-			return ghost.setPlayer(this.selfId, this.hud.shop?.loadout ?? null);
-		}
-		for (const r of this.remotes.values()) if (r.name === g.name) return ghost.setPlayer(r.id, players.loadoutOf(r.id));
-		// Not here: a person of their own, always the same.
-		let hash = 0;
-		for (const ch of g.name) hash = (Math.imul(hash, 31) + ch.codePointAt(0)!) | 0;
-		ghost.setPlayer(hash >>> 1, this.ghostLook?.map === g.map ? this.ghostLook.loadout : null);
-	}
-
-
 	// -----------------------------------------------------------------------
 	// Admin (docs/ui.md#admin): the server decides who is admin and re-checks every request.
 
@@ -1117,8 +1026,7 @@ export class Game implements CommandContext {
 		switch (cmd.kind) {
 			case 'restart':
 			case 'back':
-				if (this.inf) return this.infectedRestart();
-				if (this.zm) return this.zm.chatRestart(performance.now());
+				if (this.client.chatRestart) return this.client.chatRestart(performance.now());
 				return cmd.kind === 'restart' ? this.restart() : this.back();
 			case 'spec':
 				return this.spectate(cmd.target);
@@ -1154,136 +1062,72 @@ export class Game implements CommandContext {
 	}
 
 	// -----------------------------------------------------------------------
-	// Runs
+	// Gamemode (docs/modes.md)
 	// -----------------------------------------------------------------------
 
-	/** (Re)create the zombies client for the current map and connection (docs/modes.md#zombies). */
-	private resetZombies(): void {
-		this.zm?.dispose();
-		this.zm = null;
-		if (this.gameMode.id !== 'zombies') {
-			if (this.hud.zombies) this.hud.zombies = null;
-			return;
-		}
-		const host: ZmHost = {
-			online: () => this.mode === 'online',
-			selfId: () => this.selfId,
+	/** What the modes see of the game: live views of its fields, and what they may do. */
+	private createModeHost(): ClientModeHost {
+		const game = this;
+		return {
+			get map() { return game.map; },
+			get sv() { return game.sv; },
+			get world() { return game.world; },
+			get player() { return game.player; },
+			get tick() { return game.tick; },
+			get alpha() { return game.step.alpha; },
+			get pitch() { return game.pitch; },
+			get yaw() { return game.yaw; },
+			get eye() { return game.currEye; },
+			get spec() { return game.spec; },
+			get remotes() { return game.remotes; },
+			get hud() { return game.hud; },
+			get audio() { return game.audio; },
+			get renderer() { return game.renderer; },
+			get online() { return game.mode === 'online'; },
+			get selfId() { return game.selfId; },
+			get viewId() { return game.viewId(); },
+			get voteOpen() { return !!game.hud.vote && !game.hud.vote.result; },
+			get ghostStore() { return game.ghostStore; },
+			get ghostLook() { return game.ghostLook; },
+			cvar: (name) => this.cvars.num(name),
+			myName: () => this.myName(),
+			name: (id) => this.remoteName(id),
 			send: (msg) => this.send(msg),
-			zombieRenderer: () => this.renderer?.zombies ?? null,
-			name: (id) => (this.mode === 'solo' ? this.myName() : this.remoteName(id)),
 			notice: (text) => this.notice(text),
-			teleport: (x, y, z, yaw) => {
-				this.placeAt({ pos: { x, y, z }, yaw });
+			print: (text, kind) => this.print(text, kind),
+			setAngles: (pitch, yaw) => {
+				this.pitch = pitch;
+				this.yaw = yaw;
+			},
+			teleport: (s) => {
+				this.placeAt(s);
 				this.afterTeleport();
 			},
-			voteOpen: () => !!this.hud.vote && !this.hud.vote.result,
-			// Heard from the camera: the spectator camera while spectating (infected-listener.ts).
-			sound: (name, at) => this.audio.zombies(name, soundSource(at, this.spec, this.remotes), soundListener(this.spec, this.currEye), this.yaw),
-			setZoom: (fov) => this.renderer?.setFov(fov ?? this.cvars.num('fov')),
-			push: (vx, vy) => {
-				this.player.velocity.x = vx;
-				this.player.velocity.y = vy;
+			movedInTick: () => {
+				this.teleported = true;
+				this.snapPending = true;
+			},
+			moved: () => this.afterTeleport(),
+			teleportZones: (spawn) => this.teleportZones(spawn),
+			avatarAct: (id, action) => this.renderer?.players.act(id, action),
+			rampUnder: (p) => this.rampUnder(p),
+			sendState: () => this.sendState(),
+			best: () => {
+				if (this.mode === 'online') return { ticks: this.records?.pbTicks ?? null, splits: this.records?.pbSplits ?? null };
+				return { ticks: this.soloPb?.ticks ?? null, splits: this.soloPb?.splits ?? null };
+			},
+			saveSoloBest: (ticks, splits) => {
+				const pb: LocalPb = { ticks, splits: [...splits] };
+				if (!saveSoloPb(this.store, this.map.id, pb)) return false;
+				this.soloPb = pb;
+				this.applyRecords();
+				return true;
+			},
+			ghostUnavailable: () => {
+				if (!this.ghostWarned) this.print('Record ghost unavailable (this browser cannot decode it).', 'error');
+				this.ghostWarned = true;
 			}
 		};
-		this.zm = new ZombiesClient(host, this.map, this.sv, performance.now());
-		// Closed gates are solid for the local player too.
-		this.world = this.zm.world;
-		this.hud.zombies = this.zm.frame(performance.now(), false, 0);
-	}
-
-	/** (Re)create the infected client for the current map and connection (docs/modes.md#infected). */
-	private resetInfected(): void {
-		this.inf?.dispose();
-		this.inf = null;
-		if (this.gameMode.id !== 'infected') {
-			if (this.hud.infected) this.hud.infected = null;
-			return;
-		}
-		const host: InfHost = {
-			online: () => this.mode === 'online',
-			selfId: () => this.selfId,
-			send: (msg) => this.send(msg),
-			zombieRenderer: () => this.renderer?.zombies ?? null,
-			infectedRenderer: () => this.renderer?.infected ?? null,
-			remotePlayers: () => this.renderer?.players ?? null,
-			name: (id) => this.remoteName(id),
-			notice: (text) => this.notice(text),
-			teleport: (x, y, z, yaw) => {
-				this.placeAt({ pos: { x, y, z }, yaw });
-				this.afterTeleport();
-			},
-			voteOpen: () => !!this.hud.vote && !this.hud.vote.result,
-			// Heard from the camera: the spectator camera while spectating (infected-listener.ts).
-			sound: (name, at) => this.audio.infected(name, soundSource(at, this.spec, this.remotes), soundListener(this.spec, this.currEye), this.yaw),
-			// The zoom eases: the camera follows `zoomProgress` every frame instead of snapping here.
-			setZoom: () => {},
-			// Knockback is an impulse on top of the player's velocity, capped along the hit (gunfeel.ts).
-			push: (vx, vy) => addKnockback(this.player.velocity, vx, vy),
-			zoomProgress: (fov, t) => {
-				this.zoomFov = fov;
-				this.zoomT = t;
-				this.renderer?.setFov(zoomFov(this.cvars.num('fov'), fov, t));
-			},
-			setViewKick: (pitch, yaw, roll) => {
-				this.kickPitch = pitch;
-				this.kickYaw = yaw;
-				this.kickRoll = roll;
-			},
-			spawns: () => tagSpawns(this.map)
-		};
-		this.inf = new InfectedClient(host, performance.now(), this.world);
-		this.hud.infected = this.inf.frame(performance.now(), false, 0);
-	}
-
-	/** Chat `!r`/`!b` in infected: solo respawns; online rounds restart by themselves. */
-	private infectedRestart(): void {
-		if (this.inf?.localFallouts) return this.respawnRandom();
-		this.notice('Infected rounds restart by themselves (use !rtv to change map).');
-	}
-
-	/** (Re)create the hide and seek client for the current map and connection (docs/modes.md#hide-and-seek). */
-	private resetHns(): void {
-		this.hns?.dispose();
-		this.hns = null;
-		if (this.gameMode.family !== 'hns') {
-			if (this.hud.hns) this.hud.hns = null;
-			return;
-		}
-		const host: HnsHost = {
-			online: () => this.mode === 'online',
-			selfId: () => this.selfId,
-			send: (msg) => this.send(msg),
-			name: (id) => this.remoteName(id),
-			teleport: (pos, yaw) => {
-				this.placeAt({ pos, yaw });
-				this.afterTeleport();
-			},
-			sound: (name, from) => {
-				if (from === undefined || from === this.selfId) return this.audio.hns(name);
-				const r = this.remotes.get(from);
-				if (!r?.hasSample) return;
-				const o = this.player.origin;
-				this.audio.hns(name, Math.hypot(r.sample.x - o.x, r.sample.y - o.y, r.sample.z - o.z));
-			},
-			viewmodel: () => this.renderer?.zombies ?? null,
-			viewId: () => this.tagViewId(),
-			cashBag: () => this.renderer?.cashBag ?? null,
-			eye: () => {
-				const pos = this.spec ? this.spec.pos : this.currEye;
-				return { x: pos.x, y: pos.y, yaw: this.yaw };
-			}
-		};
-		this.hns = new HnsClient(host, this.map);
-		this.hud.hns = this.hns.frame(performance.now(), false, 0);
-	}
-
-	/** Respawn point for fall-outs and !r in non-race modes. */
-	private fallSpawn(): Spawn {
-		return this.hns ? this.hns.fallSpawn() : randomSpawn(this.map);
-	}
-
-	private isRace(): boolean {
-		return this.gameMode.family === 'race';
 	}
 
 	/** Put the player at a spawn, standing still. */
@@ -1300,21 +1144,15 @@ export class Game implements CommandContext {
 		this.pitch = 0;
 	}
 
-	/** Non-race modes: respawn at a random map spawn (fall-outs, !r, leaving spectate). */
-	private respawnRandom(): void {
-		this.placeAt(this.fallSpawn());
-		this.afterTeleport();
-	}
-
 	/**
-	 * Non-race modes: teleport triggers respawn at a random spawn, or move the
-	 * player to the zone's fixed `dest` (map teleporters, any mode).
+	 * Teleport triggers of modes without a run tracker respawn at `spawn()`, or
+	 * move the player to the zone's fixed `dest` (map teleporters, any mode).
 	 */
-	private modeTick(): void {
+	private teleportZones(spawn: () => Spawn): void {
 		const p = this.player;
 		for (const z of this.map.zones) {
 			if (z.type !== 'teleport' || !hullInBox(p.origin, p.ducked, z)) continue;
-			this.placeAt(z.dest ?? this.fallSpawn());
+			this.placeAt(z.dest ?? spawn());
 			this.teleported = true;
 			this.snapPending = true;
 			return;
@@ -1323,45 +1161,27 @@ export class Game implements CommandContext {
 
 	/** E (`beacon`): infected plant a respawn beacon; other modes ignore it. */
 	beacon(): void {
-		if (this.spec) return;
-		this.inf?.placeBeacon(performance.now());
+		if (!this.spec) this.client.command?.('beacon', performance.now());
 	}
 
 	/** N (`moab`, also key 4): infected survivors call an earned M.O.A.B.; other modes ignore it. */
 	moab(): void {
-		if (this.spec) return;
-		this.inf?.callMoab(performance.now());
+		if (!this.spec) this.client.command?.('moab', performance.now());
 	}
 
 	restart(): void {
-		if (this.spec) return;
-		// Zombies: R reloads (chat !r restarts, see sendChat).
-		if (this.zm) return this.zm.reload(performance.now());
-		// Infected: R reloads the primary.
-		if (this.inf) return this.inf.reload(performance.now());
-		if (!this.isRace()) {
-			if (this.tagState?.phase === 'playing') return this.notice('!r is disabled during a tag round.');
-			if (this.hns && !this.hns.canRespawn()) return this.notice('!r is disabled during a hide and seek round.');
-			return this.respawnRandom();
-		}
-		this.tracker.restart(this.player);
-		this.yaw = this.map.spawn.yaw;
-		this.pitch = 0;
-		this.afterTeleport();
+		if (!this.spec) this.client.restart(performance.now());
 	}
 
 	back(): void {
 		if (this.spec) return;
-		if (!this.isRace()) return this.restart();
-		this.tracker.back(this.player);
-		this.yaw = this.tracker.state.respawn.yaw;
-		this.pitch = 0;
-		this.afterTeleport();
+		const now = performance.now();
+		if (this.client.back) this.client.back(now);
+		else this.client.restart(now);
 	}
 
 	private afterTeleport(): void {
 		this.teleported = true;
-		this.ghostTp = true;
 		this.snapEye();
 		this.hud.splitPopup = null;
 	}
@@ -1393,157 +1213,6 @@ export class Game implements CommandContext {
 		this.prevEye.z = this.currEye.z;
 	}
 
-	private onRunEvent(ev: RunEvent, now: number): void {
-		switch (ev.type) {
-			case 'zone':
-				// The server checks the last received state against the end zone:
-				// send this tick's state first so it is not a stale one from before entry.
-				if (ev.kind === 'end' && this.mode === 'online') this.sendState();
-				this.send({ type: 'zone', kind: ev.kind, index: ev.index, tick: ev.tick });
-				if (ev.kind !== 'start') this.audio.zoneBeep();
-				else this.ghostRec.start(ev.tick);
-				break;
-			case 'enterStart':
-				this.ghostRec.cancel();
-				this.audio.zoneBeep();
-				this.hud.splitPopup = null;
-				break;
-			case 'split': {
-				const splits = this.tracker.state.splits;
-				let pos = splits.lastIndexOf(ev.ticks);
-				if (pos < 0) pos = splits.length - 1;
-				const label = `${this.hud.stageKind === 'stage' ? 'Stage' : 'Checkpoint'} ${ev.index}`;
-				this.hud.splitPopup = { label, ticks: ev.ticks, delta: splitDelta(this.pbSplits(), pos, ev.ticks), at: now };
-				break;
-			}
-			case 'finish': {
-				const pb = this.mode === 'online' ? (this.records?.pbTicks ?? null) : (this.soloPb?.ticks ?? null);
-				this.hud.splitPopup = { label: 'Finish', ticks: ev.ticks, delta: pb !== null ? ev.ticks - pb : null, at: now };
-				if (this.mode === 'solo') this.soloFinish(ev.ticks, ev.splits);
-				this.ghostFinish = ev.ticks;
-				this.notice(`Returning to start in ${FINISH_RESET_DELAY} s…`);
-				break;
-			}
-			case 'teleport':
-				// restart()/back() set the view themselves; tracker-driven teleports do it here.
-				if (ev.dest) {
-					this.yaw = ev.dest.yaw;
-					this.pitch = 0;
-				} else if (ev.reason === 'trigger' || ev.reason === 'finish') {
-					this.yaw = this.tracker.state.respawn.yaw;
-					this.pitch = 0;
-				}
-				this.teleported = true;
-				this.ghostTp = true;
-				this.snapPending = true;
-				break;
-		}
-	}
-
-	private soloFinish(ticks: number, splits: number[]): void {
-		const time = formatTicks(ticks);
-		if (this.hud.unofficial) {
-			this.notice(`Finished in ${time} (unofficial: physics cvars changed, not saved).`);
-			return;
-		}
-		const old = this.soloPb?.ticks ?? null;
-		if (saveSoloPb(this.store, this.map.id, { ticks, splits: [...splits] })) {
-			this.soloPb = { ticks, splits: [...splits] };
-			this.applyRecords();
-			this.audio.recordChime();
-			const d = old !== null ? ` (−${formatTicks(old - ticks)})` : '';
-			this.notice(`New solo personal best: ${time}${d}. Solo runs are not sent to the leaderboard.`);
-		} else {
-			this.notice(`Finished in ${time} (PB ${formatTicks(old ?? ticks)}).`);
-		}
-	}
-
-	// -----------------------------------------------------------------------
-	// Ghosts (docs/gameplay.md#ghosts)
-	// -----------------------------------------------------------------------
-
-	/** Map loaded: drop the old ghosts, load the local PB ghost, ask the server for the record. */
-	private loadGhosts(): void {
-		const seq = ++this.ghostSeq;
-		this.ghostRec.cancel();
-		this.ghostFinish = null;
-		this.recordGhost = null;
-		this.localGhost = null;
-		this.refreshGhost();
-		if (!this.isRace()) return;
-		const map = this.map.id;
-		void this.ghostStore.get(map).then((g) => {
-			if (!g || this.map.id !== map || seq !== this.ghostSeq) return;
-			this.localGhost = { kind: 'pb', map, name: 'Your PB', ticks: g.ticks, track: g.track };
-			this.refreshGhost();
-		});
-		this.send({ type: 'getGhost', map });
-	}
-
-	private refreshGhost(): void {
-		const g = chooseGhost(this.mode === 'online', this.recordGhost, this.localGhost, this.map.id);
-		this.ghost.set(g);
-		if (g) this.renderer?.ghost.setLabel(ghostLabel(g));
-		this.dressGhost();
-	}
-
-	private onGhostFrame(f: GhostFrame): void {
-		if (this.mode !== 'online' || f.map !== this.map.id || !this.isRace()) return;
-		const seq = ++this.ghostFrameSeq;
-		const mapSeq = this.ghostSeq;
-		if (!f.has) {
-			this.recordGhost = null;
-			this.refreshGhost();
-			return;
-		}
-		void inflateGhost(f.payload).then((raw) => {
-			if (seq !== this.ghostFrameSeq || mapSeq !== this.ghostSeq || this.mode !== 'online' || f.map !== this.map.id) return;
-			const track = raw ? unpackGhost(raw) : null;
-			if (!track) {
-				if (!this.ghostWarned) this.print('Record ghost unavailable (this browser cannot decode it).', 'error');
-				this.ghostWarned = true;
-				return;
-			}
-			this.recordGhost = { kind: 'record', map: f.map, name: f.name, ticks: f.ticks, track };
-			this.refreshGhost();
-			this.print(`Record ghost: ${f.name} ${formatTicks(f.ticks)}`);
-		});
-	}
-
-	/** After the tracker update: record this tick of the local run (same data the server records). */
-	private recordGhostSample(): void {
-		const rec = this.ghostRec;
-		if (rec.recording && (this.tracker.state.phase === 'running' || this.ghostFinish !== null)) {
-			const p = this.player;
-			const flags = (p.ducked ? FLAG_DUCKED : 0) | (p.onGround ? FLAG_ON_GROUND : 0) | (this.ghostTp ? FLAG_TELEPORTED : 0);
-			rec.push(this.tick, p.origin.x, p.origin.y, p.origin.z, this.pitch, this.yaw, flags);
-		}
-		this.ghostTp = false;
-		if (this.ghostFinish === null) return;
-		const ticks = this.ghostFinish;
-		this.ghostFinish = null;
-		const track = rec.finish(this.tick);
-		// Unofficial runs (physics cvars changed) never become the PB ghost.
-		if (!track || this.hud.unofficial) return;
-		const map = this.map.id;
-		void this.ghostStore.saveIfFaster({ map, ticks, track }).then((saved) => {
-			if (!saved || this.map.id !== map) return;
-			this.localGhost = { kind: 'pb', map, name: 'Your PB', ticks, track };
-			this.refreshGhost();
-		});
-	}
-
-	private updateGhost(): void {
-		const r = this.renderer;
-		if (!r) return;
-		const st = this.tracker.state;
-		const on = this.cvars.num('cl_ghost') !== 0 && !this.spec && this.isRace();
-		const visible = on && this.ghost.update(st.phase, st.ticks, this.step.alpha);
-		const g = this.ghost.pose;
-		const onGround = (g.flags & FLAG_ON_GROUND) !== 0;
-		r.ghost.setPose(g.x, g.y, g.z, g.pitch, g.yaw, (g.flags & FLAG_DUCKED) !== 0, onGround, visible && !onGround ? this.rampUnder(g) : null, visible);
-	}
-
 	// -----------------------------------------------------------------------
 	// Simulation
 	// -----------------------------------------------------------------------
@@ -1558,29 +1227,9 @@ export class Game implements CommandContext {
 		if (!this.spec) {
 			c.pitch = this.pitch;
 			c.yaw = this.yaw;
-			const zm = this.zm;
-			const inf = this.inf;
-			const armed = zm ?? inf;
-			if (armed) {
-				// Zombies / infected: weapon (or claws) move speed; no movement while down.
-				Object.assign(this.zmSv, this.sv);
-				this.zmSv.sv_maxspeed = armed.maxSpeed(end);
-				if (!armed.down) playerMove(this.world, p, c, this.zmSv, TICK_INTERVAL);
-			} else if (this.hns?.frozen(end)) {
-				// Hide and seek: seekers frozen while the hiders hide, and found hiders for a moment.
-				p.velocity.x = p.velocity.y = 0;
-				if (p.velocity.z > 0) p.velocity.z = 0;
-			} else playerMove(this.world, p, c, this.sv, TICK_INTERVAL);
-			if (this.isRace()) {
-				const events = this.tracker.update(p, this.tick);
-				for (const ev of events) this.onRunEvent(ev, now);
-				this.recordGhostSample();
-			} else if (zm) zm.tick(end, p.origin, p.origin.z + eyeHeight(p), this.pitch, this.yaw, p.ducked);
-			else if (inf) {
-				inf.tick(end, p.origin, p.origin.z + eyeHeight(p), this.pitch, this.yaw, p.ducked, p.velocity, p.onGround);
-				// No server round (solo / waiting): fall-outs respawn locally.
-				if (inf.localFallouts) this.modeTick();
-			} else this.modeTick();
+			const sv = this.client.moveCvars ? this.client.moveCvars(end) : this.sv;
+			if (sv) playerMove(this.world, p, c, sv, TICK_INTERVAL);
+			this.client.tick(now, end);
 			if (p.jumped) this.audio.jump();
 			if (p.landedSpeed > 0) this.audio.land(p.landedSpeed);
 
@@ -1604,7 +1253,6 @@ export class Game implements CommandContext {
 		if (!this.net) return;
 		const p = this.player;
 		const s = this.netState;
-		const st = this.tracker.state;
 		s.tick = this.tick;
 		s.x = p.origin.x;
 		s.y = p.origin.y;
@@ -1615,51 +1263,18 @@ export class Game implements CommandContext {
 		s.pitch = this.pitch;
 		s.yaw = this.yaw;
 		s.flags = (p.ducked ? FLAG_DUCKED : 0) | (p.onGround ? FLAG_ON_GROUND : 0) | (this.teleported ? FLAG_TELEPORTED : 0);
-		if (this.isRace()) {
-			s.status = this.spec ? Status.Spectating : phaseStatus(st.phase);
-			s.stage = Math.max(0, Math.min(255, st.stage));
-			s.runTicks = st.phase === 'running' || st.phase === 'finished' ? st.ticks : 0;
-		} else {
-			s.status = this.spec
-				? Status.Spectating
-				: this.zm
-					? this.zm.down
-						? Status.Down
-						: Status.Alive
-					: this.inf
-						? this.inf.isAlpha
-							? Status.Alpha
-							: this.inf.isInfected
-								? Status.Infected
-								: Status.Alive
-					: this.hns
-						? this.hns.role === 'seeker'
-							? Status.Seeker
-							: Status.Hider
-					: this.tagState?.it.includes(this.selfId)
-						? Status.Tagger
-						: Status.Runner;
-			s.stage = 0;
-			s.runTicks = 0;
-		}
+		this.client.netState(s);
+		if (this.spec) s.status = Status.Spectating;
 		this.net.sendBinary(encodeState(s));
 		this.teleported = false;
 	}
 
-	/** Infected scope (gunfeel.ts): the scope's FOV and its eased 0..1 progress, reported by the mode every frame. */
-	private zoomFov = 0;
-	private zoomT = 0;
-	/** Infected view recoil: camera offset on top of the view angles (degrees). The aim angles themselves never move. */
-	private kickPitch = 0;
-	private kickYaw = 0;
-	/** Camera roll of the view kick (degrees, + = counter-clockwise). */
-	private kickRoll = 0;
-
 	/** Mouse sensitivity factor of the current zoom (`zoom_sensitivity_ratio`); 1 when not zoomed. */
 	private zoomSens(): number {
-		if (!this.inf || this.zoomT <= 0) return 1;
+		const v = this.client.view;
+		if (!v || v.zoomT <= 0) return 1;
 		const fov = this.cvars.num('fov');
-		return zoomSensitivity(fov, zoomFov(fov, this.zoomFov, this.zoomT), this.cvars.num('zoom_sensitivity_ratio'), this.zoomT);
+		return zoomSensitivity(fov, zoomFov(fov, v.zoomFov, v.zoomT), this.cvars.num('zoom_sensitivity_ratio'), v.zoomT);
 	}
 
 	private applyMouse(dtSec: number): void {
@@ -1716,25 +1331,7 @@ export class Game implements CommandContext {
 
 		const view = this.updateCamera(now);
 		this.updateRemotes(now);
-		if (this.zm) {
-			const v = this.zm.frame(now, !this.spec, Math.hypot(this.player.velocity.x, this.player.velocity.y));
-			if (this.hud.zombies !== v) this.hud.zombies = v;
-		}
-		if (this.inf) {
-			// Spectating: the HUD shows the target (tagViewId), local viewmodel and input are off.
-			this.inf.setSpectate(!!this.spec, this.spec && !this.spec.freeFly ? this.tagViewId() : null);
-			this.inf.viewYaw = this.yaw;
-			// Aim down sights: the FOV it magnifies and whether Mouse2 holds or toggles it.
-			this.inf.fov = this.cvars.num('fov');
-			this.inf.aimToggle = this.cvars.num('cl_aimtoggle') !== 0;
-			const v = this.inf.frame(now, !this.spec, Math.hypot(this.player.velocity.x, this.player.velocity.y));
-			if (this.hud.infected !== v) this.hud.infected = v;
-		}
-		if (this.hns) {
-			const v = this.hns.frame(now, !this.spec, Math.hypot(this.player.velocity.x, this.player.velocity.y));
-			if (this.hud.hns !== v) this.hud.hns = v;
-		}
-		this.updateGhost();
+		this.client.frame(now);
 		this.updateHud(now, view);
 		this.audio.update(Math.min(dt, 100) / 1000, {
 			speed: Math.hypot(this.player.velocity.x, this.player.velocity.y),
@@ -1750,11 +1347,6 @@ export class Game implements CommandContext {
 	/** Positions the camera; returns the sample shown on the HUD (spectated target) or null. */
 	private updateCamera(now: number): Sample | null {
 		const r = this.renderer;
-		if (!this.inf && (this.zoomT !== 0 || this.kickPitch !== 0 || this.kickYaw !== 0 || this.kickRoll !== 0)) {
-			// The infected client is gone (map or mode change): drop its zoom and kick.
-			this.zoomT = this.kickPitch = this.kickYaw = this.kickRoll = 0;
-			r?.setFov(this.cvars.num('fov'));
-		}
 		if (this.spec) {
 			const s = this.spec;
 			const target = s.targetId !== null ? this.remotes.get(s.targetId) : undefined;
@@ -1774,13 +1366,9 @@ export class Game implements CommandContext {
 		}
 		const e = vlerp(this.prevEye, this.currEye, this.step.alpha, this.renderEye);
 		// View recoil moves the camera only; shots follow it (infected.ts `shoot`).
-		r?.setView(e.x, e.y, e.z, kickedPitch(this.pitch, this.kickPitch), this.yaw + this.kickYaw, this.kickRoll);
+		const v = this.client.view ?? NO_VIEW;
+		r?.setView(e.x, e.y, e.z, kickedPitch(this.pitch, v.kickPitch), this.yaw + v.kickYaw, v.kickRoll);
 		return null;
-	}
-
-	/** Third-person recoil or swing of a remote player. */
-	private avatarShot(id: number, weapon: WeaponId): void {
-		this.renderer?.players.act(id, weapon === 'knife' || weapon === 'claws' ? 'swing' : 'fire');
 	}
 
 	/** Normal of the surf ramp an airborne hull at feet `p` rests on, for the surf stance (visual only). */
@@ -1795,7 +1383,6 @@ export class Game implements CommandContext {
 		const renderAt = now - INTERP_DELAY_MS;
 		const players = this.renderer?.players;
 		const specTarget = this.spec && !this.spec.freeFly ? this.spec.targetId : null;
-		const it = this.tagState?.it;
 		for (const rm of this.remotes.values()) {
 			rm.hasSample = rm.buf.sample(renderAt, rm.sample);
 			if (!players) continue;
@@ -1807,8 +1394,7 @@ export class Game implements CommandContext {
 				s.status !== Status.Spectating &&
 				rm.id !== specTarget &&
 				now - rm.buf.lastArrival < 3000 &&
-				!(this.zm?.isDown(rm.id) ?? false) &&
-				!(this.inf?.isDown(rm.id) ?? false);
+				!(this.client.isDown?.(rm.id) ?? false);
 			const pose = this.avatarPose;
 			pose.x = s.x;
 			pose.y = s.y;
@@ -1816,33 +1402,14 @@ export class Game implements CommandContext {
 			pose.vx = s.vx;
 			pose.vy = s.vy;
 			pose.vz = s.vz;
-			// As the server poses the hit body (a false claim moves both no further than the mode allows).
-			if (this.inf) clampInfVelocity(pose);
 			pose.yaw = s.yaw;
 			pose.pitch = s.pitch;
 			pose.ducked = (s.flags & FLAG_DUCKED) !== 0;
 			pose.onGround = (s.flags & FLAG_ON_GROUND) !== 0;
 			pose.ramp = visible && !pose.onGround ? this.rampUnder(s) : null;
+			this.client.adjustPose?.(pose);
 			players.setPose(rm.id, pose, visible);
-			// Infected sets what its players hold itself (infected-feedback.ts syncHeld).
-			if (!this.inf) players.setHeld(rm.id, this.zm?.heldOf(rm.id) ?? (this.hns?.roleOf(rm.id) === 'seeker' ? 'knife' : null));
-			players.setIt(rm.id, it?.includes(rm.id) ?? false);
-			players.setZombie(rm.id, this.zm?.isZombiePlayer(rm.id) ?? false);
-			players.setInfected(rm.id, this.inf?.roleOf(rm.id) ?? 'none', now);
-			if (this.hns && visible) {
-				// Hide and seek: seekers are marked; tags only up close, in sight, never hider tags to seekers.
-				const role = this.hns.roleOf(rm.id);
-				players.setSeeker(rm.id, role === 'seeker');
-				const eye = this.spec ? this.spec.pos : this.currEye;
-				const head = { x: s.x, y: s.y, z: s.z + 64 };
-				const dist = Math.hypot(head.x - eye.x, head.y - eye.y, head.z - eye.z);
-				const los = dist <= HNS_NAMETAG_RANGE && this.world.trace(eye, head, ZERO_VEC, ZERO_VEC).fraction >= 1;
-				const viewer = this.spec ? null : this.hns.roleOf(this.selfId);
-				players.setTagVisible(rm.id, hnsTagVisible(viewer, role, dist, los));
-			} else if (!this.hns) {
-				players.setSeeker(rm.id, false);
-				players.setTagVisible(rm.id, true);
-			}
+			this.client.dress?.(players, rm, visible, now);
 		}
 	}
 
@@ -1868,11 +1435,13 @@ export class Game implements CommandContext {
 			if (h.runTicks !== target.runTicks) h.runTicks = target.runTicks;
 			if (h.stage !== target.stage) h.stage = target.stage;
 		} else {
-			const st = this.tracker.state;
-			if (h.runPhase !== st.phase) h.runPhase = st.phase;
-			const ticks = st.phase === 'running' || st.phase === 'finished' ? st.ticks : 0;
+			const run = this.client.run;
+			const phase = run?.phase ?? 'idle';
+			if (h.runPhase !== phase) h.runPhase = phase;
+			const ticks = run && (phase === 'running' || phase === 'finished') ? run.ticks : 0;
 			if (h.runTicks !== ticks) h.runTicks = ticks;
-			if (h.stage !== st.stage) h.stage = st.stage;
+			const stage = run?.stage ?? (h.stageKind === 'stage' ? 1 : 0);
+			if (h.stage !== stage) h.stage = stage;
 		}
 
 		const k = h.keys;
@@ -1922,7 +1491,6 @@ export class Game implements CommandContext {
 		if (h.selfId !== selfId) h.selfId = selfId;
 		const selfName = this.myName();
 		if (h.selfName !== selfName) h.selfName = selfName;
-		if (!this.isRace()) this.refreshTagView(now);
 
 		if (this.spec) {
 			const name = this.spec.targetId !== null ? (this.remotes.get(this.spec.targetId)?.name ?? '') : '';
@@ -1934,95 +1502,30 @@ export class Game implements CommandContext {
 
 	private refreshSoloBoard(now: number): void {
 		this.lastSoloBoard = now;
-		const st = this.tracker.state;
-		const race = this.isRace();
 		const row: ScoreRow = {
 			id: SOLO_ROW_ID,
 			name: this.myName(),
 			rank: null,
-			pbTicks: race ? (this.soloPb?.ticks ?? null) : null,
-			status: race ? phaseStatus(st.phase) : Status.Runner,
-			stage: race ? st.stage : 0,
+			pbTicks: null,
+			status: Status.Runner,
+			stage: 0,
 			ping: 0,
 			spectating: false,
-			...(race ? {} : { score: 0, it: false })
+			...this.client.soloRow()
 		};
-		if (this.hns) Object.assign(row, { status: Status.Hider, kills: 0, score: 0, it: undefined });
-		if (this.zm) {
-			const z = this.zm.soloRow();
-			Object.assign(row, { status: z.alive ? Status.Alive : Status.Down, kills: z.kills, deaths: z.deaths, score: undefined, it: undefined });
-		}
-		if (this.inf) {
-			const z = this.inf.soloRow();
-			Object.assign(row, { status: Status.Alive, kills: z.kills, deaths: z.deaths, score: z.score, it: undefined });
-		}
 		this.hud.scoreboard = [row];
-		const zm = this.zm?.soloState();
-		if (zm) this.hud.modeState = { mode: 'zombies', ...zm };
+		const state = this.client.soloState?.();
+		if (state) this.hud.modeState = state;
 	}
-
-	// -----------------------------------------------------------------------
-	// Tag (docs/modes.md#tag)
-	// -----------------------------------------------------------------------
 
 	private remoteName(id: number): string {
 		if (id === this.selfId) return this.myName();
 		return this.remotes.get(id)?.name ?? `Player ${id}`;
 	}
 
-	/** Player whose role the tag HUD shows: the spectated target, else self. */
-	private tagViewId(): number {
+	/** Player whose role the HUD shows: the spectated target, else self. */
+	private viewId(): number {
 		return this.spec && !this.spec.freeFly && this.spec.targetId !== null ? this.spec.targetId : this.selfId;
-	}
-
-	/** Rebuild hud.tag when anything it shows changed (cheap key compare per frame). */
-	private refreshTagView(now: number): void {
-		const h = this.hud;
-		if (this.gameMode.family !== 'tag') {
-			if (h.tag) h.tag = null;
-			this.tagViewKey = '';
-			return;
-		}
-		if (this.tagFlash && now - this.tagFlash.at > 2500) this.tagFlash = null;
-		const t = this.tagState;
-		const id = this.tagViewId();
-		const key = `${t ? `${t.phase}|${t.round}|${t.it.join(',')}|${t.immune.join(',')}|${this.tagStateAt}` : 'solo'}|${id}|${this.tagFlash?.at ?? 0}|${this.remotes.size}`;
-		if (key === this.tagViewKey && h.tag) return;
-		this.tagViewKey = key;
-		h.tag = {
-			phase: t ? t.phase : 'solo',
-			round: t?.round ?? 0,
-			endsAt: t && t.phase !== 'waiting' ? this.tagStateAt + t.timeLeft * 1000 : 0,
-			isIt: t?.it.includes(id) ?? false,
-			immune: t?.immune.includes(id) ?? false,
-			itNames: (t?.it ?? []).map((i) => this.remoteName(i)),
-			score: t?.scores.find((s) => s.id === id)?.score ?? 0,
-			flash: this.tagFlash
-		};
-	}
-
-	private onModeState(m: TagModeState, now: number): void {
-		if (this.isRace() || m.mode !== 'tag') return;
-		const prev = this.tagState;
-		const wasIt = prev?.it.includes(this.selfId) ?? false;
-		const isIt = m.it.includes(this.selfId);
-		this.tagState = m;
-		this.tagStateAt = now;
-		if (prev && m.phase === 'playing' && prev.phase !== 'playing') {
-			this.tagFlash = { text: isIt ? "You're IT!" : 'Run!', at: now };
-			this.audio.zoneBeep();
-		} else if (isIt && !wasIt && m.phase === 'playing' && !this.tagFlash) {
-			this.tagFlash = { text: "You're IT!", at: now };
-		}
-		this.refreshTagView(now);
-	}
-
-	private onTagged(by: number, target: number, now: number): void {
-		if (target === this.selfId) this.tagFlash = { text: `${this.remoteName(by)} tagged you. You're IT!`, at: now };
-		else if (by === this.selfId) this.tagFlash = { text: `You tagged ${this.remoteName(target)}!`, at: now };
-		else return;
-		this.audio.zoneBeep();
-		this.refreshTagView(now);
 	}
 
 	// -----------------------------------------------------------------------
@@ -2033,10 +1536,8 @@ export class Game implements CommandContext {
 	vote(option: number): void {
 		const s = this.voteKeyState();
 		if (s.mapVoteOptions === 0 && s.rtvRequestOpen && (option === 1 || option === 2)) return this.rtvVote(option === 1);
-		// Zombies: 1-4 pick a weapon unless a map vote is open.
-		if (this.zm && this.zm.slot(option, performance.now())) return;
-		// Infected: 1 primary, 2 pistol, 3 knife, 4 M.O.A.B. unless a map vote is open.
-		if (this.inf && this.inf.slot(option, performance.now())) return;
+		// Armed modes: weapon slots, unless a map vote is open.
+		if (this.client.slot?.(option, performance.now())) return;
 		this.castMapVote(option);
 	}
 
@@ -2238,11 +1739,7 @@ export class Game implements CommandContext {
 		this.spec = null;
 		if (notifyServer) this.send({ type: 'spectate', targetId: null });
 		this.releaseAll();
-		if (!this.isRace()) return this.respawnRandom();
-		this.tracker.restart(this.player);
-		this.yaw = this.map.spawn.yaw;
-		this.pitch = 0;
-		this.afterTeleport();
+		this.client.respawn();
 	}
 
 	// -----------------------------------------------------------------------
@@ -2339,17 +1836,17 @@ export class Game implements CommandContext {
 					this.remote(m.player.id, m.player.name).spectating = m.player.spectating;
 					this.renderer?.players.setLoadout(m.player.id, sanitizeLoadout(m.player.loadout));
 					this.updatePlayerCount();
-					this.dressGhost();
+					this.client.peopleChanged?.();
 				}
 				break;
 			case 'leave':
 				this.dropRemote(m.id);
 				this.updatePlayerCount();
-				this.dressGhost();
+				this.client.peopleChanged?.();
 				break;
 			case 'rename':
 				if (m.id !== this.selfId) this.remote(m.id, m.name);
-				this.dressGhost();
+				this.client.peopleChanged?.();
 				break;
 			case 'spectating':
 				if (m.id === this.selfId) {
@@ -2425,24 +1922,13 @@ export class Game implements CommandContext {
 				break;
 			case 'modeState':
 				if (m.mode === this.gameMode.id) this.hud.modeState = m;
-				if (m.mode === 'zombies') this.zm?.onModeState(m, now);
-				else if (m.mode === 'infected') this.inf?.onModeState(m, now);
-				else if (m.mode === 'hns') this.hns?.onModeState(m, now);
-				else this.onModeState(m, now);
+				this.client.message?.(m, now);
 				break;
 			case 'zm':
-				this.zm?.onEvent(m.ev, now);
-				if (m.ev.e === 'shot') this.avatarShot(m.ev.by, m.ev.weapon);
-				break;
 			case 'inf':
-				this.inf?.onEvent(m.ev, now); // shots move the avatars too (infected-feedback.ts shotFeedback)
-				break;
 			case 'hns':
-				this.hns?.onEvent(m.ev, now);
-				if (m.ev.e === 'swing') this.avatarShot(m.ev.by, 'knife');
-				break;
 			case 'tagged':
-				this.onTagged(m.by, m.target, now);
+				this.client.message?.(m, now);
 				break;
 			case 'ping':
 				this.net?.send({ type: 'pong', t: m.t });
@@ -2464,15 +1950,15 @@ export class Game implements CommandContext {
 			case 'cosmetics':
 				// The own items come with `shop`.
 				if (typeof m.id === 'number' && m.id !== this.selfId) this.renderer?.players.setLoadout(m.id, sanitizeLoadout(m.loadout));
-				this.dressGhost();
+				this.client.peopleChanged?.();
 				break;
 			case 'ghostLook':
 				this.ghostLook = { map: m.map, loadout: sanitizeLoadout(m.loadout) };
-				this.dressGhost();
+				this.client.peopleChanged?.();
 				break;
 			case 'shop':
 				this.hud.shop = { busy: this.hud.shop?.busy ?? false, notice: this.hud.shop?.notice ?? null, opened: this.hud.shop?.opened ?? null, ...parseShop(m) };
-				this.dressGhost();
+				this.client.peopleChanged?.();
 				break;
 			case 'shopResult':
 				clearTimeout(this.shopTimer);
@@ -2627,16 +2113,10 @@ export class Game implements CommandContext {
 		this.hud.casino = null;
 		this.hud.multiplier = null;
 		this.applyEnabledMaps(null);
-		this.tagState = null;
-		this.tagFlash = null;
-		this.refreshTagView(performance.now());
-		this.resetZombies();
-		this.resetInfected();
-		this.resetHns();
 		this.soloPb = loadSoloPb(this.store, this.map.id);
 		this.applyRecords();
-		this.recordGhost = null;
-		this.refreshGhost();
+		if (this.client.offline) this.client.offline();
+		else this.startMode();
 		this.startSoloRotation();
 		this.updatePlayerCount();
 		if (code !== 4002 && code !== 4009 && code !== CLOSE_IP_LIMIT) this.notice('Disconnected from server. Playing solo; reconnecting automatically.');
@@ -2651,10 +2131,7 @@ export class Game implements CommandContext {
 		clearTimeout(this.shopTimer);
 		clearTimeout(this.casinoTimer);
 		this.offCvars();
-		this.zm?.dispose();
-		this.zm = null;
-		this.inf?.dispose();
-		this.inf = null;
+		this.client?.dispose();
 		this.conn.dispose();
 		this.input.dispose();
 		this.fullscreen.dispose();

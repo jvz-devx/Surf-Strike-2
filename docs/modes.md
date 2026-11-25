@@ -1,6 +1,6 @@
 # Gamemodes
 
-Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old name). There are five modes:
+Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old name). There are six modes:
 
 | Mode | Family | Rules | Default cvars | Min players | Scoreboard (plus the totals) |
 | --- | --- | --- | --- | --- | --- |
@@ -27,11 +27,17 @@ apps/server/src/modes/
   tag.ts     TagMode: runs TagGame on the latest state packets, chat announcements, modeState
   hns.ts     HnsMode: runs HnsGame, knife messages, event routing, announcements, speed-cap check
   index.ts   createServerMode(host): picks the module by GAME_MODES[kind].family
+apps/web/src/lib/game/modes/
+  types.ts   ClientMode interface, ClientModeHost
+  race.ts    RaceMode: RunTracker, splits, solo PBs, ghosts
+  tag.ts     TagMode: tag state and HUD view
+  zombies.ts, infected.ts, hns.ts   adapters around ZombiesClient, InfectedClient, HnsClient
+  index.ts   createClientMode(host), startSpawn(map): pick the module by GAME_MODES[kind].family
 ```
 
 - **Registry.** `GAME_MODES[id]` gives a mode's `label`, `family` (`race` or its own), `cvars` profile, `minPlayers` and `score` (see [Score display](#score-display)). `mapCvars(map)` is the mode profile plus the map's `cvars` overrides; the server sends it in `welcome` and `mapChange`.
 - **Server.** The lobby has no mode logic. It owns one `ServerMode` per map and replaces it on map change. It forwards these calls: `join` (after `welcome`/`mapChange`), `leave`, `spectate`, `state` (each state packet), `zone`, `command` (`!top`, `!pb`), `scoreRows`, `records` and `tick`. `tick` runs at `MODE_TICK_HZ` (32 Hz).
-- **Client.** `game.ts` reads `modeOf(map)`. In race modes `RunTracker` runs every tick, as before. In other modes the tracker is skipped: teleport zones respawn the player at a random map spawn, and the race HUD (timer, splits) is hidden. `hud.gameMode`, `hud.modeFamily` and `hud.tag` drive the UI. The scoreboard and the score panel render `GAME_MODES[mode].score`.
+- **Client.** `game.ts` has no mode logic either. It owns one `ClientMode` per map (`modes/types.ts`) and replaces it on a map change, and on a disconnect unless the mode has `offline()` (a race run goes on, tag goes back to free roam). It asks the mode for the physics cvars of a tick (or none: no movement), the state packet's status, the camera effects, the looks of remote players and the solo row; it forwards buttons, number keys, `R`, `!r`, the mode's server messages and binary frames; `tick` runs after the movement of every tick and `frame` once per frame, where the mode publishes its HUD view. Race modes run `RunTracker` every tick. In tag, hide and seek and infected without a round, teleport zones respawn the player at a spawn of the mode, and the race HUD (timer, splits) is hidden. `hud.gameMode`, `hud.modeFamily` and the mode's own HUD field drive the UI. The scoreboard and the score panel render `GAME_MODES[mode].score`.
 - **Protocol.** These changes are additive. `welcome` and `mapChange` carry `mode`. Non-race modes send `modeState` messages; race modes never do. `ScoreRow` has optional mode fields (`score`, `it`, `kills`, `deaths`) and optional account totals (`pointsTotal`, `playtimeSecs`, `coins`), which the lobby adds to every mode's rows. `Status` has new `Tagger` and `Runner` values.
 
 ### Score display
@@ -58,7 +64,7 @@ apps/server/src/modes/
 2. Put its pure rules in `packages/shared/src/modes/<mode>.ts`, with vitest tests on a fake clock.
 3. Add `apps/server/src/modes/<mode>.ts` implementing `ServerMode`, and a case in `createServerMode`.
 4. Add a `ModeState` variant to `protocol.ts` (keep the `{ type: 'modeState', mode }` shape).
-5. Client: handle the mode in `game.ts` (`isRace()` branches, `onModeState`), add HUD fields in `contract.ts` and a HUD component.
+5. Client: add `apps/web/src/lib/game/modes/<mode>.ts` implementing `ClientMode` and its entry in `modes/index.ts`, HUD fields in `contract.ts` and a HUD component. A new server message type also goes into `ModeServerMessage`, a new mode command into `ModeCommand`; `game.ts` only forwards them.
 6. Give its maps `kind: '<mode>'`, and add map checks in `maps/maps.test.ts`.
 
 ## Tag

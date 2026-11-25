@@ -1,7 +1,7 @@
 /**
  * Where the combat sounds of infected and zombies are heard from
  * (docs/ui.md#audio): the camera. Pure helpers for the `sound` entries of
- * the mode hosts in game.ts; GameAudio sets level and pan from what they
+ * the mode hosts in modes/; GameAudio sets level and pan from what they
  * return.
  */
 import { INTERP_DELAY_MS, type Vec3 } from '@surf/shared';
