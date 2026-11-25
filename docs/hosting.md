@@ -94,7 +94,7 @@ Provision the first admin while the service is private. With `ADMIN_USERNAMES` u
 
 ### Pre-hello limits and shutdown
 
-The HTTP upgrade checks the global pending cap (`MAX_PENDING_CONNECTIONS=16`) and returns 503 when it is full. The pending cap per IP (`MAX_PENDING_PER_IP=4` on public hosts) returns 429. Connections that exceed `HELLO_TIMEOUT_MS=5000` are terminated and keep their pending slot until they close. The active player limit per IP defaults to 12 on public hosts.
+The HTTP upgrade checks the global pending cap (`MAX_PENDING_CONNECTIONS=16`) and returns 503 when it is full. The pending cap per IP (`MAX_PENDING_PER_IP=4` on public hosts) returns 429. Connections that exceed `HELLO_TIMEOUT_MS=5000` are terminated and keep their pending slot until they close. The active player limit per IP defaults to 12 on public hosts. If only the lobby is full, a client within the pending limits can complete the upgrade and gets a `full` frame followed by close code 4003. The web client waits 60 seconds before retrying.
 
 On `SIGTERM` or `SIGINT`, `/health` and new upgrade requests immediately return HTTP 503 while the listener drains. `pnpm host` starts draining before it clears discovery and leaves the tunnel up until the game server closes. The server stops lobby timers, flushes account playtime and economy state, sends WebSocket close code `1001` to all clients, waits up to 2 seconds for close frames to flush, stops any in-flight backup, closes the HTTP server, and closes SQLite cleanly within 5 seconds.
 

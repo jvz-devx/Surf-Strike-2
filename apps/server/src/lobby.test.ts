@@ -206,7 +206,7 @@ describe('lobby', () => {
 		assert.equal(res.type, 'runResult');
 	});
 
-	it('full lobby: the 33rd connection is rejected before upgrade', async () => {
+	it('full lobby: the 33rd connection receives a full frame and closes with 4003', async () => {
 		for (const c of clients) c.close();
 		clients.length = 0;
 		await sleep(200);
@@ -217,10 +217,17 @@ describe('lobby', () => {
 		}
 		const extra = new TestClient(server.port);
 		clients.push(extra);
-		await assert.rejects(extra.open(), /Unexpected server response: 503/);
-		for (const c of clients) c.close();
-		clients.length = 0;
-		await sleep(200);
+		try {
+			await extra.open();
+			extra.send({ type: 'hello', playerId: 'extra-player', name: 'Extra', version: 1 });
+			await extra.waitFor('full');
+			await extra.until(() => extra.closed);
+			assert.equal(extra.closeCode, 4003);
+		} finally {
+			for (const c of clients) c.close();
+			clients.length = 0;
+			await sleep(200);
+		}
 		assert.equal(server.lobby.clients.size, 0);
 	});
 
