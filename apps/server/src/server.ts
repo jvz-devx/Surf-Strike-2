@@ -113,13 +113,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 			: typeof opts.allowedOrigins === 'string'
 				? parseAllowedOrigins(opts.allowedOrigins)
 				: opts.allowedOrigins;
-	const publicLimits = opts.publicHost || process.env.NODE_ENV === 'production';
-	const maxPerIp =
 	const rawOrigin = process.env.ORIGIN?.trim();
 	const publicOrigin = allowedOrigins?.sameOrigin && rawOrigin ? URL.parse(rawOrigin) : undefined;
 	if (publicOrigin === null || (publicOrigin && publicOrigin.protocol !== 'http:' && publicOrigin.protocol !== 'https:')) {
 		throw new Error('ORIGIN must be a valid HTTP or HTTPS URL');
 	}
+	const publicLimits = opts.publicHost || process.env.NODE_ENV === 'production';
+	const maxPerIp =
 		opts.maxPerIp ??
 		parseOptionalInt(process.env.MAX_PER_IP, 'MAX_PER_IP', 0) ??
 		(publicLimits ? DEFAULT_PROD_MAX_PER_IP : 0);
@@ -173,6 +173,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 			res.end(
 				JSON.stringify({
 					ok: !draining,
+					serverId: db.serverId,
 					version: PROTOCOL_VERSION,
 					tickRate: TICK_RATE,
 					map: lobby.currentMap.id,
@@ -180,7 +181,6 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 					players: lobby.playerCount
 				})
 			);
-					serverId: db.serverId,
 			return;
 		}
 		if (path === '/metrics') {
