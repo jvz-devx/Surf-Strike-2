@@ -89,12 +89,14 @@ export async function discover(
 	}
 }
 
-/** Only quick tunnels returned by this site's discovery endpoint can share a session. */
-export function sessionScope(url: string, discovered = false): string {
+/**
+ * Within discovery, quick tunnels can change URL without changing databases.
+ * Explicit connections and fixed URLs also scope sessions to their own origin.
+ */
+export function sessionScope(url: string, serverId: string, discovered: boolean): string {
 	const target = new URL(url);
 	if (discovered && target.protocol === 'wss:' && /^[a-z0-9-]+\.trycloudflare\.com$/.test(target.host)) {
-		// localStorage is already scoped to the browser page's origin.
-		return `discovery:${DISCOVERY_ENDPOINT}`;
+		return `discovery:${DISCOVERY_ENDPOINT}:${serverId}`;
 	}
-	return target.origin;
+	return `${target.origin}:${serverId}`;
 }

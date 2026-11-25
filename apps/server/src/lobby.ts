@@ -497,6 +497,7 @@ export class Lobby {
 			}
 		});
 		socket.on('close', () => this.onClose(c));
+		this.send(c, { type: 'serverIdentity', serverId: this.db.serverId });
 	}
 
 	private freeId(): number {
@@ -700,6 +701,7 @@ export class Lobby {
 		for (const o of this.clients) if (o.helloed) players.push(info(o));
 		this.send(c, {
 			type: 'welcome',
+			serverId: this.db.serverId,
 			selfId: c.id,
 			map: this.map.id,
 			mode: this.map.kind,

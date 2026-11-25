@@ -324,18 +324,13 @@ export class Game implements CommandContext {
 
 		this.conn = new Connection(
 			{
-				connecting: (_url, scope) => {
+				connecting: () => {
 					this.hud.connecting = true;
-					if (scope === this.sessionScope) return;
-					this.sessionScope = scope;
-					this.session = loadSession(this.store, scope);
-					this.hud.account = this.session ? { username: this.session.username } : null;
-					this.hud.authPanelOpen = !this.session && !isGuest(this.store);
 				},
 				idle: () => {
 					this.hud.connecting = false;
 				},
-				open: (c) => this.onOpen(c),
+				open: (c, scope) => this.onOpen(c, scope),
 				message: (m) => this.onMessage(m),
 				snapshot: (e, t) => this.onSnapshot(e, t),
 				ghost: (f) => this.client.ghostFrame?.(f),
@@ -1783,7 +1778,13 @@ export class Game implements CommandContext {
 		];
 	}
 
-	private onOpen(client: NetClient): void {
+	private onOpen(client: NetClient, scope: string | null): void {
+		if (scope === null || scope !== this.sessionScope) {
+			this.sessionScope = scope;
+			this.session = scope === null ? null : loadSession(this.store, scope);
+			this.hud.account = this.session ? { username: this.session.username } : null;
+			this.hud.authPanelOpen = !this.session && !isGuest(this.store);
+		}
 		this.helloToken = this.session?.token ?? null;
 		client.send({
 			type: 'hello',
