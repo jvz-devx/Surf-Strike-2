@@ -13,3 +13,5 @@ import './hat_octopus.js';
 import './glasses_snorkel.js';
 import './top_turtle.js';
 import './shoes_monster.js';
+import './top_bee.js';
+import './bottom_cactus.js';

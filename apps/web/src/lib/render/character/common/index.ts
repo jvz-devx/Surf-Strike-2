@@ -29,3 +29,4 @@ import './top_puffer.js';
 import './bottom_plaid.js';
 import './bottom_patch.js';
 import './shoes_rain.js';
+import './glasses_heart.js';

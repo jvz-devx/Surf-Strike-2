@@ -43,10 +43,10 @@ The registry holds `top_default`, `bottom_default`, `shoes_default` and the shop
 
 | Slot | Items (Basic, 30 coins; all others only come from loot boxes) |
 | --- | --- |
-| hat | Breakline cap, Pom beanie, Straw hat; Common: Fry cook hat, Palm bucket hat, Trilby, Wave bandana, Newsboy cap, Backwards snapback, Headphones, Trapper hat; Uncommon: Shark bite hat, Propeller cap, Octopus hat; Epic: Dark lord helmet, Clown prince mask |
-| glasses | Glare shades, Round shades, Slim shades; Common: Gold aviators, Sport wraps, Cat-eye shades, Reading glasses, Shutter shades; Uncommon: Pixel shades, Googly eye glasses, Snorkel mask; Rare: Executive shades |
-| top | Sunset tee, Half-and-half tee, Checker tee; Common: Zip hoodie, Floral shirt, Varsity jacket, Denim jacket, Flannel shirt, Rugby shirt, Puffer jacket; Uncommon: Skeleton hoodie, Astronaut jacket, Turtle shell; Rare: Tailored suit jacket |
-| bottom | Boardshorts, Joggers, Cargo pants; Common: Cuffed jeans, Track pants, Corduroy pants, Court shorts, Plaid golf trousers, Patchwork jeans; Uncommon: Lava pants, Robot legs; Rare: Tailored suit trousers |
+| hat | Breakline cap, Pom beanie, Straw hat; Common: Fry cook hat, Palm bucket hat, Trilby, Wave bandana, Newsboy cap, Backwards snapback, Headphones, Trapper hat; Uncommon: Shark bite hat, Propeller cap, Octopus hat; Rare: Oni mask, Plague doctor mask; Epic: Dark lord helmet, Clown prince mask, Gunpowder mask |
+| glasses | Glare shades, Round shades, Slim shades; Common: Gold aviators, Sport wraps, Cat-eye shades, Reading glasses, Shutter shades, Heart shades; Uncommon: Pixel shades, Googly eye glasses, Snorkel mask; Rare: Executive shades |
+| top | Sunset tee, Half-and-half tee, Checker tee; Common: Zip hoodie, Floral shirt, Varsity jacket, Denim jacket, Flannel shirt, Rugby shirt, Puffer jacket; Uncommon: Skeleton hoodie, Astronaut jacket, Turtle shell, Bee suit; Rare: Tailored suit jacket |
+| bottom | Boardshorts, Joggers, Cargo pants; Common: Cuffed jeans, Track pants, Corduroy pants, Court shorts, Plaid golf trousers, Patchwork jeans; Uncommon: Lava pants, Robot legs, Cactus pants; Rare: Tailored suit trousers |
 | shoes | High-tops, Beach slides, Trail boots, Slip-ons, Canvas low-tops, Garden clogs; Common: Pulse runners, Chelsea boots, Penny loafers, Skate shoes, Rain boots; Uncommon: Rubber duck slippers, Rocket boots, Monster feet; Rare: Polished oxfords |
 | effect | Rare: Blue, Yellow, Red, Purple, Black, Orange, Pink, White, Green and Gray aura; Epic: Living flame |
 

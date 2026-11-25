@@ -14,7 +14,7 @@ describe('cosmetics', () => {
 			expect(awardLabel(`shop:${i.id}`)).toBe(`Shop: ${i.name}`);
 		}
 		expect(listCosmetics().filter((i) => i.isDefault).map((i) => i.id)).toEqual(['top_default', 'bottom_default', 'shoes_default']);
-		expect(listCosmetics()).toHaveLength(83);
+		expect(listCosmetics()).toHaveLength(89);
 		// Default items are never for sale, whatever their rarity.
 		expect(cosmeticPrice({ id: 'x', slot: 'top', name: 'x', isDefault: true, rarity: 'basic' })).toBeNull();
 		for (const r of Object.values(RARITIES)) expect((r.price === null || (Number.isInteger(r.price) && r.price > 0)) && /^#[0-9a-f]{6}$/.test(r.color) && r.name !== '').toBe(true);
@@ -29,11 +29,11 @@ describe('cosmetics', () => {
 
 	it('a loot box holds every common or better item, never basic or default ones', () => {
 		const items = lootItems();
-		expect(items).toHaveLength(62);
+		expect(items).toHaveLength(68);
 		expect(items.every((i) => i.rarity !== 'basic' && !i.isDefault)).toBe(true);
 		expect(items.filter((i) => i.slot === 'effect').map((i) => i.rarity)).toEqual([...Array<string>(10).fill('rare'), 'epic']);
 		for (const r of Object.keys(LOOTBOX.odds) as (keyof typeof LOOTBOX.odds)[]) expect(LOOTBOX.refund[r]).toBeLessThanOrEqual(LOOTBOX.price);
-		expect(lootChances().map((g) => [g.rarity, g.items.length])).toEqual([['common', 31], ['uncommon', 14], ['rare', 14], ['epic', 3]]);
+		expect(lootChances().map((g) => [g.rarity, g.items.length])).toEqual([['common', 32], ['uncommon', 16], ['rare', 16], ['epic', 4]]);
 	});
 
 	it('rolls by weight, whatever the odds add up to', () => {
@@ -80,7 +80,8 @@ describe('cosmetics', () => {
 				'effect_blue', 'effect_yellow', 'effect_red', 'effect_purple', 'effect_black', 'effect_orange', 'effect_pink', 'effect_white', 'effect_green', 'effect_gray', 'effect_fire',
 				'hat_trapper', 'glasses_shutter', 'top_puffer', 'bottom_plaid', 'bottom_patch', 'shoes_rain',
 				'glasses_googly', 'top_astronaut', 'bottom_robot', 'shoes_rocket',
-				'hat_octopus', 'glasses_snorkel', 'top_turtle', 'shoes_monster'
+				'hat_octopus', 'glasses_snorkel', 'top_turtle', 'shoes_monster',
+				'glasses_heart', 'top_bee', 'bottom_cactus', 'hat_oni', 'hat_plague', 'hat_fawkes'
 			])
 		);
 	});
