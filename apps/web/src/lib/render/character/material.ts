@@ -9,6 +9,9 @@
 import * as THREE from 'three';
 import { PAL_SIZE } from './mesh-kit.js';
 
+/** Numbers in a saved palette (`save`, `mix`). */
+export const PALETTE_SIZE = PAL_SIZE * 4;
+
 export class CharacterMaterial extends THREE.MeshLambertMaterial {
 	readonly palette: THREE.Vector4[] = Array.from({ length: PAL_SIZE }, () => new THREE.Vector4(1, 1, 1, 0));
 	private readonly ghost: boolean;
@@ -45,6 +48,19 @@ ${ghost ? 'diffuseColor.a *= 0.75 + 1.5 * rim;' : ''}`
 
 	set(index: number, color: THREE.Color, glow = 0): void {
 		this.palette[index]!.set(color.r, color.g, color.b, glow);
+	}
+
+	/** Copy the palette to `out` (PALETTE_SIZE numbers). */
+	save(out: Float32Array): void {
+		for (let i = 0; i < PAL_SIZE; i++) this.palette[i]!.toArray(out, i * 4);
+	}
+
+	/** The palette between two saved ones. */
+	mix(from: Float32Array, to: Float32Array, t: number): void {
+		for (let i = 0; i < PAL_SIZE; i++) {
+			const o = i * 4;
+			this.palette[i]!.set(from[o]! + (to[o]! - from[o]!) * t, from[o + 1]! + (to[o + 1]! - from[o + 1]!) * t, from[o + 2]! + (to[o + 2]! - from[o + 2]!) * t, from[o + 3]! + (to[o + 3]! - from[o + 3]!) * t);
+		}
 	}
 
 	override clone(): this {

@@ -49,7 +49,7 @@ const sparkLines = (r: InfectedRenderer) => r.group.children.filter((c): c is TH
 
 describe('knives', () => {
 	it('pools meshes: removed knives are hidden and reused, not rebuilt', () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		r.syncKnives([knife(1), knife(2)], 9, 0);
 		expect(r.knifeStats).toEqual({ live: 2, pooled: 0 });
 		expect(visibleRoots(r)).toHaveLength(2);
@@ -67,7 +67,7 @@ describe('knives', () => {
 	});
 
 	it('flying: Source → Three position, faces its velocity, spins end over end, streaks on', () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		r.syncKnives([knife(1, { vx: 300, vy: 300, vz: 300 * Math.SQRT2 })], 9, 100);
 		const root = visibleRoots(r)[0]!;
 		expect(root.position.toArray()).toEqual([10, 30, -20]);
@@ -90,7 +90,7 @@ describe('knives', () => {
 	});
 
 	it('zero velocity keeps the last flight direction', () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		r.syncKnives([knife(1, { vx: 0, vy: 500, vz: 0 })], 9, 0);
 		const p = knifeParts(visibleRoots(r)[0]!);
 		expect(p.orient.rotation.y).toBeCloseTo(90 * DEG, 6);
@@ -100,7 +100,7 @@ describe('knives', () => {
 	});
 
 	it('stuck: impact angles, no spin or streak, pickup ring only for its owner', () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		const stuck = knife(1, { ownerId: 4, stuck: true, pitch: 30, yaw: 120, vx: 0, vy: 0 });
 		r.syncKnives([stuck, knife(2, { ownerId: 5, stuck: true })], 4, 500);
 		const [mine, theirs] = visibleRoots(r).map(knifeParts) as [ReturnType<typeof knifeParts>, ReturnType<typeof knifeParts>];
@@ -129,7 +129,7 @@ describe('knives', () => {
 
 describe('sparks', () => {
 	it('bounce: a wide burst that flies out, fades and expires after SPARK_MS', () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		r.spark({ x: 100, y: 200, z: 50 }, 'bounce', 1000, { x: 0, y: 0, z: 1 });
 		expect(r.sparkCount).toBe(1);
 		const [lines] = sparkLines(r);
@@ -159,7 +159,7 @@ describe('sparks', () => {
 	});
 
 	it('stick: a tighter glint, fewer sparks; bursts are pooled and capped', () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		r.spark({ x: 0, y: 0, z: 0 }, 'stick', 0, { x: 1, y: 0, z: 0 });
 		expect(sparkLines(r)[0]!.geometry.drawRange.count).toBe(SPARKS_STICK * 2);
 		r.update(SPARK_MS + 1);
@@ -175,7 +175,7 @@ describe('sparks', () => {
 
 describe('UAV beacon', () => {
 	it('fades in, sweeps, and is removed with its materials disposed after 3.2 s', () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		r.uavPulse({ x: 5, y: 6, z: 7 }, 1000);
 		expect(r.beaconCount).toBe(1);
 		const beacon = r.group.children.at(-1)!;
@@ -207,7 +207,7 @@ describe('UAV beacon', () => {
 
 describe('clear and dispose', () => {
 	it('clear: hides knives into the pool, removes beacons, stops sparks', () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		r.syncKnives([knife(1), knife(2, { stuck: true })], 1, 0);
 		r.uavPulse({ x: 0, y: 0, z: 0 }, 0);
 		r.spark({ x: 0, y: 0, z: 0 }, 'bounce', 0);
@@ -224,7 +224,7 @@ describe('clear and dispose', () => {
 	});
 
 	it('dispose: every geometry and material is freed and the group is empty and detached', () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		const scene = new THREE.Scene();
 		scene.add(r.group);
 		r.syncKnives([knife(1), knife(2, { stuck: true, ownerId: 3 })], 3, 0);
@@ -261,7 +261,7 @@ const basic = (m: THREE.Mesh) => m.material as THREE.MeshBasicMaterial;
 
 describe('respawn beacons', () => {
 	it('pools meshes and keeps knife roots unaffected', () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		r.syncBeacons([beacon(1), beacon(2)], 9, 'survivor', 0);
 		expect(r.beaconStats).toEqual({ live: 2, pooled: 0 });
 		expect(beaconRoots(r)).toHaveLength(2);
@@ -278,7 +278,7 @@ describe('respawn beacons', () => {
 	});
 
 	it('model: puck flush on the floor, angled brass tube, unfogged flare tip, halo and glow column', () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		r.syncBeacons([beacon(1)], 9, 'survivor', 0);
 		const root = beaconRoots(r)[0]!;
 		// Source → Three position, yaw about +Y.
@@ -313,7 +313,7 @@ describe('respawn beacons', () => {
 	});
 
 	it('owner: trim ring and a through-wall marker; enemy beacons are depth tested only', () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		r.syncBeacons([beacon(1, { ownerId: 9 }), beacon(2, { ownerId: 4, x: 500 })], 9, 'infected', 0);
 		const [mine, other] = beaconRoots(r) as [THREE.Group, THREE.Group];
 		const marker = (g: THREE.Group) => meshes(g).find((m) => m.geometry instanceof THREE.OctahedronGeometry && m.position.y > 20)!;
@@ -339,7 +339,7 @@ describe('respawn beacons', () => {
 	});
 
 	it("'beacon' sparks: a 12-spark crimson flare burst that outlives knife sparks", () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		r.spark({ x: 1, y: 2, z: 13 }, 'beacon', 1000);
 		const [lines] = sparkLines(r);
 		expect(lines!.geometry.drawRange.count).toBe(SPARKS_BEACON * 2);
@@ -363,7 +363,7 @@ describe('respawn beacons', () => {
 	});
 
 	it('clear pools every beacon; dispose frees all beacon geometry and materials', () => {
-		const r = new InfectedRenderer();
+		const r = new InfectedRenderer(new HeldAssets());
 		const scene = new THREE.Scene();
 		scene.add(r.group);
 		r.syncBeacons([beacon(1, { ownerId: 9 }), beacon(2)], 9, 'survivor', 0);

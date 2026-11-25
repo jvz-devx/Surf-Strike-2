@@ -7,6 +7,7 @@
  * the arms 35° out). The `*H` helper bones sit on a joint with half of its
  * rotation, so bent elbows, knees, hips and shoulders keep their volume.
  */
+import { BODY_ANKLE_X, BODY_ANKLE_Y, BODY_BALL, BODY_HIP_Y, BODY_HIP_Z, BODY_KNEE_Y, BODY_THIGH, PLAYER_FOREARM, PLAYER_UPPER_ARM } from '@surf/shared';
 import * as THREE from 'three';
 
 export const CENTER_BONES = ['pelvis', 'spine', 'chest', 'neck', 'head'] as const;
@@ -42,15 +43,15 @@ export type V3 = readonly [number, number, number];
 
 /** Arm direction in the bind pose: 35° out from straight down. */
 export const ARM_TILT = (35 * Math.PI) / 180;
-export const UPPER_ARM = 11;
-export const FOREARM = 9.8;
-export const HIP_Y = 36;
-export const KNEE_Y = 19.8;
-export const ANKLE_Y = 3.8;
-export const THIGH = HIP_Y - KNEE_Y;
+export const UPPER_ARM = PLAYER_UPPER_ARM;
+export const FOREARM = PLAYER_FOREARM;
+export const HIP_Y = BODY_HIP_Y;
+export const KNEE_Y = BODY_KNEE_Y;
+export const ANKLE_Y = BODY_ANKLE_Y;
+export const THIGH = BODY_THIGH;
 export const SHIN = KNEE_Y - ANKLE_Y;
 /** Ball of the foot relative to the ankle. */
-export const BALL: V3 = [5, -2.9, 0];
+export const BALL: V3 = BODY_BALL;
 
 /** +1 right (+Z), −1 left. */
 export const sideSign = (s: Side): 1 | -1 => (s === 'R' ? 1 : -1);
@@ -61,7 +62,7 @@ export function armDir(s: Side): V3 {
 }
 
 const SHOULDER: V3 = [-0.3, 53.9, 8.5];
-const HIP_Z = 4.3;
+const HIP_Z = BODY_HIP_Z;
 
 function bind(name: BoneName): V3 {
 	switch (name) {
@@ -102,9 +103,9 @@ function bind(name: BoneName): V3 {
 		case 'shin':
 			return [0, KNEE_Y, z * HIP_Z];
 		case 'foot':
-			return [-0.6, ANKLE_Y, z * HIP_Z];
+			return [BODY_ANKLE_X, ANKLE_Y, z * HIP_Z];
 		case 'toe':
-			return [-0.6 + BALL[0], ANKLE_Y + BALL[1], z * HIP_Z];
+			return [BODY_ANKLE_X + BALL[0], ANKLE_Y + BALL[1], z * HIP_Z];
 	}
 }
 

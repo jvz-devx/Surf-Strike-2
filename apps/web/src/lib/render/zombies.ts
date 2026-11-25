@@ -8,42 +8,66 @@
 import type { GateState, WeaponId, ZombieGate } from '@surf/shared';
 import { ZF_ATTACKING, ZF_HIT, ZF_ON_GROUND } from '@surf/shared';
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { ease, GunKick, VM_AIM_STEADY, vmKick, type VmFeel } from '../game/gunfeel.js';
 import { emptyMotion, type MotionState } from './character/animator.js';
 import type { CrowdView } from './character/crowd.js';
 import type { HeldAssets } from './character/held.js';
+import { caseOf, Casings, depthScale, reducedMotion, type HandOver } from './casings.js';
 import { CharacterModel, personOf } from './character/model.js';
+import { FpAnim, isGun, VM_SCALE, type FpInput } from './fp-anim.js';
 import { VelocityTracker } from './character/motion.js';
+import { hasFlash, MuzzleFx } from './muzzle-flash.js';
+import { aimDepthOf, sightOf } from './sights.js';
+import type { GunRig } from './gun-rig.js';
+import type { WeaponHandPair } from './hands.js';
+import { buildViewmodels, type ClawPose, type Viewmodels } from './viewmodels.js';
+import { defaultLoad, generated, lightFirstPerson, meshesOf, ModelCache, type ModelLoad } from './weapon-assets.js';
 
 const DEG = Math.PI / 180;
 const CORPSE_FALL_MS = 380;
 const CORPSE_FADE_MS = 1300;
 const TRACER_MS = 90;
-const MUZZLE_MS = 45;
 /** Claw slash and throwing-knife throw animation lengths. */
-const SLASH_MS = 320;
-const THROW_MS = 360;
+export const SLASH_MS = 320;
+export const THROW_MS = 360;
 /** The off-hand knife leaves the hand this far into the throw (0..1). */
-const RELEASE_AT = 0.38;
+export const RELEASE_AT = 0.38;
 /** Pop-in time when the off-hand knife comes back (pickup, respawn). */
 const OFFHAND_POP_MS = 140;
-const MAX_TRACERS = 32;
+/** The gun that is swapped away is out of the picture after this long (ms). */
+const AWAY_MS = 130;
+/** The slashing claw is fully across the view this far into the slash (0..1); the rest is the way back. */
+const SLASH_REACH = 0.3;
+/** Throw: the wind-up ends and the cast is fully forward this far into it (0..1). */
+const THROW_WIND = 0.16;
+const THROW_CAST = 0.44;
+/** After the release the left fist opens into a claw over this long (ms). */
+const OPEN_MS = 140;
+/** Tracer pool: several shotgun volleys (one tracer per pellet) fit inside one TRACER_MS. */
+export const MAX_TRACERS = 96;
 
 /**
- * Recoil kick per weapon: recovery time (ms), pushback (viewmodel units) and
- * muzzle rise (rad). Heavy guns kick long and hard, the SMG fast and tight.
+ * Viewmodel push-back per weapon (the visual recoil): length of the whole
+ * push and of its attack (ms) and how far the gun moves back (viewmodel
+ * units). The curve is `vmKick` (game/gunfeel.ts): a fast attack, then a damped
+ * return. The gun's rotation is the gun kick (`GunKick`, `GUN_KICK` in
+ * game/gunfeel.ts), a velocity model of its own.
  */
-export const VM_KICK: Readonly<Partial<Record<WeaponId, { ms: number; back: number; rise: number }>>> = Object.freeze({
-	pistol: { ms: 110, back: 1.2, rise: 0.12 },
-	lmg: { ms: 110, back: 1.2, rise: 0.12 },
-	sniper: { ms: 260, back: 1.2, rise: 0.12 },
-	barrett: { ms: 280, back: 3.4, rise: 0.32 },
-	striker: { ms: 200, back: 2.6, rise: 0.26 },
-	smg: { ms: 85, back: 0.7, rise: 0.05 }
+export const VM_KICK: Readonly<Partial<Record<WeaponId, { ms: number; attack: number; back: number }>>> = Object.freeze({
+	pistol: { ms: 130, attack: 14, back: 1.1 },
+	lmg: { ms: 200, attack: 18, back: 1.4 },
+	sniper: { ms: 260, attack: 22, back: 2.4 },
+	barrett: { ms: 300, attack: 24, back: 3.4 },
+	striker: { ms: 220, attack: 20, back: 2.6 },
+	smg: { ms: 100, attack: 12, back: 0.7 }
 });
-const DEFAULT_KICK = { ms: 110, back: 1.2, rise: 0.12 };
-
-/** `vmPart` arguments after the parent group. */
-type PartArgs = [m: THREE.Material, sx: number, sy: number, sz: number, x: number, y: number, z: number, rx?: number, ry?: number, rz?: number];
+const DEFAULT_KICK = { ms: 130, attack: 14, back: 1.1 };
+/** Sight point of the held gun and the aimed gun-kick turn about the eye, reused every frame. */
+const SIGHT = new THREE.Vector3();
+const PIVOT = new THREE.Euler();
+/** Share of the push-back taken away when fully aimed. */
+const VM_AIM_PUSH = 0.6;
 
 const FLASH = new THREE.Color(0xffffff);
 const NO_GLOW = new THREE.Color(0x000000);
@@ -99,34 +123,67 @@ export class ZombieRenderer {
 	// Viewmodel
 	private vm = new THREE.Group();
 	private guns = new Map<WeaponId, THREE.Group>();
-	private muzzle: THREE.Mesh;
+	private readonly muzzle: MuzzleFx;
 	private weapon: WeaponId | null = null;
 	private kickAt = -Infinity;
+	/** Push-back level the last shot started from (a new shot does not snap back to rest). */
+	private kickFrom = 0;
+	/** Gun kick: the held gun's rotation from its shots. */
+	private readonly gunKick = new GunKick();
+	/** Cycling, reloads and the bolt of the held gun (render/fp-anim.ts). */
+	readonly anim = new FpAnim();
 	private throwAt = -Infinity;
-	private muzzleAt = -Infinity;
 	/** Infected: throwing knife held ready in the left claw. */
 	private offhand = false;
 	private offhandAt = -Infinity;
 	private offKnife: THREE.Group | null = null;
 	vmVisible = false;
+	/** First-person models: the code-built set, and the generated models that replace them once loaded. */
+	private set: Viewmodels;
+	private models: ModelCache;
+	/** Room environment of the generated models (made once a renderer is given). */
+	private gl: THREE.WebGLRenderer | null = null;
+	private env: THREE.WebGLRenderTarget | null = null;
 	private vmMats: THREE.Material[] = [];
-	/** Non-box viewmodel geometry (cylinders, drums, rings), disposed with the renderer. */
+	/** Spent cases of my gun and the others'. */
+	readonly casings = new Casings();
+	/** My shots whose case is not out yet, and where the port of the held gun was when it was last seen from the hip. */
+	private toEject = 0;
+	private readonly port = new THREE.Vector3(4.6, -3.2, -13);
+	private readonly portDir = new THREE.Vector3(1, 0, 0);
+	private portScale = VM_SCALE;
+	private portOf: WeaponId | null = null;
+	private portRig: GunRig | undefined;
+	private readonly fpInput: FpInput = { reload: 1, mag: undefined, dry: 0, aim: 0, lower: 0 };
+	/** Viewmodel geometry, disposed with the renderer. */
 	private vmGeoms: THREE.BufferGeometry[] = [];
 	// Gates: glowing barrier boxes and unlock-area floor markers.
 	private gates: Array<{ mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; area: THREE.Mesh; areaMat: THREE.MeshBasicMaterial; state: GateState; at: number }> = [];
 
-	constructor(private readonly assets: HeldAssets) {
+	/** `load`: how generated models are fetched (render/weapon-assets.ts); the tests pass their own. */
+	constructor(
+		private readonly assets: HeldAssets,
+		load: ModelLoad = defaultLoad
+	) {
 		this.group.name = 'zombies';
 		this.vmScene.add(new THREE.HemisphereLight(0xd8d4e8, 0x3a3030, 1.6));
 		const sun = new THREE.DirectionalLight(0xffc8a0, 1.4);
 		sun.position.set(0.5, 1, 0.6);
-		this.vmScene.add(sun, this.vm);
-		this.buildGuns();
-		const mm = new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
-		this.vmMats.push(mm);
-		this.muzzle = new THREE.Mesh(new THREE.PlaneGeometry(3.5, 3.5), mm);
-		this.muzzle.visible = false;
-		this.vm.add(this.muzzle);
+		this.vmScene.add(sun, this.vm, this.away, this.casings.hand);
+		this.group.add(this.casings.world);
+		// First-person models (render/viewmodels.ts): one hidden group per weapon id.
+		const set = (this.set = buildViewmodels());
+		this.models = new ModelCache(load, (id, model) => this.fitModel(id, model), (kit) => set.useHands(kit));
+		this.vmMats.push(...set.materials);
+		this.vmGeoms = set.geometries;
+		this.offKnife = set.offKnife;
+		for (const [id, g] of set.models) {
+			this.guns.set(id, g);
+			this.vm.add(g);
+		}
+		this.muzzle = new MuzzleFx(reducedMotion());
+		this.vm.add(this.muzzle.mesh);
+		this.vmScene.add(this.muzzle.scene);
 	}
 
 	// ---------------------------------------------------------------------
@@ -306,9 +363,18 @@ export class ZombieRenderer {
 
 	/** Cosmetic tracer between two Source points. */
 	tracer(from: { x: number; y: number; z: number }, to: { x: number; y: number; z: number }, now: number): void {
-		let tr = this.tracers.find((t) => now - t.at > TRACER_MS);
+		// An expired tracer, else a new one, else (pool full) the oldest.
+		let tr: Tracer | undefined;
+		let oldest: Tracer | undefined;
+		for (const t of this.tracers) {
+			if (now - t.at > TRACER_MS) {
+				tr = t;
+				break;
+			}
+			if (!oldest || t.at < oldest.at) oldest = t;
+		}
 		if (!tr) {
-			if (this.tracers.length >= MAX_TRACERS) tr = this.tracers[0]!;
+			if (this.tracers.length >= MAX_TRACERS) tr = oldest!;
 			else {
 				const g = new THREE.BufferGeometry();
 				g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
@@ -330,303 +396,97 @@ export class ZombieRenderer {
 	// ---------------------------------------------------------------------
 	// Viewmodel
 
-	private buildGuns(): void {
-		const mat = (color: number, rough = 0.6) => {
-			const m = new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0.3 });
-			this.vmMats.push(m);
-			return m;
-		};
-		const metal = mat(0x2c2f34);
-		const dark = mat(0x1c1d20);
-		const wood = mat(0x6a4a2e, 0.8);
-		const steel = mat(0xb8bec6, 0.3);
-		const olive = mat(0x4a5238);
-		const part = (g: THREE.Group, m: THREE.Material, sx: number, sy: number, sz: number, x: number, y: number, z: number) => {
-			const p = new THREE.Mesh(this.box, m);
-			p.scale.set(sx, sy, sz);
-			p.position.set(x, y, z);
-			g.add(p);
-		};
-		// Built pointing down −Z (camera forward); the muzzle point is stored in userData.
-		const pistol = new THREE.Group();
-		part(pistol, metal, 2.2, 2.4, 9, 0, 0, -3); // slide
-		part(pistol, dark, 2, 5, 2.6, 0, -3, 0); // grip
-		pistol.userData.muzzle = new THREE.Vector3(0, 0.4, -8);
-		const lmg = new THREE.Group();
-		part(lmg, olive, 3.6, 4, 16, 0, 0, -2); // receiver
-		part(lmg, metal, 1.4, 1.4, 14, 0, 0.6, -16); // barrel
-		part(lmg, dark, 3.6, 4.5, 4.5, -0.2, -4, -3); // box magazine
-		part(lmg, dark, 2.4, 4, 3, 0, -3.4, 4); // grip
-		part(lmg, olive, 3, 3, 7, 0, -0.5, 8); // stock
-		lmg.userData.muzzle = new THREE.Vector3(0, 0.6, -23.5);
-		const sniper = new THREE.Group();
-		part(sniper, wood, 2.8, 3.2, 20, 0, -0.6, -2); // stock and body
-		part(sniper, metal, 1, 1, 18, 0, 0.8, -19); // barrel
-		part(sniper, dark, 1.8, 1.8, 9, 0, 3.4, -3); // scope
-		part(sniper, steel, 0.6, 1.4, 0.6, 1.6, 0.8, 1); // bolt
-		sniper.userData.muzzle = new THREE.Vector3(0, 0.8, -28.5);
-		const knife = new THREE.Group();
-		part(knife, dark, 1.6, 1.6, 5, 0, 0, 1); // handle
-		part(knife, steel, 0.4, 1.8, 9, 0, 0.2, -6); // blade
-		knife.userData.muzzle = null;
-		const barrett = this.buildBarrett(mat);
-		const striker = this.buildStriker(mat);
-		const smg = this.buildSmg(mat);
-		// Claws: two infected forearms with three dark talons each, hands raised.
-		const skin = mat(0x7a5a4c, 0.85);
-		const sleeve = mat(0x3a2a26, 0.9);
-		const talon = mat(0x1a1214, 0.35);
-		const vein = new THREE.MeshStandardMaterial({ color: 0x5a1010, emissive: 0x6a0a08, roughness: 0.7 });
-		this.vmMats.push(vein);
-		const hand = (side: number) => {
-			const h = new THREE.Group();
-			part(h, sleeve, 3.8, 3.8, 10, 0, -1.2, 6); // ragged sleeve
-			part(h, skin, 3, 3, 9, 0, 0, -1); // forearm
-			part(h, vein, 0.5, 0.4, 6, side * 1.2, 1.5, -1); // glowing vein
-			part(h, skin, 4.2, 1.8, 4, 0, 0.2, -6.5); // hand
-			for (let i = 0; i < 3; i++) {
-				const t = new THREE.Mesh(this.box, talon);
-				t.scale.set(0.5, 0.5, 4.5);
-				t.position.set((i - 1) * 1.4, 0.4, -10);
-				t.rotation.x = 0.25;
-				t.rotation.y = (i - 1) * -0.12;
-				h.add(t);
-			}
-			h.userData.rest = { x: side > 0 ? 2 : -24, y: side > 0 ? -1 : -2, z: side > 0 ? 0 : -1 };
-			h.position.set(h.userData.rest.x, h.userData.rest.y, h.userData.rest.z);
-			h.rotation.set(0.15, side * -0.12, side * 0.18);
-			return h;
-		};
-		const claws = new THREE.Group();
-		const right = hand(1);
-		const left = hand(-1);
-		claws.add(right, left);
-		claws.userData.muzzle = null;
-		claws.userData.right = right;
-		claws.userData.left = left;
-		// Off-hand throwing knife (infected): gripped in the left fist, blade up and forward.
-		// Dark gunmetal blade with a bright edge so it reads against bright skies.
-		const gun = mat(0x3c4249, 0.32);
-		const grip = mat(0x15171a, 0.85);
-		const edge = new THREE.MeshBasicMaterial({ color: 0xf4f8ff });
-		this.vmMats.push(edge);
-		const off = new THREE.Group();
-		part(off, grip, 1.2, 4.4, 1.2, 0, 0, 0); // handle in the fist
-		part(off, gun, 2.6, 0.5, 1.4, 0, 2.4, 0); // guard
-		part(off, gun, 0.35, 7.5, 1.6, 0, 6.3, 0); // blade
-		part(off, edge, 0.45, 6.6, 0.32, 0, 6.1, -0.85); // cutting edge
-		part(off, gun, 0.3, 1.4, 0.9, 0, 10.4, -0.3); // tip
-		off.position.set(0.8, 1.6, -7.2);
-		off.rotation.set(-1.05, 0, 0.2);
-		off.visible = false;
-		left.add(off);
-		this.offKnife = off;
-		for (const [id, g] of [
-			['pistol', pistol],
-			['lmg', lmg],
-			['sniper', sniper],
-			['barrett', barrett],
-			['striker', striker],
-			['smg', smg],
-			['knife', knife],
-			['claws', claws]
-		] as const) {
-			g.visible = false;
-			this.guns.set(id, g);
-			this.vm.add(g);
-		}
-	}
-
-	/** Box part (optional rotation) of a viewmodel. */
-	private vmPart(g: THREE.Object3D, m: THREE.Material, sx: number, sy: number, sz: number, x: number, y: number, z: number, rx = 0, ry = 0, rz = 0): THREE.Mesh {
-		const p = new THREE.Mesh(this.box, m);
-		p.scale.set(sx, sy, sz);
-		p.position.set(x, y, z);
-		p.rotation.set(rx, ry, rz);
-		g.add(p);
-		return p;
-	}
-
-	/** Cylinder along Z (the barrel axis) of a viewmodel; `seg` 8 makes an octagon. */
-	private vmCyl(g: THREE.Object3D, m: THREE.Material, r: number, len: number, x: number, y: number, z: number, seg = 12, r2 = r): THREE.Mesh {
-		const geo = new THREE.CylinderGeometry(r2, r, len, seg);
-		this.vmGeoms.push(geo);
-		const c = new THREE.Mesh(geo, m);
-		c.rotation.x = -Math.PI / 2; // +Y (radiusTop, r2) → −Z: r2 is the front (muzzle) end
-		c.position.set(x, y, z);
-		g.add(c);
-		return c;
-	}
-
-	/**
-	 * .50 cal rifle: long gunmetal receiver, big box magazine, fluted heavy
-	 * barrel, arrowhead muzzle brake, high scope on rings, carry handle, bipod.
-	 */
-	private buildBarrett(mat: (color: number, rough?: number) => THREE.MeshStandardMaterial): THREE.Group {
-		const gunmetal = mat(0x3a3f46, 0.42);
-		const black = mat(0x16181b, 0.8);
-		const edge = mat(0x5d646d, 0.35);
-		const glass = new THREE.MeshStandardMaterial({ color: 0x1a3a5a, emissive: 0x0a2240, roughness: 0.15, metalness: 0.6 });
-		this.vmMats.push(glass);
-		const g = new THREE.Group();
-		const P = (...a: PartArgs) => this.vmPart(g, ...a);
-		// Receiver: lower and upper halves with a top rail.
-		P(gunmetal, 3.2, 2.4, 20, 0, -0.6, -2);
-		P(gunmetal, 2.8, 1.6, 18, 0, 1.3, -2.6);
-		P(edge, 1.6, 0.5, 17, 0, 2.35, -2.6);
-		for (let i = 0; i < 7; i++) P(black, 1.8, 0.3, 0.6, 0, 2.7, -10 + i * 2.4); // rail slots
-		// Massive box magazine and its base plate.
-		P(black, 2.8, 6.2, 4.6, 0, -4.6, 0.5, 0.06);
-		P(edge, 3, 0.6, 5, 0, -7.8, 0.7, 0.06);
-		// Pistol grip, trigger guard.
-		P(black, 2.2, 5, 2.6, 0, -3.8, 6.6, -0.32);
-		P(black, 0.6, 0.5, 4.2, 0, -2.2, 4.2);
-		// Stock: tube, cheek rest, recoil pad.
-		P(gunmetal, 2.6, 3.2, 8, 0, -0.4, 12.4);
-		P(black, 2.2, 1.2, 5, 0, 1.6, 12);
-		P(black, 3, 4.6, 1.2, 0, -0.8, 16.8);
-		// Heavy fluted barrel with a barrel shroud collar.
-		this.vmCyl(g, gunmetal, 0.95, 20, 0, 0.3, -22);
-		this.vmCyl(g, edge, 1.25, 2, 0, 0.3, -12.6);
-		for (let i = 0; i < 6; i++) {
-			const a = (i / 6) * Math.PI * 2;
-			const f = this.vmPart(g, black, 0.22, 0.22, 16, Math.cos(a) * 0.92, 0.3 + Math.sin(a) * 0.92, -22);
-			f.rotation.z = a;
-		}
-		// Arrowhead muzzle brake: a wide block with swept-back side wings and ports.
-		P(gunmetal, 2.4, 1.9, 3.2, 0, 0.3, -33.4);
-		P(gunmetal, 1.8, 1.7, 2.6, 1.6, 0.3, -32.8, 0, 0.55);
-		P(gunmetal, 1.8, 1.7, 2.6, -1.6, 0.3, -32.8, 0, -0.55);
-		P(black, 4.4, 1.0, 0.45, 0, 0.3, -33.6);
-		P(black, 4.0, 1.0, 0.45, 0, 0.3, -32.4);
-		P(edge, 1.2, 1.2, 0.8, 0, 0.3, -35.2);
-		// High tactical scope on two rings.
-		this.vmCyl(g, black, 1.25, 11, 0, 5.4, -3.2);
-		this.vmCyl(g, black, 1.25, 2.6, 0, 5.4, -9.8, 12, 1.9); // objective bell
-		this.vmCyl(g, black, 1.5, 2.2, 0, 5.4, 3.2); // eyepiece
-		this.vmCyl(g, glass, 1.6, 0.2, 0, 5.4, -11.15);
-		P(black, 1.1, 1.4, 1.1, 0, 7, -3.2); // elevation turret
-		P(black, 1.1, 1.1, 1.4, 1.5, 5.4, -3.2); // windage turret
-		for (const z of [-6.5, 0.4]) {
-			P(edge, 2.6, 0.7, 1.2, 0, 4, z); // ring
-			P(gunmetal, 1.2, 1.6, 1.2, 0, 3, z); // mount
-		}
-		// Carry handle over the front of the receiver.
-		P(black, 0.7, 2.2, 0.7, 0, 3.6, -10);
-		P(black, 0.7, 2.2, 0.7, 0, 3.6, -13.6);
-		P(black, 0.8, 0.7, 4.4, 0, 4.9, -11.8);
-		// Folded bipod under the barrel.
-		P(black, 0.5, 0.5, 9, 0.9, -1.4, -17.5, 0.08);
-		P(black, 0.5, 0.5, 9, -0.9, -1.4, -17.5, 0.08);
-		P(gunmetal, 2.6, 0.9, 1.4, 0, -0.8, -13.2);
-		g.userData.muzzle = new THREE.Vector3(0, 0.3, -36);
-		return g;
-	}
-
-	/**
-	 * Striker: matte street-sweeper with the wide octagonal rotary drum under
-	 * the body, perforated heat-shield shroud, foregrip, stock folded on top.
-	 */
-	private buildStriker(mat: (color: number, rough?: number) => THREE.MeshStandardMaterial): THREE.Group {
-		const matte = mat(0x26282c, 0.85);
-		const steel = mat(0x4a4f56, 0.45);
-		const black = mat(0x121315, 0.9);
-		const brass = mat(0x8a6a2e, 0.5);
-		const g = new THREE.Group();
-		const P = (...a: PartArgs) => this.vmPart(g, ...a);
-		// Receiver and top strap.
-		P(matte, 3.4, 3.6, 14, 0, 0, -1);
-		P(steel, 2.4, 0.6, 12, 0, 2.05, -1.5);
-		// Rotary drum: a wide octagon with a hub, a winding key and shell chambers on the rim.
-		this.vmCyl(g, matte, 4.4, 3.4, 0, -2.4, -3.8, 8);
-		this.vmCyl(g, steel, 4.5, 0.5, 0, -2.4, -5.6, 8);
-		this.vmCyl(g, steel, 4.5, 0.5, 0, -2.4, -2, 8);
-		this.vmCyl(g, steel, 1.1, 1.2, 0, -2.4, -6.1);
-		P(black, 0.5, 3, 0.5, 0, -2.4, -6.8, 0, 0, 0.7); // winding key
-		// Shell chamber studs standing out of the front face of the drum.
-		for (let i = 0; i < 12; i++) {
-			const a = (i / 12) * Math.PI * 2;
-			this.vmPart(g, i % 3 === 0 ? brass : black, 0.8, 0.8, 0.7, Math.cos(a) * 3.2, -2.4 + Math.sin(a) * 3.2, -6.05);
-		}
-		// Barrel inside a perforated heat-shield shroud.
-		this.vmCyl(g, black, 0.8, 18, 0, 0.8, -16);
-		this.vmCyl(g, steel, 1.35, 13, 0, 0.8, -14.6, 10);
-		for (let row = 0; row < 3; row++) {
-			const a = Math.PI / 2 + (row - 1) * 0.85;
-			for (let i = 0; i < 6; i++) {
-				const h = this.vmPart(g, black, 0.55, 0.32, 1, Math.cos(a) * 1.3, 0.8 + Math.sin(a) * 1.3, -9.6 - i * 2);
-				h.rotation.z = a;
-			}
-		}
-		this.vmCyl(g, steel, 1.0, 1.4, 0, 0.8, -25.3);
-		// Vertical foregrip and pistol grip with trigger guard.
-		P(black, 1.6, 4.2, 1.8, 0, -3.2, -12.5, 0.12);
-		P(black, 2.2, 4.8, 2.6, 0, -3.8, 5.4, -0.3);
-		P(black, 0.6, 0.5, 3.6, 0, -2.2, 3.4);
-		// Folding stock, folded forward over the top: two struts and the butt plate.
-		P(steel, 0.45, 0.45, 11, 1.1, 2.9, -2.5);
-		P(steel, 0.45, 0.45, 11, -1.1, 2.9, -2.5);
-		P(black, 3, 2.6, 0.7, 0, 3.4, -8.3);
-		P(steel, 2.6, 0.9, 1.2, 0, 2.6, 3.2); // hinge
-		g.userData.muzzle = new THREE.Vector3(0, 0.8, -26.4);
-		return g;
-	}
-
-	/**
-	 * PP90M1-style SMG: compact slate body, helical tube magazine under the
-	 * barrel, stubby muzzle, iron-sight rail, side-folded stock.
-	 */
-	private buildSmg(mat: (color: number, rough?: number) => THREE.MeshStandardMaterial): THREE.Group {
-		const slate = mat(0x3a4048, 0.6);
-		const black = mat(0x15171a, 0.85);
-		const steel = mat(0x6a7078, 0.4);
-		const g = new THREE.Group();
-		const P = (...a: PartArgs) => this.vmPart(g, ...a);
-		// Body and top cover.
-		P(slate, 2.8, 3.4, 13, 0, 0.2, -1);
-		P(black, 2.2, 0.6, 12, 0, 2.1, -1.4);
-		// Iron-sight rail: front post with ears, rear aperture.
-		P(steel, 0.9, 0.4, 11, 0, 2.6, -1.6);
-		P(black, 0.35, 1.4, 0.35, 0, 3.4, -6.8);
-		P(black, 0.3, 1.1, 0.5, 0.55, 3.2, -6.8);
-		P(black, 0.3, 1.1, 0.5, -0.55, 3.2, -6.8);
-		P(black, 1.4, 1.2, 0.5, 0, 3.2, 3.6);
-		// Stubby barrel and muzzle nut.
-		this.vmCyl(g, black, 0.55, 4.4, 0, 0.9, -9.6);
-		this.vmCyl(g, steel, 0.8, 1.2, 0, 0.9, -12.2, 8);
-		// Helical tube magazine under the barrel, ridged along its length.
-		this.vmCyl(g, slate, 1.5, 12.5, 0, -1.9, -5.2);
-		this.vmCyl(g, black, 1.25, 0.8, 0, -1.9, -11.6);
-		const ring = new THREE.TorusGeometry(1.52, 0.2, 4, 14);
-		this.vmGeoms.push(ring);
-		for (let i = 0; i < 9; i++) {
-			const r = new THREE.Mesh(ring, steel);
-			r.position.set(0, -1.9, -10.2 + i * 1.25);
-			r.rotation.set(0.28, 0, 0); // tilted: reads as a helix
-			g.add(r);
-		}
-		// Grip, trigger guard, selector.
-		P(black, 2, 4.4, 2.4, 0, -3.6, 3.6, -0.25);
-		P(black, 0.5, 0.5, 3.2, 0, -2.0, 1.4);
-		P(steel, 0.4, 0.8, 1.2, 1.5, 0.4, 1.8);
-		// Compact stock folded along the left side.
-		P(black, 0.5, 1.8, 9, -1.75, -0.4, -1.5);
-		P(black, 0.6, 3, 0.9, -1.75, -1.2, -6);
-		P(steel, 0.7, 1.2, 1.2, -1.6, 0.4, 4.6); // hinge
-		g.userData.muzzle = new THREE.Vector3(0, 0.9, -13.2);
-		return g;
-	}
-
 	setWeapon(w: WeaponId | null): void {
 		if (w === this.weapon) return;
+		this.putAway(w);
+		// The generated model of a weapon is fetched when it is first held; the code-built one shows until then.
+		this.models.request(w);
 		this.weapon = w;
-		for (const [id, g] of this.guns) g.visible = id === w;
+		// The new weapon starts at rest: no kick or slash carried over from the old one.
+		this.kickAt = -Infinity;
+		this.kickFrom = 0;
+		this.gunKick.reset();
+		this.anim.hold(w);
+		this.muzzle.hold(hasFlash(w) ? w : null);
+		this.toEject = 0;
+		for (const [id, g] of this.guns) g.visible = id === w || id === this.awayId;
+		// Its moving parts and its hands too: no half-open bolt from an interrupted reload.
+		if (w) this.set.rest(w);
+	}
+
+	/** The gun just swapped away, as it was (a reload half done too), on its way down out of the picture. */
+	private readonly away = new THREE.Group();
+	private awayId: WeaponId | null = null;
+	private awayAt = -Infinity;
+
+	/** `next` is taken up: what is held now goes down, if it is drawn and something comes in its place. */
+	private putAway(next: WeaponId | null): void {
+		this.backHome();
+		const g = this.weapon ? this.guns.get(this.weapon) : undefined;
+		if (!g || !next || !this.vmVisible || !isGun(this.weapon)) return;
+		this.awayId = this.weapon;
+		this.awayAt = -Infinity;
+		this.away.position.copy(this.vm.position);
+		this.away.rotation.copy(this.vm.rotation);
+		this.away.scale.copy(this.vm.scale);
+		this.away.add(g);
+		this.sunk = 0;
+	}
+
+	/** The gun that was going down is out of the picture: its parts and hands at rest, hidden. */
+	private backHome(): void {
+		const id = this.awayId;
+		if (!id) return;
+		this.awayId = null;
+		const g = this.guns.get(id)!;
+		this.vm.add(g);
+		g.visible = this.weapon === id;
+		this.set.rest(id);
+	}
+
+	/** Frame: only a swap with a draw shows the old gun go (`lower`: how far the new one is still down). */
+	private sink(now: number, lower: number): void {
+		if (!this.awayId) return;
+		if (this.awayAt === -Infinity) {
+			if (!(lower > 0.2)) return this.backHome();
+			this.awayAt = now;
+		}
+		const u = (now - this.awayAt) / AWAY_MS;
+		if (!(u >= 0) || u >= 1) return this.backHome();
+		const d = Math.min(1, u - this.sunk);
+		this.sunk = u;
+		// Faster and faster, muzzle down.
+		this.away.position.y -= d * (4 + 24 * u);
+		this.away.rotation.x -= d * 0.7;
+	}
+
+	private sunk = 0;
+
+	/** The moving parts and points of a loaded gun (render/gun-rig.ts), once its model has arrived. */
+	rig(id: WeaponId): GunRig | undefined {
+		return this.guns.get(id)?.userData.rig as GunRig | undefined;
+	}
+
+	/** The gloved hands of a weapon (render/hands.ts), once its model and the hands have arrived. */
+	hands(id: WeaponId): WeaponHandPair | undefined {
+		return this.guns.get(id)?.userData.hands as WeaponHandPair | undefined;
 	}
 
 	/** Shot or swing: recoil kick, claw slash, and (guns only) a muzzle flash. */
 	fired(now: number): void {
+		this.kickFrom = this.pushBack(now);
 		this.kickAt = now;
-		if (this.weapon !== 'knife' && this.weapon !== 'claws') this.muzzleAt = now;
+		if (this.weapon) this.gunKick.kick(this.weapon, now);
+		this.anim.fired(now);
+		// The sniper's case stays in until its bolt opens.
+		if (this.weapon && caseOf(this.weapon) && this.weapon !== 'sniper') this.toEject++;
+		this.muzzle.fired(now);
+	}
+
+	/** Push-back level 0..1 of the held gun at `now`. */
+	private pushBack(now: number): number {
+		const kick = (this.weapon && VM_KICK[this.weapon]) || DEFAULT_KICK;
+		return vmKick(now - this.kickAt, kick.attack, kick.ms, this.kickFrom);
 	}
 
 	/**
@@ -654,40 +514,75 @@ export class ZombieRenderer {
 		this.throwAt = now;
 	}
 
-	/** Pose the viewmodel for this frame. `reload` 0..1 while reloading, else 1. */
-	updateViewmodel(now: number, visible: boolean, reload: number, speed: number): void {
+	/**
+	 * Pose the viewmodel for this frame. `reload` 0..1 while reloading, else 1.
+	 * `feel` (game/gunfeel.ts) adds the sway, the draw, the landing dip and the
+	 * dry-fire nudge; without it the gun rests in place (zombies, hide and seek).
+	 * `mag`: rounds in the magazine (an empty gun locks open and reloads with its bolt); left out, the gun never shows empty.
+	 */
+	updateViewmodel(now: number, visible: boolean, reload: number, speed: number, feel?: VmFeel, mag?: number): void {
 		this.vmVisible = visible && this.weapon !== null;
 		this.vm.visible = this.vmVisible;
-		if (!this.vmVisible) return;
 		const g = this.weapon ? this.guns.get(this.weapon) : undefined;
+		this.away.visible = this.vmVisible;
+		this.sink(now, this.vmVisible ? (feel?.lower ?? 0) : 0);
+		// A hidden gun goes on too: the bolt is worked behind the scope.
+		const inp = this.fpInput;
+		inp.reload = reload;
+		inp.mag = mag;
+		inp.dry = feel?.dry ?? 0;
+		inp.aim = feel?.aim ?? 0;
+		inp.lower = feel?.lower ?? 0;
+		this.anim.update(now, inp, this.vmVisible ? (g?.userData.rig as GunRig | undefined) : undefined, g?.userData.hands as WeaponHandPair | undefined);
+		if (this.anim.events.opened) this.toEject++;
+		if (!this.vmVisible) return;
 		const kick = (this.weapon && VM_KICK[this.weapon]) || DEFAULT_KICK;
-		const k = Math.max(0, 1 - (now - this.kickAt) / (this.weapon === 'knife' ? 300 : this.weapon === 'claws' ? SLASH_MS : kick.ms));
+		// Melee: a linear swing. Guns: a fast push-back with a damped return, and the gun kick.
+		const k =
+			this.weapon === 'knife' || this.weapon === 'claws'
+				? Math.max(0, 1 - (now - this.kickAt) / (this.weapon === 'knife' ? 300 : SLASH_MS))
+				: this.pushBack(now);
+		this.gunKick.update(now);
 		const tp = Math.max(0, Math.min(1, (now - this.throwAt) / THROW_MS));
 		/** 0 → 1 → 0 over the throw (wind-up, release, recover). */
 		const toss = tp < 1 ? Math.sin(tp * Math.PI) : 0;
-		const dip = reload < 1 ? Math.sin(Math.min(1, reload) * Math.PI) : 0;
-		const bob = Math.min(1, speed / 250) * Math.sin(now / 95) * 0.5;
-		this.vm.scale.setScalar(0.42);
-		this.vm.position.set(5, -4.6 - dip * 5 + bob * 0.6, -10);
+		// Aiming down sights: the sights come to the view axis, sway and bob shrink (1 at the hip).
+		const aim = feel && feel.aim > 0 && this.weapon && sightOf(this.weapon, g, SIGHT) ? Math.min(1, feel.aim) : 0;
+		const steady = 1 - VM_AIM_STEADY * aim;
+		const bob = Math.min(1, speed / 250) * Math.sin(now / 95) * 0.5 * steady;
+		this.vm.scale.setScalar(VM_SCALE);
+		this.vm.position.set(5, -4.6 + bob * 0.6, -10);
 		this.vm.rotation.set(0, 0, 0);
 		if (this.weapon === 'claws' && g) {
 			const right = g.userData.right as THREE.Group;
 			const left = g.userData.left as THREE.Group;
-			const rr = right.userData.rest as { x: number; y: number; z: number };
-			const lr = left.userData.rest as { x: number; y: number; z: number };
-			// Slash: the right claw rakes across the view, right to left and down.
-			const sweep = k > 0 ? Math.sin((1 - k) * Math.PI) : 0;
+			const rr = right.userData.rest as ClawPose;
+			const lr = left.userData.rest as ClawPose;
+			const lh = left.userData.hold as ClawPose;
+			// Slash (u 0 → 1): the right claw whips across the middle of the view, palm and talons leading to the
+			// left, then dips and comes back slowly.
+			const u = 1 - k;
+			const reach = u < SLASH_REACH ? 1 - (1 - u / SLASH_REACH) ** 3 : 1 - ease((u - SLASH_REACH) / (1 - SLASH_REACH));
+			const arc = u < SLASH_REACH ? Math.sin((u / SLASH_REACH) * Math.PI) : 0;
+			const dip = u > SLASH_REACH && u < 1 ? Math.sin(((u - SLASH_REACH) / (1 - SLASH_REACH)) * Math.PI) : 0;
 			const idle = Math.sin(now / 420) * 0.4;
-			right.position.set(rr.x - sweep * 20, rr.y + sweep * 4 - (1 - k) * sweep * 6 + idle, rr.z - sweep * 6);
-			right.rotation.set(0.15 - sweep * 0.5, -0.12 + sweep * 0.9, 0.18 + sweep * 0.9);
-			// Throw: the left hand snaps forward and up.
-			left.position.set(lr.x + toss * 8, lr.y + toss * 6 - idle, lr.z - toss * 12);
-			left.rotation.set(0.15 - toss * 1.1, 0.12 - toss * 0.4, -0.18);
-			this.vm.position.y -= sweep * 1.5;
+			right.position.set(rr.x - reach * 12.9, rr.y + reach * 3.9 + arc * 2 - dip * 3 + idle, rr.z - reach * 5.6);
+			right.rotation.set(rr.rx - reach * 0.2, rr.ry + reach * 0.5, rr.rz - reach * 0.95);
+			// The knife is in the left fist while held, and until the release point of a throw.
+			const held = this.offhand || tp < RELEASE_AT;
+			// 1 with the knife in the fist: eases in on a pickup, and out to the open claw after the release.
+			const hold = this.offhand ? ease((now - this.offhandAt) / OFFHAND_POP_MS) : tp < RELEASE_AT ? 1 : 1 - ease(((tp - RELEASE_AT) * THROW_MS) / OPEN_MS);
+			// Throw: wind up beside the head, whip forward (the release), follow through and come back.
+			const wind = tp < THROW_WIND ? ease(tp / THROW_WIND) : 1 - ease((tp - THROW_WIND) / 0.2);
+			const cast = tp < THROW_WIND ? 0 : tp < THROW_CAST ? 1 - (1 - (tp - THROW_WIND) / (THROW_CAST - THROW_WIND)) ** 2 : 1 - ease((tp - THROW_CAST) / (1 - THROW_CAST));
+			left.position.set(lr.x + (lh.x - lr.x) * hold + wind + cast * 5.2, lr.y + (lh.y - lr.y) * hold + wind * 6.6 + cast * 3.8 - idle, lr.z + (lh.z - lr.z) * hold + wind * 2.8 - cast * 10.3);
+			// The hand stays tipped up through the cast: the forearm has to keep running down out of the view.
+			left.rotation.set(lr.rx + (lh.rx - lr.rx) * hold + wind * 0.55 - cast * 0.05, lr.ry + (lh.ry - lr.ry) * hold + cast * 0.1, lr.rz + (lh.rz - lr.rz) * hold);
+			(left.userData.fist as THREE.Object3D).visible = held;
+			(left.userData.open as THREE.Object3D).visible = !held;
 			const off = this.offKnife;
 			if (off) {
-				// Held, or still in the hand until the release point of a throw.
-				off.visible = this.offhand || tp < RELEASE_AT;
+				off.visible = held;
 				const pop = Math.min(1, Math.max(0, (now - this.offhandAt) / OFFHAND_POP_MS));
 				off.scale.setScalar(this.offhand ? 0.35 + 0.65 * (1 - (1 - pop) * (1 - pop)) : 1);
 			}
@@ -696,19 +591,132 @@ export class ZombieRenderer {
 			this.vm.rotation.y = k * 0.6;
 			this.vm.position.x = 5 - k * 3;
 		} else {
-			this.vm.position.z = -10 + k * kick.back;
-			this.vm.rotation.x = k * kick.rise + dip * 0.6;
+			// Shot: pushed back along the barrel; the gun kick turns the muzzle up and sideways. Reload and
+			// bolt: the gun goes with the clip (render/fp-clips.ts), its underside turned to the left hand.
+			const gk = feel?.gun ?? this.gunKick;
+			const o = this.anim.gun;
+			this.vm.position.x += o[0]!;
+			this.vm.position.y += o[1]!;
+			// Aimed, the push-back is smaller: the sights stay in front of the eye.
+			this.vm.position.z = -10 + k * kick.back * (1 - VM_AIM_PUSH * aim) + o[2]!;
+			this.vm.rotation.x = gk.pitch * DEG + o[3]!;
+			this.vm.rotation.y = gk.yaw * DEG + o[4]!;
+			this.vm.rotation.z = o[5]!;
 		}
 		if (toss > 0 && this.weapon !== 'claws') {
 			this.vm.position.y -= toss * 3;
 			this.vm.rotation.x -= toss * 0.8;
 		}
-		const flash = now - this.muzzleAt < MUZZLE_MS && g?.userData.muzzle;
-		this.muzzle.visible = !!flash;
-		if (flash) {
-			this.muzzle.position.copy(g!.userData.muzzle as THREE.Vector3);
-			this.muzzle.rotation.z = Math.random() * Math.PI;
+		if (feel) {
+			// Sway and landing dip; the dry-fire nudge; lowered muzzle-down by the draw and the scope.
+			this.vm.position.x += feel.x * steady;
+			this.vm.position.y += feel.y * steady - feel.land * 1.4 - feel.lower * 11;
+			this.vm.position.z += feel.dry * 0.35;
+			this.vm.rotation.x += feel.pitch * steady - feel.dry * 0.05 - feel.lower * 0.7;
+			this.vm.rotation.y += feel.yaw * steady;
+			this.vm.rotation.z += feel.roll * steady + feel.lower * 0.3;
 		}
+		if (aim > 0) {
+			// From the hip pose to the aimed one: the sight point (render/sights.ts) on the view axis, the aim depth ahead.
+			const s = this.vm.scale.x;
+			this.vm.position.x += (-s * SIGHT.x - 5) * aim;
+			this.vm.position.y += (-s * SIGHT.y + 4.6) * aim;
+			this.vm.position.z += (-aimDepthOf(this.weapon!, g) - s * SIGHT.z + 10) * aim;
+			// Aimed, the gun kick turns the gun about the eye, so the sights point where the kick turned the shot.
+			const gk = feel?.gun ?? this.gunKick;
+			if (gk.pitch !== 0 || gk.yaw !== 0) this.vm.position.applyEuler(PIVOT.set(gk.pitch * DEG * aim, gk.yaw * DEG * aim, 0));
+		}
+		// Once from the hip, for a case that comes out behind the scope, and for every case that comes out now.
+		const loaded = g?.userData.rig as GunRig | undefined;
+		if (this.toEject > 0 || (aim < 0.1 && (this.portOf !== this.weapon || this.portRig !== loaded))) {
+			this.findPort(g);
+			this.portOf = this.weapon;
+			this.portRig = loaded;
+		}
+		this.muzzle.update(now, (g?.userData.muzzle as THREE.Vector3 | null | undefined) ?? null, this.vm, aim);
+	}
+
+	/**
+	 * Where the muzzle of the held gun was last drawn: right of and below the screen centre, in half screen
+	 * heights, into `out`. False without a gun on screen.
+	 */
+	muzzleScreen(out: { right: number; down: number }): boolean {
+		const m = this.weapon && this.vmVisible ? (this.guns.get(this.weapon)?.userData.muzzle as THREE.Vector3 | null | undefined) : null;
+		if (!m) return false;
+		this.vm.updateMatrixWorld(true);
+		const v = this.muzzleV.copy(m).applyMatrix4(this.vm.matrixWorld);
+		if (v.z > -0.1) return false;
+		const k = 1 / (-v.z * Math.tan((this.vmCamera.fov * Math.PI) / 360));
+		out.right = v.x * k;
+		out.down = -v.y * k;
+		return true;
+	}
+
+	private readonly muzzleV = new THREE.Vector3();
+
+	/** Where the ejection port of the held gun is in the view of the viewmodel camera, and the way out of it. */
+	private findPort(g: THREE.Group | undefined): void {
+		if (!g || !g.userData.muzzle) return;
+		this.vm.updateMatrixWorld(true);
+		const node = (g.userData.rig as GunRig | undefined)?.point('eject');
+		this.portScale = this.vm.scale.x * ((g.userData.hands as WeaponHandPair | undefined)?.space.scale.x ?? 1);
+		if (node) {
+			this.port.setFromMatrixPosition(node.matrixWorld);
+			this.portDir.setFromMatrixColumn(node.matrixWorld, 0).normalize();
+		} else {
+			// A code-built gun: a third of the way to the muzzle, on its right.
+			const m = g.userData.muzzle as THREE.Vector3;
+			this.port.set(m.x + 1.2, m.y, m.z * 0.35).applyMatrix4(this.vm.matrixWorld);
+			this.portDir.set(1, 0, 0).transformDirection(this.vm.matrixWorld);
+		}
+	}
+
+	/** Cases out and on their way; `camera`: the world camera of this frame, placed. Once per frame, before rendering. */
+	updateCasings(now: number, camera: THREE.PerspectiveCamera): void {
+		camera.updateMatrixWorld();
+		const h = this.handOver;
+		h.vmTan = Math.tan((this.vmCamera.fov * Math.PI) / 360);
+		h.worldTan = Math.tan((camera.fov * Math.PI) / 360);
+		h.k = depthScale(this.portScale);
+		const def = this.weapon ? caseOf(this.weapon) : null;
+		for (; this.toEject > 0; this.toEject--) if (def) this.casings.eject(def, this.port, this.portDir, camera, h, now, this.fpInput.aim);
+		this.casings.update(now, camera, h.vmTan);
+	}
+
+	private readonly handOver: HandOver = { k: 1, vmTan: 1, worldTan: 1 };
+
+	/** A generated model arrived: it takes the place of the code-built one at once (the pose is on the viewmodel node). */
+	private fitModel(id: WeaponId, model: THREE.Object3D): void {
+		// Every part shares one material.
+		lightFirstPerson(meshesOf(model)[0]!.material as THREE.Material, this.envMap(), generated(id));
+		this.set.fit(id, model);
+	}
+
+	/** The renderer that draws the viewmodel: the generated models reflect a room environment made with it. */
+	useRenderer(gl: THREE.WebGLRenderer): void {
+		this.gl = gl;
+	}
+
+	private envMap(): THREE.Texture | null {
+		if (!this.env && this.gl) {
+			const pm = new THREE.PMREMGenerator(this.gl);
+			const room = new RoomEnvironment();
+			this.env = pm.fromScene(room, 0.04);
+			room.dispose();
+			pm.dispose();
+		}
+		return this.env?.texture ?? null;
+	}
+
+	/** Fetch the generated models of these weapons; resolves when every fetch so far has finished (dev viewer). */
+	preload(ids: readonly WeaponId[]): Promise<void> {
+		for (const id of ids) this.models.request(id);
+		return this.models.settled();
+	}
+
+	/** Whether the held weapon shows its generated model. */
+	generatedShown(id: WeaponId): boolean {
+		return !!this.guns.get(id)?.userData.generated;
 	}
 
 	resize(aspect: number): void {
@@ -753,6 +761,9 @@ export class ZombieRenderer {
 		for (const c of this.corpses) this.release(c.m);
 		this.corpses = [];
 		for (const t of this.tracers) t.line.visible = false;
+		this.casings.clear();
+		this.toEject = 0;
+		this.backHome();
 		this.setWeapon(null);
 		this.setOffhandKnife(false);
 		this.throwAt = -Infinity;
@@ -778,7 +789,11 @@ export class ZombieRenderer {
 		for (const m of this.vmMats) m.dispose();
 		for (const g of this.vmGeoms) g.dispose();
 		this.vmGeoms = [];
-		this.muzzle.geometry.dispose();
+		this.models.dispose();
+		this.casings.dispose();
+		this.env?.dispose();
+		this.env = null;
+		this.muzzle.dispose();
 		this.box.dispose();
 		this.group.removeFromParent();
 	}

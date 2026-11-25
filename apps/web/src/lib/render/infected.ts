@@ -7,8 +7,12 @@
  * sparks where a knife bounces or sticks and a flare burst where a beacon is
  * smashed or used. Positions are Source points;
  * Source → Three is (x, y, z) → (x, z, −y).
+ * Hit and kill feedback (corpses, infection bursts, bullet impacts) lives in
+ * render/infected-fx.ts; this renderer owns it as `fx`.
  */
 import * as THREE from 'three';
+import type { HeldAssets } from './character/held.js';
+import { InfectedFx } from './infected-fx.js';
 
 const DEG = Math.PI / 180;
 /** Spin rate in radians per ms (end-over-end tumble). */
@@ -218,8 +222,11 @@ export class InfectedRenderer {
 	private rbFree: BeaconMesh[] = [];
 	private rbSeen = new Set<number>();
 	private rbViewer: 'survivor' | 'infected' = 'survivor';
+	/** Hit and kill feedback: corpses, infection bursts, bullet impacts (updated, cleared and disposed with this renderer). */
+	readonly fx: InfectedFx;
 
-	constructor() {
+	constructor(assets: HeldAssets) {
+		this.fx = new InfectedFx(assets, this.glowTex);
 		this.group.name = 'infected';
 		// Streak: a tapered plane trailing behind the knife (local −X).
 		this.streakGeo = new THREE.PlaneGeometry(1, 1);
@@ -234,7 +241,7 @@ export class InfectedRenderer {
 		this.rbGlowMat = new THREE.SpriteMaterial({ map: this.glowTex, color: 0xff6a3a, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
 		this.rbMats = [this.rbBaseMat, this.rbBandMat, this.rbTubeMat, this.rbTipMat, this.rbLedMat, this.rbGlowMat, this.rbHaloMat, this.rbColumnMat, this.rbTrimMat, this.rbMarkerMat];
 		this.rbLayer.name = 'respawn-beacons';
-		this.group.add(this.rbLayer);
+		this.group.add(this.rbLayer, this.fx.group);
 		this.knifeMats = [this.handleMat, this.wrapMat, this.guardMat, this.steelMat, this.spineMat, this.edgeMat, this.streakMat, this.shadeMat, this.glintMat, this.ringMat, this.haloMat];
 	}
 
@@ -698,6 +705,7 @@ export class InfectedRenderer {
 		this.updateRespawnBeacons(now);
 		this.updateBeacons(now);
 		this.updateSparks(now);
+		this.fx.update(now);
 	}
 
 	/** Round reset or map change. */
@@ -710,10 +718,12 @@ export class InfectedRenderer {
 		this.beacons = [];
 		for (const b of this.sparks) this.releaseBurst(b);
 		this.sparks = [];
+		this.fx.clear();
 	}
 
 	dispose(): void {
 		this.clear();
+		this.fx.dispose();
 		for (const k of this.free) k.root.removeFromParent();
 		this.free = [];
 		for (const b of this.rbFree) b.root.removeFromParent();

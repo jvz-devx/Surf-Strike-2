@@ -31,7 +31,7 @@ export class GameRenderer {
 	/** Zombies mode: zombies, corpses, tracers and the first-person viewmodel (docs/modes.md#zombies). */
 	readonly zombies = new ZombieRenderer(this.held);
 	/** Infected mode: throwing knives and the last-survivor UAV pulse (docs/modes.md#infected). */
-	readonly infected = new InfectedRenderer();
+	readonly infected = new InfectedRenderer(this.held);
 	/** Hide and seek: the cash bag (docs/economy.md#hide-and-seek). */
 	readonly cashBag = new CashBagRenderer();
 	private shared: SharedUniforms = createSharedUniforms();
@@ -49,6 +49,7 @@ export class GameRenderer {
 		this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+		this.zombies.useRenderer(this.renderer);
 		this.camera = new THREE.PerspectiveCamera(verticalFovFromHorizontal43(90), 16 / 9, 2, 250000);
 		this.scene.fog = this.fog;
 		this.scene.add(this.sky.mesh, this.hemi, this.sun, this.sun.target, this.players.group, this.ghost.group, this.zombies.group, this.infected.group, this.cashBag.group);
@@ -111,10 +112,11 @@ export class GameRenderer {
 		this.cashBag.clear();
 	}
 
-	/** Eye position in Source coordinates; Source view angles in degrees. */
-	setView(x: number, y: number, z: number, pitch: number, yaw: number): void {
+	/** Eye position in Source coordinates; Source view angles in degrees; `roll` (degrees, + = counter-clockwise) turns the picture about the view axis. */
+	setView(x: number, y: number, z: number, pitch: number, yaw: number, roll = 0): void {
 		setThree(this.camera.position, x, y, z);
 		applyViewAngles(this.camera, pitch, yaw);
+		this.camera.rotation.z = roll * (Math.PI / 180);
 	}
 
 	render(timeSec: number): void {
@@ -124,9 +126,10 @@ export class GameRenderer {
 		this.infected.update(timeSec * 1000);
 		this.cashBag.update(timeSec * 1000);
 		this.crowd.begin(timeSec, this.camera);
-		this.players.update(this.crowd);
+		this.players.update(this.crowd, timeSec * 1000);
 		this.ghost.update(this.crowd);
 		this.zombies.animate(this.crowd);
+		this.zombies.updateCasings(timeSec * 1000, this.camera);
 		this.renderer.render(this.scene, this.camera);
 		this.zombies.update(timeSec * 1000);
 		if (this.zombies.vmVisible) {

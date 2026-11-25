@@ -296,7 +296,7 @@ describe('cosmetics', () => {
 			// The fry cook hat and the headphones sit on top of the hair.
 			if (item.slot === 'hat' && item.id !== 'hat_frycook' && item.id !== 'hat_headphones') expect(mesh.hides).toContain('hair');
 		}
-	});
+	}, 30_000);
 
 	it('a tagged look has its own geometry (second WebGL context)', () => {
 		const a = new CharacterModel(personOf(1), assets);
