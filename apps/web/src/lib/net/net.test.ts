@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { NetState } from '@surf/shared';
 import { Connection } from './connection.js';
+import { clearSession, loadSession, saveSession } from '../game/identity.js';
+import { memoryStore } from '../game/storage.js';
 import { parseDiscovery, sameOriginWsUrl, serverOverride, toWsUrl } from './discovery.js';
 import { emptySample, lerpAngle, SnapshotBuffer } from './interp.js';
 
@@ -62,6 +64,58 @@ describe('discovery URLs', () => {
 			globalThis.WebSocket = origWs;
 		}
 	});
+	it('scopes sessions to the socket origin or to the discovery route for rotating quick tunnels', async () => {
+		const store = memoryStore({ 'surf.session': 'legacy-token', 'surf.account': 'Legacy' });
+		const account = { token: 'new-token', username: 'Player' };
+		const noop = () => {};
+		vi.stubGlobal('WebSocket', class { close() {} });
+		async function targetScope({ override = null, sameOrigin = null, found = null }: {
+			override?: string | null;
+			sameOrigin?: string | null;
+			found?: string | null;
+		}) {
+			const connection = new Connection(
+				{ connecting, open: noop, message: noop, snapshot: noop, closed: noop, idle: noop },
+				{ override, sameOrigin, dev: false, fetch: async () => Response.json({ url: found }) }
+			);
+			function connecting(_url: string, scope: string) {
+				resolve(scope);
+			}
+			let resolve!: (scope: string) => void;
+			const scope = new Promise<string>((done) => { resolve = done; });
+			try {
+				connection.start();
+				return await scope;
+			} finally {
+				connection.dispose();
+			}
+		}
+		try {
+			const self = 'wss://surf.example.com/ws';
+			const own = await targetScope({ sameOrigin: self });
+			expect(loadSession(store, own)).toBeNull();
+			saveSession(store, own, account);
+			const foreign = await targetScope({ sameOrigin: self, override: serverOverride('?server=https://other.example') });
+			expect(loadSession(store, foreign)).toBeNull();
+			expect(loadSession(store, await targetScope({ sameOrigin: self, override: 'wss://surf.example.com:443/other' }))).toEqual(account);
+			expect(loadSession(store, await targetScope({ override: 'ws://surf.example.com/ws' }))).toBeNull();
+			expect(loadSession(store, await targetScope({ override: 'wss://surf.example.com:8443/ws' }))).toBeNull();
+
+			const first = await targetScope({ found: 'https://first.trycloudflare.com' });
+			saveSession(store, first, { ...account, token: 'tunnel-token' });
+			const restarted = await targetScope({ found: 'https://second.trycloudflare.com' });
+			expect(loadSession(store, restarted)?.token).toBe('tunnel-token');
+			const tunnelOverride = await targetScope({ override: 'wss://second.trycloudflare.com/ws' });
+			expect(loadSession(store, tunnelOverride)).toBeNull();
+			expect(loadSession(store, await targetScope({ found: 'https://surf.example.com' }))).toEqual(account);
+			clearSession(store, restarted);
+			expect(loadSession(store, first)).toBeNull();
+			expect(loadSession(store, own)).toEqual(account);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it('parses discovery responses', () => {
 		const now = Date.parse('2026-11-21T12:00:00Z');
 		expect(parseDiscovery({ url: null }, now)).toBeNull();

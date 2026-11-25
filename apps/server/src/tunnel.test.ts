@@ -97,6 +97,13 @@ describe('fixed self-hosted server protection', () => {
 		assert.equal(await findActiveFixedServer({ discoveryUrl: 'https://d.example' }, tunnelOnly), null);
 	});
 
+	it('does not report success when a conditional clear loses a race', async () => {
+		const own = 'https://my-tunnel.trycloudflare.com';
+		const fake: typeof fetch = async (_url, init) =>
+			Response.json(init?.method === 'POST' ? { ok: true, cleared: false, url: 'https://surf.example.com' } : { url: own });
+		assert.equal(await clearPublishedUrl({ hostSecret: 'secret', discoveryUrl: 'https://d.example' }, own, fake), false);
+	});
+
 	it('clearPublishedUrl refuses to clear when discovery points to another server', async () => {
 		const posts: Array<{ url: string; body: string }> = [];
 		const fixedActive = (async (url: string, init?: RequestInit) => {

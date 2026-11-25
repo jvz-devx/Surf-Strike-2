@@ -124,7 +124,7 @@ export async function publishUrl(
 	url: string | null,
 	fetchImpl: typeof fetch = fetch,
 	expectedUrl?: string
-): Promise<void> {
+): Promise<boolean> {
 	const payload = url === null && expectedUrl ? { url: null, expectedUrl } : { url };
 	const res = await fetchImpl(`${env.discoveryUrl}/api/server`, {
 		method: 'POST',
@@ -136,6 +136,9 @@ export async function publishUrl(
 		const body = (await res.text().catch(() => '')).slice(0, 200);
 		throw new Error(`discovery API answered ${res.status}${body ? `: ${body}` : ''}`);
 	}
+	if (url !== null) return true;
+	const result = (await res.json().catch(() => null)) as { cleared?: boolean } | null;
+	return result?.cleared !== false;
 }
 
 /**
@@ -151,6 +154,5 @@ export async function clearPublishedUrl(
 	const normalizedOwn = ownUrl.replace(/\/+$/, '');
 	const current = await fetchPublishedUrl(env, fetchImpl);
 	if (current && current !== normalizedOwn) return false;
-	await publishUrl(env, null, fetchImpl, normalizedOwn);
-	return true;
+	return publishUrl(env, null, fetchImpl, normalizedOwn);
 }

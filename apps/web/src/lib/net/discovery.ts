@@ -9,6 +9,7 @@
 export const DEV_FALLBACK_URL = 'ws://localhost:27016/ws';
 export const DISCOVERY_STALE_MS = 3 * 60 * 1000;
 export const RETRY_MS = 10_000;
+const DISCOVERY_ENDPOINT = '/api/server';
 
 /**
  * Normalise a server address to a WebSocket URL:
@@ -77,7 +78,7 @@ export function parseDiscovery(body: unknown, nowMs: number): string | null {
 export async function discover(
 	fetchFn: typeof fetch,
 	signal?: AbortSignal,
-	endpoint = '/api/server'
+	endpoint = DISCOVERY_ENDPOINT
 ): Promise<string | null> {
 	try {
 		const res = await fetchFn(endpoint, { signal, cache: 'no-store' });
@@ -86,4 +87,14 @@ export async function discover(
 	} catch {
 		return null;
 	}
+}
+
+/** Only quick tunnels returned by this site's discovery endpoint can share a session. */
+export function sessionScope(url: string, discovered = false): string {
+	const target = new URL(url);
+	if (discovered && target.protocol === 'wss:' && /^[a-z0-9-]+\.trycloudflare\.com$/.test(target.host)) {
+		// localStorage is already scoped to the browser page's origin.
+		return `discovery:${DISCOVERY_ENDPOINT}`;
+	}
+	return target.origin;
 }

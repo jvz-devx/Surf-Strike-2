@@ -11,7 +11,7 @@
  * Both run in one region (the runtime cache is regional). Outside Vercel the cache
  * is in memory.
  *
- * Env (server only): HOST_SECRET.
+ * Env (server only): HOST_SECRET, FIXED_SERVER_URL (authoritative when set).
  *
  * Env vars are read from process.env: SvelteKit 3's `$env/dynamic/private`
  * only exposes variables declared with defineEnvVars.
@@ -85,6 +85,12 @@ async function readRecord(): Promise<DiscoveryRecord | null> {
 }
 
 export const GET: RequestHandler = async () => {
+	const fixed = env('FIXED_SERVER_URL')?.trim();
+	if (fixed) {
+		const url = normalizeServerUrl(fixed);
+		if (!url) return json({ error: 'invalid FIXED_SERVER_URL' }, { status: 503, headers: NO_STORE });
+		return json({ url }, { headers: NO_STORE });
+	}
 	try {
 		const rec = await readRecord();
 		if (!rec || !rec.url || Date.now() - rec.lastSeen > STALE_MS) return json({ url: null }, { headers: GET_HEADERS });
@@ -123,6 +129,15 @@ export const POST: RequestHandler = async ({ request }) => {
 		if (!expectedUrl) {
 			return json({ error: 'expectedUrl must be a valid https/wss URL' }, { status: 400, headers: NO_STORE });
 		}
+	}
+
+	// A deployment-level URL takes precedence without reading or writing the shared cache.
+	const fixed = env('FIXED_SERVER_URL')?.trim();
+	if (fixed) {
+		const fixedUrl = normalizeServerUrl(fixed);
+		if (!fixedUrl) return json({ error: 'invalid FIXED_SERVER_URL' }, { status: 503, headers: NO_STORE });
+		if (url === null) return json({ ok: true, cleared: false, url: fixedUrl }, { headers: NO_STORE });
+		return json({ error: 'fixed server configured', url: fixedUrl }, { status: 409, headers: NO_STORE });
 	}
 
 	try {

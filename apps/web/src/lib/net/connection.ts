@@ -4,10 +4,10 @@
  */
 import type { GhostFrame, ServerMessage, SnapshotEntry, ZombieFrame } from '@surf/shared';
 import { NetClient } from './client.js';
-import { DEV_FALLBACK_URL, discover, RETRY_MS, toWsUrl } from './discovery.js';
+import { DEV_FALLBACK_URL, discover, RETRY_MS, sessionScope, toWsUrl } from './discovery.js';
 
 export interface ConnectionHandlers {
-	connecting(url: string): void;
+	connecting(url: string, scope: string): void;
 	open(client: NetClient): void;
 	message(msg: ServerMessage): void;
 	snapshot(entries: SnapshotEntry[], arrivalMs: number): void;
@@ -101,13 +101,14 @@ export class Connection {
 		if (Date.now() < this.holdUntil) return this.schedule();
 		this.busy = true;
 		let url = this.manualUrl ?? this.opts.override ?? this.opts.sameOrigin ?? null;
+		let discovered = false;
 		if (!url) {
 			this.abort = new AbortController();
-			url = await discover(this.opts.fetch, this.abort.signal);
+			const found = await discover(this.opts.fetch, this.abort.signal);
 			this.abort = null;
-			if (!url && this.opts.dev) url = DEV_FALLBACK_URL;
 			// A manual `connect` may have arrived during discovery.
-			url = this.manualUrl ?? url;
+			url = this.manualUrl ?? found ?? (this.opts.dev ? DEV_FALLBACK_URL : null);
+			discovered = this.manualUrl === null && found !== null;
 		}
 		this.busy = false;
 		if (this.disposed || this.stopped || this.client) return;
@@ -115,7 +116,7 @@ export class Connection {
 			this.h.idle();
 			return this.schedule();
 		}
-		this.h.connecting(url);
+		this.h.connecting(url, sessionScope(url, discovered));
 		const target = url;
 		const client: NetClient = new NetClient(target, {
 			open: () => this.h.open(client),
