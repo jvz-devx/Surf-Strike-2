@@ -51,6 +51,7 @@ import type { AccountRow, BanRow, Db } from './db.ts';
 import { Economy } from './economy.ts';
 import { Shop } from './shop.ts';
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
+import { INITIAL_RTT_MS, PeerRtt } from './peer-rtt.ts';
 import type { ZoneKind } from './validation.ts';
 
 export { SNAPSHOT_HZ };
@@ -58,7 +59,7 @@ export { SNAPSHOT_HZ };
 export const MODE_TICK_HZ = TAG_TICK_HZ;
 export const SCOREBOARD_MS = 1000;
 export const ROTATION_MS = 100;
-export const PING_MS = 2000;
+export const PING_MS = 500;
 export const TIME_LEFT_MS = 5000;
 export const HELLO_TIMEOUT_MS = 10_000;
 
@@ -138,6 +139,7 @@ interface Client {
 	targetId: number | null;
 	state: NetState | null;
 	ping: number;
+	rtt: PeerRtt;
 	/** Worn cosmetics (docs/economy.md#shop); the default look for guests. */
 	loadout: Loadout;
 	rate: { state: Window; chat: Window; json: Window; shop: Window; casino: Window };
@@ -438,7 +440,8 @@ export class Lobby {
 			spectating: false,
 			targetId: null,
 			state: null,
-			ping: 0,
+			ping: INITIAL_RTT_MS,
+			rtt: new PeerRtt(),
 			loadout: emptyLoadout(),
 			rate: { state: new Window(), chat: new Window(), json: new Window(), shop: new Window(), casino: new Window() },
 			helloTimer: null,
@@ -594,12 +597,11 @@ export class Lobby {
 			}
 			case 'admin':
 				return this.admin.handle(c, msg.action);
-			case 'pong':
-				if (typeof msg.t === 'number' && Number.isFinite(msg.t)) {
-					const rtt = t - msg.t;
-					if (rtt >= 0 && rtt < 60_000) c.ping = c.ping === 0 ? rtt : c.ping * 0.7 + rtt * 0.3;
-				}
+			case 'pong': {
+				const rtt = c.rtt.pong(msg.t, t);
+				if (rtt !== null) c.ping = rtt;
 				return;
+			}
 			default:
 				return;
 		}
@@ -662,6 +664,7 @@ export class Lobby {
 			records: this.mode.records(c),
 			account: resumed ? { username: resumed.account.username, admin } : null
 		});
+		this.ping(c, performance.now());
 		this.send(c, this.admin.mapsMessage());
 		if (!resumed && guest.taken) {
 			this.systemTo(c, `That name belongs to a registered account. Log in to use it; playing as ${guestName}.`);
@@ -1121,8 +1124,12 @@ export class Lobby {
 	}
 
 	sendPings(): void {
-		const t = Math.round(performance.now());
-		this.broadcast({ type: 'ping', t });
+		const now = performance.now();
+		for (const c of this.clients) if (c.helloed) this.ping(c, now);
+	}
+
+	private ping(c: Client, now: number): void {
+		this.send(c, { type: 'ping', t: c.rtt.probe(now) });
 	}
 
 	// -----------------------------------------------------------------------
