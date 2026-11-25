@@ -28,6 +28,7 @@ import type { MapDef, Spawn, Zone, ZombieGate, ZombieSpawnZone } from '../../map
 import { HULL_MAX, HULL_MIN, IN_JUMP, VIEW_HEIGHT, type PlayerState, type UserCmd } from '../../movement/api.ts';
 import { createPlayer, playerMove } from '../../movement/gamemovement.ts';
 import type { SnapshotEntry } from '../../protocol.ts';
+import { SnapshotTimeline } from '../../snapshot-timeline.ts';
 import type { Vec3 } from '../../types.ts';
 import { hullInBox } from '../tag.ts';
 import { gatedWorld, gateFarSide, unlockReached, ZM_GATE_COUNTDOWN_SECS, type GatedWorld, type GateState } from './gates.ts';
@@ -284,6 +285,8 @@ interface ZmPlayer {
 	loadout: WeaponId;
 	pos: ZmPlayerPos | null;
 	poseHistory: PlayerHistorySample[];
+	/** Same sender-tick timing as the online renderer, across respawns. */
+	poseTimeline: SnapshotTimeline | null;
 	/** Route progress of `pos`, refreshed every sim step. */
 	s: number;
 	/** Gates behind this survivor: passed, or skipped by a spawn at a checkpoint. */
@@ -448,6 +451,7 @@ export class ZombiesGame {
 				loadout: DEFAULT_WEAPON,
 				pos: null,
 				poseHistory: [],
+				poseTimeline: this.relayedPlayerHistory ? new SnapshotTimeline() : null,
 				s: 0,
 				zone: 0,
 				iframesUntil: 0,
@@ -1229,11 +1233,13 @@ export class ZombiesGame {
 		}
 	}
 
-	/** Record the exact pose each player snapshot put on the wire. */
+	/** Record relayed player poses at the same sample times used by the renderer. */
 	recordPlayerSnapshot(entries: readonly SnapshotEntry[], now: number): void {
 		for (const entry of entries) {
 			const p = this.players.get(entry.id);
-			if (p?.alive) this.recordPlayerPose(p, entry, now);
+			if (!p?.poseTimeline) continue;
+			const at = p.poseTimeline.push(entry.tick, now);
+			if (p.alive && at !== null) this.recordPlayerPose(p, entry, at);
 		}
 	}
 

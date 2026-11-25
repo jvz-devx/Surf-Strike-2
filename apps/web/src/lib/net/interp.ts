@@ -3,20 +3,13 @@
  * monotonic timeline with per-player `NetState.tick` spacing to remove
  * 64->32 Hz aliasing and uplink jitter (docs/architecture.md#netcode).
  */
-import { DUCK_HULL_MAX, FLAG_DUCKED, FLAG_TELEPORTED, HULL_MAX, HULL_MIN, INTERP_DELAY_MS, teleportSeq, TICK_RATE, type CollisionWorld, type NetState } from '@surf/shared';
+import { DUCK_HULL_MAX, FLAG_DUCKED, FLAG_TELEPORTED, HULL_MAX, HULL_MIN, INTERP_DELAY_MS, teleportSeq, SnapshotTimeline, type CollisionWorld, type NetState } from '@surf/shared';
 
 /** Shared with the server's lag compensation (packages/shared protocol.ts). */
 export { INTERP_DELAY_MS };
 /** Max velocity extrapolation horizon (ms) when a stall outruns the interpolation buffer. */
 export const MAX_EXTRAP_MS = 50;
 const CAPACITY = 32;
-const TICK_MS = 1000 / TICK_RATE;
-const ANCHOR_WINDOW = 32;
-/** Discontinuity threshold (ms) between observed `serverTime - tick*TICK_MS` and the current anchor. */
-const ANCHOR_JUMP_MS = 250;
-const ANCHOR_JUMP_CONFIRM = 3;
-/** No sender progress across this much server time indicates a slow or paused sender. */
-const SOURCE_STALL_MS = 125;
 
 export interface Sample {
 	x: number;
@@ -45,12 +38,6 @@ export function lerpAngle(a: number, b: number, t: number): number {
 	return a + d * t;
 }
 
-function medianOf(values: readonly number[]): number {
-	const sorted = values.slice().sort((a, b) => a - b);
-	const mid = sorted.length >> 1;
-	return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) * 0.5;
-}
-
 interface Entry {
 	t: number;
 	s: NetState;
@@ -60,17 +47,7 @@ export class SnapshotBuffer {
 	private buf: Entry[] = [];
 	/** Local client arrival timestamp (ms) of the last pushed snapshot, used for visibility timeouts. */
 	private lastLocalArrival = -Infinity;
-	/** Per-player tick spacing state: maps `tick * TICK_MS` onto the server timeline. */
-	private lastTick = -1;
-	private tickProgressed = false;
-	private tickAnchor = 0;
-	private readonly obsWin: number[] = [];
-	private obsIdx = 0;
-	private obsCount = 0;
-	private anchorJumpStreak = 0;
-	private latestServerTime = -Infinity;
-	private tickSeenAt = -Infinity;
-	private slowSender = false;
+	private readonly timeline = new SnapshotTimeline();
 
 	/** Teleport threshold: larger jumps snap instead of interpolating. */
 	snapDistance = 1024;
@@ -90,81 +67,10 @@ export class SnapshotBuffer {
 	 */
 	push(state: NetState, serverTimeMs: number, localArrivalMs = serverTimeMs): void {
 		this.lastLocalArrival = localArrivalMs;
-		this.latestServerTime = Math.max(this.latestServerTime, serverTimeMs);
-
-		let sampleTime = serverTimeMs;
-		if (this.lastTick < 0) {
-			this.lastTick = state.tick;
-			this.resetAnchor(serverTimeMs - state.tick * TICK_MS);
-			this.tickSeenAt = serverTimeMs;
-		} else {
-			const dt = state.tick - this.lastTick;
-			if (dt === 0) {
-				// Keep constant-tick fixtures working until the source is old enough to be idle.
-				if (this.tickProgressed || this.sourceIdle) return;
-			} else if (dt < 0) {
-				if (dt < -64) {
-					// Sender tick counter reset (reconnect/respawn/test reset): re-anchor cleanly.
-					this.lastTick = state.tick;
-					this.tickSeenAt = serverTimeMs;
-					this.slowSender = false;
-					this.resetAnchor(serverTimeMs - state.tick * TICK_MS);
-				} else {
-					// Out-of-order / late tick: drop.
-					return;
-				}
-			} else {
-				this.tickProgressed = true;
-				this.lastTick = state.tick;
-				this.slowSender = serverTimeMs - this.tickSeenAt >= SOURCE_STALL_MS;
-				this.tickSeenAt = serverTimeMs;
-
-				const obs = serverTimeMs - state.tick * TICK_MS;
-				const err = obs - this.tickAnchor;
-				if (Math.abs(err) > ANCHOR_JUMP_MS) {
-					this.anchorJumpStreak++;
-					if (this.anchorJumpStreak >= ANCHOR_JUMP_CONFIRM || Math.abs(err) > 1000) {
-						this.resetAnchor(obs);
-					}
-				} else {
-					this.anchorJumpStreak = 0;
-				}
-
-				if (this.anchorJumpStreak === 0) {
-					if (this.obsWin.length < ANCHOR_WINDOW) this.obsWin.push(obs);
-					else this.obsWin[this.obsIdx] = obs;
-					this.obsIdx = (this.obsIdx + 1) % ANCHOR_WINDOW;
-					this.obsCount++;
-
-					const med = medianOf(this.obsWin);
-					const delta = med - this.tickAnchor;
-					if (Math.abs(delta) > 0.01) {
-						// Slew faster while priming the first few samples, then cap to <=5% speed skew.
-						const priming = this.obsCount <= 8;
-						const maxRate = priming ? 0.35 : 0.05;
-						const maxStep = Math.min(priming ? 15 : 1.5, dt * TICK_MS * maxRate);
-						const gain = priming ? 0.35 : 0.08;
-						const step = Math.max(-maxStep, Math.min(maxStep, delta * gain));
-						this.tickAnchor += step;
-					}
-				}
-				sampleTime = this.tickAnchor + state.tick * TICK_MS;
-			}
-		}
-
-		const last = this.buf[this.buf.length - 1];
-		if (last && sampleTime < last.t) sampleTime = last.t;
-		this.buf.push({ t: sampleTime, s: state });
+		const t = this.timeline.push(state.tick, serverTimeMs);
+		if (t === null) return;
+		this.buf.push({ t, s: state });
 		if (this.buf.length > CAPACITY) this.buf.shift();
-	}
-
-	private resetAnchor(anchor: number): void {
-		this.tickAnchor = anchor;
-		this.obsWin.length = 0;
-		this.obsWin.push(anchor);
-		this.obsIdx = 1 % ANCHOR_WINDOW;
-		this.obsCount = 1;
-		this.anchorJumpStreak = 0;
 	}
 
 	get size(): number {
@@ -178,22 +84,13 @@ export class SnapshotBuffer {
 
 	/** True when this remote player's sim tick has stopped advancing (e.g. backgrounded tab). */
 	get sourceIdle(): boolean {
-		return this.slowSender || this.latestServerTime - this.tickSeenAt >= SOURCE_STALL_MS;
+		return this.timeline.sourceIdle;
 	}
 
 	clear(): void {
 		this.buf.length = 0;
 		this.lastLocalArrival = -Infinity;
-		this.lastTick = -1;
-		this.tickProgressed = false;
-		this.tickAnchor = 0;
-		this.obsWin.length = 0;
-		this.obsIdx = 0;
-		this.obsCount = 0;
-		this.anchorJumpStreak = 0;
-		this.latestServerTime = -Infinity;
-		this.tickSeenAt = -Infinity;
-		this.slowSender = false;
+		this.timeline.clear();
 		this.lastUnderrun = false;
 		this.lastExtrapMs = 0;
 		this.lastOverrunMs = 0;
