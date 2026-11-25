@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { NetState } from '@surf/shared';
-import { parseDiscovery, serverOverride, toWsUrl } from './discovery.js';
+import { Connection } from './connection.js';
+import { parseDiscovery, sameOriginWsUrl, serverOverride, toWsUrl } from './discovery.js';
 import { emptySample, lerpAngle, SnapshotBuffer } from './interp.js';
 
 describe('discovery URLs', () => {
@@ -14,9 +15,52 @@ describe('discovery URLs', () => {
 		expect(toWsUrl('ftp://nope')).toBeNull();
 		expect(toWsUrl('')).toBeNull();
 	});
-	it('reads ?server=', () => {
+	it('reads ?server= and same-origin URLs', () => {
 		expect(serverOverride('?server=https%3A%2F%2Fa.b')).toBe('wss://a.b/ws');
 		expect(serverOverride('?x=1')).toBeNull();
+		expect(sameOriginWsUrl({ origin: 'https://surf.example.com' })).toBe('wss://surf.example.com/ws');
+		expect(sameOriginWsUrl({ origin: 'http://localhost:8080' })).toBe('ws://localhost:8080/ws');
+		expect(sameOriginWsUrl(null)).toBeNull();
+	});
+	it('self-hosted Connection connects to sameOrigin without calling /api/server, while ?server= overrides it', () => {
+		const fetchSpy = vi.fn();
+		const opened: string[] = [];
+		const origWs = globalThis.WebSocket;
+		class FakeWs {
+			binaryType = '';
+			constructor(url: string) {
+				opened.push(url);
+			}
+			close() {}
+		}
+		globalThis.WebSocket = FakeWs as unknown as typeof WebSocket;
+		try {
+			const noop = () => {};
+			const c1 = new Connection(
+				{ connecting: noop, open: noop, message: noop, snapshot: noop, closed: noop, idle: noop },
+				{ override: null, sameOrigin: 'wss://self.example/ws', dev: false, fetch: fetchSpy as unknown as typeof fetch }
+			);
+			c1.start();
+			c1.dispose();
+			expect(opened).toEqual(['wss://self.example/ws']);
+			expect(fetchSpy).not.toHaveBeenCalled();
+
+			const c2 = new Connection(
+				{ connecting: noop, open: noop, message: noop, snapshot: noop, closed: noop, idle: noop },
+				{
+					override: 'wss://other.example/ws',
+					sameOrigin: 'wss://self.example/ws',
+					dev: false,
+					fetch: fetchSpy as unknown as typeof fetch
+				}
+			);
+			c2.start();
+			c2.dispose();
+			expect(opened).toEqual(['wss://self.example/ws', 'wss://other.example/ws']);
+			expect(fetchSpy).not.toHaveBeenCalled();
+		} finally {
+			globalThis.WebSocket = origWs;
+		}
 	});
 	it('parses discovery responses', () => {
 		const now = Date.parse('2026-11-21T12:00:00Z');

@@ -23,6 +23,8 @@ export interface ConnectionHandlers {
 
 export interface ConnectionOptions {
 	override: string | null;
+	/** Same-origin WebSocket URL used in self-hosted builds (skips `/api/server` discovery). */
+	sameOrigin?: string | null;
 	dev: boolean;
 	fetch: typeof fetch;
 }
@@ -98,7 +100,7 @@ export class Connection {
 		if (this.disposed || this.stopped || this.client || this.busy) return;
 		if (Date.now() < this.holdUntil) return this.schedule();
 		this.busy = true;
-		let url = this.manualUrl ?? this.opts.override;
+		let url = this.manualUrl ?? this.opts.override ?? this.opts.sameOrigin ?? null;
 		if (!url) {
 			this.abort = new AbortController();
 			url = await discover(this.opts.fetch, this.abort.signal);

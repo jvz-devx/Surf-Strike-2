@@ -69,7 +69,7 @@ import { Input } from '../input/input.js';
 import { isMoveAction, SubtickSampler } from '../input/subtick.js';
 import type { NetClient } from '../net/client.js';
 import { Connection } from '../net/connection.js';
-import { serverOverride } from '../net/discovery.js';
+import { sameOriginWsUrl, serverOverride } from '../net/discovery.js';
 import { emptySample, INTERP_DELAY_MS, SnapshotBuffer, type Sample } from '../net/interp.js';
 import { emptyPose } from '../render/players.js';
 import { GameRenderer } from '../render/renderer.js';
@@ -341,6 +341,10 @@ export class Game implements CommandContext {
 			},
 			{
 				override: typeof location !== 'undefined' ? serverOverride(location.search) : null,
+				sameOrigin:
+					typeof __SURF_SELF_HOSTED__ !== 'undefined' && __SURF_SELF_HOSTED__ && typeof location !== 'undefined'
+						? sameOriginWsUrl(location)
+						: null,
 				dev: import.meta.env.DEV,
 				fetch: (...a) => fetch(...a)
 			}

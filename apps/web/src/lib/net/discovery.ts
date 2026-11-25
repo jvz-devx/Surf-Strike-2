@@ -46,6 +46,11 @@ export function serverOverride(search: string): string | null {
 	}
 }
 
+/** Same-origin WebSocket URL (`wss://<host>/ws`, or `ws://` on HTTP) for self-hosted builds. */
+export function sameOriginWsUrl(loc: Pick<Location, 'origin'> | null | undefined): string | null {
+	return loc?.origin ? toWsUrl(loc.origin) : null;
+}
+
 function timeOf(v: unknown): number | null {
 	if (typeof v === 'number' && Number.isFinite(v)) return v < 1e12 ? v * 1000 : v;
 	if (typeof v === 'string') {
