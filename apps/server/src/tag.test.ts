@@ -16,7 +16,10 @@ function tagMap(): MapDef {
 		layout: 'open',
 		cvars: {},
 		spawns: Array.from({ length: 8 }, (_, i) => ({ pos: { x: i * 200, y: 0, z: 0 }, yaw: 0 })),
-		zones: [{ type: 'teleport', min: { x: -5000, y: -5000, z: -1000 }, max: { x: 5000, y: 5000, z: -100 }, to: 'start' }]
+		zones: [
+			{ type: 'teleport', min: { x: -5000, y: -5000, z: -1000 }, max: { x: 5000, y: 5000, z: -100 }, to: 'start' },
+			{ type: 'teleport', min: { x: -60, y: 490, z: 0 }, max: { x: -40, y: 510, z: 80 }, to: 'start', dest: { pos: { x: 49, y: 500, z: 0 }, yaw: 0 } }
+		]
 	};
 }
 
@@ -146,13 +149,15 @@ describe('tag mode', () => {
 	});
 
 	it('remembers a teleport even if another state packet arrives before the tag check', async () => {
-		await moveTo(a, 0);
-		await moveTo(b, -50);
 		clock += 100;
+		await moveTo(a, 0, 500);
+		await moveTo(b, -50, 500);
 		await tick(a);
-		await moveTo(b, 49, 0, 0, FLAG_TELEPORTED);
-		await moveTo(b, 50);
-		clock += 31.25;
+		clock += 15.625;
+		await moveTo(b, 49, 500, 0, FLAG_TELEPORTED);
+		assert.ok([...server.lobby.clients].find((p) => p.id === bId)!.state!.flags & FLAG_TELEPORTED);
+		clock += 15.625;
+		await moveTo(b, 50, 500);
 		assert.deepEqual((await tick(a)).it, [aId]);
 	});
 
@@ -215,6 +220,60 @@ describe('tag mode', () => {
 		assert.match(chat.text, /2\. \S+ 0\.0 s/);
 		clock += TAG_INTERMISSION_SECS * 1000;
 		assert.equal((await tick(b)).round, round + 1);
+	});
+});
+
+describe('tag sweep packet timing', () => {
+	async function crossing({ gap = 31.25, flags = 0, wall = false } = {}) {
+		let now = 1000;
+		const map = tagMap();
+		map.zones.push({
+			type: 'teleport',
+			min: { x: 500, y: 500, z: 0 },
+			max: { x: 520, y: 520, z: 80 },
+			to: 'start',
+			dest: { pos: { x: 50, y: 0, z: 0 }, yaw: 0 }
+		});
+		if (wall) map.brushes.push({ type: 'box', min: { x: -250, y: -2, z: 0 }, max: { x: 250, y: 2, z: 100 }, material: 'wall' });
+		const s = await startServer({ port: 0, host: '127.0.0.1', dbPath: ':memory:', maps: [map], now: () => now, rng: () => 0, timers: false, log: () => {} });
+		const a = new TestClient(s.port);
+		const b = new TestClient(s.port);
+		try {
+			const wa = await a.hello('Tagger');
+			const wb = await b.hello('Runner');
+			now += TAG_INTERMISSION_SECS * 1000;
+			const put = async (c: TestClient, id: number, tick: number, x: number, y: number, stateFlags = 0) => {
+				c.sendState(netState(tick, x, { y, flags: stateFlags }));
+				await c.until(() => [...s.lobby.clients].find((p) => p.id === id)?.state?.tick === tick);
+			};
+			await put(a, wa.selfId, 1, 0, wall ? -19 : 0);
+			await put(b, wb.selfId, 1, -50, wall ? 19 : 0);
+			s.lobby.tickMode();
+			for (let elapsed = 31.25; elapsed < gap; elapsed += 31.25) {
+				now += 31.25;
+				s.lobby.tickMode();
+			}
+			now = 1000 + TAG_INTERMISSION_SECS * 1000 + gap;
+			await put(b, wb.selfId, 2, 50, wall ? 19 : 0, flags);
+			s.lobby.tickMode();
+			return s.lobby.scoreRows().find((p) => p.it)?.id === wb.selfId;
+		} finally {
+			a.close();
+			b.close();
+			await s.close();
+		}
+	}
+
+	it('a forged teleport flag does not suppress a tag sweep', async () => {
+		assert.equal(await crossing({ flags: FLAG_TELEPORTED }), true);
+	});
+
+	it('does not sweep a new pose across a 281 ms packet gap', async () => {
+		assert.equal(await crossing({ gap: 281 }), false);
+	});
+
+	it('does not tag a runner across a solid wall at contact', async () => {
+		assert.equal(await crossing({ wall: true }), false);
 	});
 });
 

@@ -213,6 +213,15 @@ describe('TagGame tagging', () => {
 		expect(g.update(now + 125, pos, new Set([2]))).toEqual([]);
 	});
 
+	it('uses the crouched hull before the standing half of a sweep', () => {
+		const { g, now } = playing([1, 2]);
+		const pos = new Map([[1, at(0, 0, 0, true)], [2, at(-50, 0, 55)]]);
+		expect(g.update(now + 100, pos)).toEqual([]);
+		pos.set(1, at(0));
+		pos.set(2, at(200, 0, 55));
+		expect(g.update(now + 131.25, pos)).toEqual([]);
+	});
+
 	it('does not chain: a newly tagged IT cannot tag in the same update', () => {
 		const { g, now } = playing([1, 2, 3]);
 		const pos = new Map<number, TagPos | null>([

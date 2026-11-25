@@ -24,7 +24,7 @@ export const TAG_MIN_PLAYERS = 2;
 /** How often the server checks for tags. */
 export const TAG_TICK_HZ = 32;
 /** A straight segment is only an estimate over the last one or two checks. */
-const TAG_MAX_SWEEP_MS = 2000 / TAG_TICK_HZ;
+export const TAG_MAX_SWEEP_MS = 2000 / TAG_TICK_HZ;
 /** Players shown in the round-end announcement. */
 export const TAG_PODIUM = 3;
 
@@ -65,31 +65,48 @@ export function tagTouch(a: TagPos, b: TagPos, range = TAG_RANGE): boolean {
 	return a.z <= b.z + hullHeight(b) && b.z <= a.z + hullHeight(a);
 }
 
+type ClearLine = (a: Vec3, b: Vec3) => boolean;
+
+function clearContact(a: Vec3, ah: number, b: Vec3, bh: number, clear: ClearLine): boolean {
+	const z = (Math.max(a.z, b.z) + Math.min(a.z + ah, b.z + bh)) / 2;
+	return clear({ x: a.x, y: a.y, z }, { x: b.x, y: b.y, z });
+}
+
+function atFraction(a: Vec3, b: Vec3, t: number): Vec3 {
+	return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
+}
+
 /** Closest horizontal approach while the players' vertical hulls overlap. */
-function sweptTagDistance(a0: TagPos, a: TagPos, b0: TagPos, b: TagPos, start: number, range: number): number {
+function sweptTagDistance(a0: TagPos, a: TagPos, b0: TagPos, b: TagPos, start: number, range: number, clear: ClearLine): number {
 	const x = a0.x - b0.x;
 	const y = a0.y - b0.y;
 	const z = a0.z - b0.z;
 	const dx = a.x - b.x - x;
 	const dy = a.y - b.y - y;
 	const dz = a.z - b.z - z;
-
-	// Each gap is positive when one player's feet are above the other's hull.
-	// Clip the time interval so both gaps are nonpositive at the same time.
-	let end = 1;
-	for (const [before, after] of [
-		[z - hullHeight(b0), z + dz - hullHeight(b)],
-		[-z - hullHeight(a0), -z - dz - hullHeight(a)]
-	] as const) {
-		if (before > 0 && after > 0) return Infinity;
-		if (before > 0) start = Math.max(start, before / (before - after));
-		else if (after > 0) end = Math.min(end, before / (before - after));
-	}
-	if (start > end) return Infinity;
 	const len2 = dx * dx + dy * dy;
-	const t = len2 > 0 ? Math.max(start, Math.min(end, -(x * dx + y * dy) / len2)) : start;
-	const horizontal = (x + dx * t) ** 2 + (y + dy * t) ** 2;
-	return horizontal <= range * range ? horizontal + (z + dz * t) ** 2 : Infinity;
+
+	// Posture uses the nearer pose. Test each interval with its actual hulls.
+	const closest = (ah: number, bh: number, lo: number, hi: number): number => {
+		if (dz > 0) {
+			lo = Math.max(lo, (-ah - z) / dz);
+			hi = Math.min(hi, (bh - z) / dz);
+		} else if (dz < 0) {
+			lo = Math.max(lo, (bh - z) / dz);
+			hi = Math.min(hi, (-ah - z) / dz);
+		} else if (z < -ah || z > bh) return Infinity;
+		if (lo > hi) return Infinity;
+		const t = len2 > 0 ? Math.max(lo, Math.min(hi, -(x * dx + y * dy) / len2)) : lo;
+		const horizontal = (x + dx * t) ** 2 + (y + dy * t) ** 2;
+		if (horizontal > range * range || !clearContact(atFraction(a0, a, t), ah, atFraction(b0, b, t), bh, clear)) return Infinity;
+		return horizontal + (z + dz * t) ** 2;
+	};
+
+	if (a0.ducked === a.ducked && b0.ducked === b.ducked) return closest(hullHeight(a), hullHeight(b), start, 1);
+	return Math.min(
+		closest(hullHeight(a0), hullHeight(b0), start, 0.5),
+		closest(hullHeight(a), hullHeight(b), Math.max(start, 0.5), 1)
+	);
 }
 
 /** The player hull at feet origin `o` overlaps box `b` (teleport triggers). */
@@ -129,6 +146,7 @@ export interface TagGameOptions {
 	immunitySecs?: number;
 	range?: number;
 	minPlayers?: number;
+	clearLine?: ClearLine;
 }
 
 interface TagPlayer {
@@ -150,6 +168,7 @@ export class TagGame {
 	private readonly immunityMs: number;
 	private readonly range: number;
 	private readonly minPlayers: number;
+	private readonly clearLine: ClearLine;
 	private last: number;
 
 	constructor(opts: TagGameOptions) {
@@ -159,6 +178,7 @@ export class TagGame {
 		this.immunityMs = (opts.immunitySecs ?? TAG_IMMUNITY_SECS) * 1000;
 		this.range = opts.range ?? TAG_RANGE;
 		this.minPlayers = opts.minPlayers ?? TAG_MIN_PLAYERS;
+		this.clearLine = opts.clearLine ?? (() => true);
 		this.last = opts.now;
 	}
 
@@ -200,14 +220,14 @@ export class TagGame {
 	/**
 	 * Advance to `now`. `active` holds every non-spectating player in the map
 	 * with their latest position (null = no state received yet: counts as a
-	 * player but cannot tag or be tagged). A teleport breaks the movement segment.
+	 * player but cannot tag or be tagged). A discontinuity breaks the movement segment.
 	 */
-	update(now: number, active: ReadonlyMap<number, TagPos | null>, teleported?: ReadonlySet<number>): TagEvent[] {
+	update(now: number, active: ReadonlyMap<number, TagPos | null>, discontinuous?: ReadonlySet<number>): TagEvent[] {
 		const events: TagEvent[] = [];
 		const from = this.last;
 		this.accrue(now);
 		this.syncPlayers(active, events);
-		for (const id of teleported ?? []) {
+		for (const id of discontinuous ?? []) {
 			const p = this.players.get(id);
 			if (p) p.previous = null;
 		}
@@ -321,10 +341,10 @@ export class TagGame {
 				const b = active.get(id);
 				if (!b) continue;
 				let d = Infinity;
-				if (tagTouch(a, b, this.range)) d = (a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2;
+				if (tagTouch(a, b, this.range) && clearContact(a, hullHeight(a), b, hullHeight(b), this.clearLine)) d = (a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2;
 				else if (tagger.previous && p.previous && now > from && now - from <= TAG_MAX_SWEEP_MS) {
 					const start = Math.max(0, (p.immuneUntil - from) / (now - from));
-					d = sweptTagDistance(tagger.previous, a, p.previous, b, start, this.range);
+					d = sweptTagDistance(tagger.previous, a, p.previous, b, start, this.range, this.clearLine);
 				}
 				if (d < bestD || (d === bestD && best !== null && id < best)) {
 					best = id;
