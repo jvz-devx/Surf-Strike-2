@@ -61,12 +61,30 @@ Run `./start.sh` from the repo root to host for the public Vercel site. It loads
 
 ## Netcode
 
-Each client simulates its own movement with zero input lag. The server trusts positions but validates timed runs, then relays everyone's state to everyone else.
+Each client simulates its own movement at 64 Hz with zero input lag. The server trusts positions, validates timed race runs, and relays everyone's state to everyone else.
 
-- **Client to server:** a binary state packet at 64 Hz (one per 64-tick simulation tick): position, velocity, view angles, flags (ducked, on ground), tick number.
-- **Server to clients:** a binary snapshot at 32 Hz with all players' states, plus JSON reliable events (chat, zone hits, run finished, vote, map change, join/leave).
-- **Remote players:** rendered `INTERP_DELAY_MS` (100 ms) in the past, interpolated between snapshots, which go out at `SNAPSHOT_HZ` (32); both constants live in `packages/shared/src/protocol.ts`, and the hide and seek and infected lag compensation read them.
-- **Lag compensation (infected):** the server keeps `INF_HISTORY_MS` (400 ms) of poses per player (`packages/shared/src/modes/infected/lagcomp.ts`), with the view pitch, the motion of the body, the posture and the held item, cleared on every spawn and teleport. Live clients send `fire` with `tick: 2^31-1`; the server tests the shot or swing against the poses of `infRewindMs(ping)` = ping + 100 + 15.6 ms ago, interpolated between samples. A `fire` that names a sim tick (tools, tests) is clamped to the same window: no older than that rewind, rounded up to sim ticks, plus one tick (`clampFireTick`). Infected client messages are checked field by field in `apps/server/src/modes/infected-input.ts`; a malformed message is dropped whole. Rules: [modes.md](modes.md#infected).
+- **Wire protocol (`PROTOCOL_VERSION = 2`, `packages/shared/src/protocol.ts`):**
+  - **Client to server (`BIN_STATE`, 44 B at 64 Hz):** full float32 position, velocity, view angles, tick number, status/stage/runTicks, and `flags` (ducked, on ground, teleported bit, plus a 2-bit wrapping teleport counter in bits 3–4 so teleports are never missed across 64→32 Hz sampling).
+  - **Server to clients (`BIN_SNAPSHOT` v2, default 32 Hz):** 13-byte header (`kind`, `snapFlags`, `count`, 16-bit wrapping `seq`, float64 monotonic `serverTimeMs`), followed by quantized player entries: 27 bytes/player in non-race modes (`i24` position at 1/8 unit, `i16` velocity at 1 u/s, `u16` pitch/yaw, flags with teleport counter, status) or 31 bytes/player in race modes (`+ u8 stage, u24 runTicks`, toggled automatically via `snapFlags`). A full 32-player snapshot is 877 B (combat) or 1,005 B (race), fitting inside a single TCP segment (1,420 B MSS) and leaving headroom for a single QUIC datagram (≤ 1,150 B).
+  - **JSON reliable events:** chat, zone hits, run finished, votes, map change, join/leave, shop/casino, mode events, and clock pings.
+- **Server time base and tick de-aliasing (`apps/web/src/lib/net/clock.ts`, `interp.ts`):**
+  - The client seeds `ServerClock` from `welcome.serverTime`, pings the server every 1 s (`ping` → `pong { t, serverTime }`), and updates a 64-sample min-filtered offset (`localMs - serverTimeMs`) on every snapshot and pong. Downlink jitter spikes and TCP stalls cannot pull the clock backward; sustained route shifts slew smoothly and tab-resume jumps re-lock after 4 confirmations. Duplicate or out-of-order snapshot `seq` numbers are dropped.
+  - Each remote player's `SnapshotBuffer` places samples on the server timeline using the sender's 64 Hz `NetState.tick` (`15.625 ms` spacing) around a sliding-median anchor, and drops repeated ticks instead of freezing and lurching. This eliminates 64→32 Hz and 60 Hz frame-quantization aliasing.
+- **Adaptive interpolation, extrapolation, and teleport snap (`apps/web/src/lib/net/adaptive.ts`, `interp.ts`):**
+  - `AdaptiveDelay` tunes remote interpolation delay between 50 ms and 200 ms. Clean links settle near 2 snapshot periods (~62.5 ms at 32 Hz, 50 ms at 64 Hz) plus 4× RFC 3550 jitter. On packet stalls, sequence gaps, or buffer underruns, the floor rises to cover TCP fast-retransmit headroom (`RTT + 60 ms + 1 snapshot`), slewing up at ≤ 0.35 ms/ms so remote render time stays strictly monotonic, and decays slowly (~6 ms/s) after 3 s of clean traffic.
+  - When a stall still outruns the buffer, `SnapshotBuffer` linearly extrapolates along the last velocity for up to 50 ms (`MAX_EXTRAP_MS`) and holds past the cap.
+  - Teleports snap immediately whenever the 2-bit teleport counter changes, `FLAG_TELEPORTED` is set, or distance exceeds 1,024 u (fixing short teleports like stage resets and respawn beacons).
+- **Lag compensation and current gap:**
+  - `ClientModeHost` exposes live `interpDelayMs` and `renderServerTimeMs` (`serverClock - interpDelayMs`) as hooks for client-render-time server rewind.
+  - Zombie Run sends the sampled zombie sim `tick` with every shot (`BIN_ZOMBIES`).
+  - Infected (`packages/shared/src/modes/infected/lagcomp.ts`, `INF_HISTORY_MS = 400 ms`) and Hide and Seek (`HNS_VIEW_DELAY_MS` in `apps/server/src/modes/hns.ts`) still rewind by fixed `INTERP_DELAY_MS` (100 ms) + half a snapshot interval (`15.6 ms` at 32 Hz) plus `ping` (`infRewindMs`). Because the client now adapts between ~62.5 ms (clean fiber) and 200 ms (lossy Wi-Fi), server rewind is currently ~37 ms further back than rendered on clean fiber and up to ~100 ms short during heavy-loss Wi-Fi stalls until combat messages carry `renderServerTimeMs` in a follow-up change. Infected client messages are checked field by field in `apps/server/src/modes/infected-input.ts`; malformed messages are dropped whole. Rules: [modes.md](modes.md#infected).
+- **Server loop and transport seam (`apps/server/src/scheduler.ts`, `transport.ts`, `apps/web/src/lib/net/transport.ts`):**
+  - One drift-free absolute-deadline `TickScheduler` replaces the old `setInterval` timers (no 31.25 → 31 ms truncation drift), runs `tickMode()` immediately before `sendSnapshot()` on shared ticks, recovers from event-loop stalls without burst-sending, and drives slower tasks (rotation, scoreboard, pings, playtime flush). Setting `SNAPSHOT_HZ=64` in the server env enables 64 Hz snapshots (mode ticks stay at 32 Hz; `welcome.snapshotHz` tells clients the active rate). Default remains `32`.
+  - Both `Lobby` (`ClientTransport`) and `NetClient` (`NetTransport`) sit behind small reliable/unreliable transport interfaces so a future datagram transport can plug in without changing framing or lobby logic. On WebSocket, droppable frames (`BIN_SNAPSHOT`, `BIN_ZOMBIES`) are skipped once `bufferedAmount` exceeds `max(2048 B, 3 × frameSize)` instead of queuing up to 1 MiB of stale state.
+  - Record ghost compression (`apps/server/src/modes/race.ts`) skips non-record runs and runs `zlib.deflateRaw` (level 6) off the event loop on the libuv worker pool. Mode broadcasts with an excluded sender (`shot`, `reload`, `swing`) stringify the JSON payload once via `broadcast(msg, exceptId)`.
+- **Diagnostics and benchmarking:**
+  - Client console cvar `net_graph 0|1|2` (`apps/web/src/lib/net/stats.ts`, `NetGraph.svelte`) shows live RTT, jitter, adaptive interp delay, inbound snapshot Hz, underrun/extrapolation time, duplicate tick %, traffic rate, and (at level 2) a 120-snapshot inter-arrival sparkline.
+  - `tools/net-bench.ts` runs the real server and headless 64 Hz bots through a deterministic userspace TCP-ordered delay/jitter/loss/burst proxy (`pnpm --filter server exec tsx ../../tools/net-bench.ts [--duration 5] [--hz 32|64]`).
 - **Run validation:** the client sends zone events with tick numbers. The server checks:
   - zones were entered in order (start, stages in order, end);
   - elapsed ticks roughly match wall-clock time (±5%);
@@ -80,13 +98,14 @@ Each client simulates its own movement with zero input lag. The server trusts po
 
 | Direction | Message | Encoding |
 | --- | --- | --- |
-| C→S | `hello { playerId, name, version, token? }` (`token`: stored session, auto-login) | JSON |
-| S→C | `welcome { selfId, map, mode, mapTimeLeft, players[], cvars, records, account }` (`account`: `{ username, admin }` or `null` for guests; `admin` only decides whether the client shows the Admin menu) | JSON |
+| C→S | `hello { playerId, name, version, token? }` (`token`: stored session, auto-login; `version = 2`) | JSON |
+| S→C | `welcome { selfId, map, mode, mapTimeLeft, players[], cvars, records, account, serverTime?, snapshotHz? }` (`account`: `{ username, admin }` or `null` for guests; `serverTime` seeds client clock sync; `snapshotHz` reports the active snapshot rate) | JSON |
+| C↔S | `ping { t }` / `pong { t, serverTime }` (client→server 1 Hz for clock sync and RTT; server→client every 2 s for scoreboard ping) | JSON |
 | S→C | `maps { enabled[] }`: maps players may pick (votes, Change map); right after `welcome` and to everyone on every change | JSON |
 | C→S | `register { username, password }`, `login { username, password }`, `logout {}` (any time after `welcome`, on the open socket) | JSON |
 | S→C | `auth { ok: true, username, token?, records?, admin? }` / `auth { ok: false, error }` (`username: null` = logged out; also sent with `ok: false` after a `welcome` whose hello token was rejected) | JSON |
-| C→S | `state` (tick, pos, vel, angles, flags) | binary, 64 Hz |
-| S→C | `snapshot` (all players' state) | binary, 32 Hz |
+| C→S | `BIN_STATE` (type 1, 44 B: tick, float32 pos/vel/angles, flags incl. 2-bit teleport counter, status, stage, runTicks) | binary, 64 Hz |
+| S→C | `BIN_SNAPSHOT` v2 (type 2: 13 B header with `seq` + `serverTimeMs`, then 27 B/player combat or 31 B/player race quantized entries; ≤ 1,005 B for 32 players, droppable under backlog) | binary, 32 Hz (or 64 Hz) |
 | C→S | `zone { kind, index, tick }` | JSON |
 | S→C | `runResult { ticks, rank, pb, record, splits, records }` (`records`: the runner's PB, rank and map record after the run, PB or not) | JSON |
 | S→C | `ghostLook { map, loadout }`: what the record ghost's holder wears, with the ghost frame | JSON |

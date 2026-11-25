@@ -37,7 +37,8 @@ export interface ModeHost {
 	/** Helloed players (spectators included). */
 	players(): Iterable<ModePlayer>;
 	send(p: ModePlayer, msg: ServerMessage): void;
-	broadcast(msg: ServerMessage): void;
+	/** Broadcast a JSON message to every helloed player (optionally skipping `exceptId`, stringified once). */
+	broadcast(msg: ServerMessage, exceptId?: number): void;
 	/** Binary frame (BIN_GHOST) to one player; never dropped for backlog like snapshots. */
 	sendBinary(p: ModePlayer, data: Uint8Array): void;
 	/**

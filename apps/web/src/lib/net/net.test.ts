@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { NetState } from '@surf/shared';
+import { encodeSnapshot, withTeleportSeq, type NetState, type ServerMessage, type SnapshotFrame } from '@surf/shared';
+import { NetClient } from './client.js';
 import { parseDiscovery, serverOverride, toWsUrl } from './discovery.js';
-import { emptySample, lerpAngle, SnapshotBuffer } from './interp.js';
+import { emptySample, lerpAngle, MAX_EXTRAP_MS, SnapshotBuffer } from './interp.js';
+import type { NetTransport, NetTransportHandlers } from './transport.js';
 
 describe('discovery URLs', () => {
 	it('converts http(s) to ws(s) and appends /ws', () => {
@@ -52,23 +54,39 @@ describe('snapshot interpolation', () => {
 		expect(out.x).toBeCloseTo(150);
 		expect(out.yaw).toBeCloseTo(20);
 	});
-	it('clamps outside the buffered range', () => {
+	it('clamps before buffer, extrapolates up to maxExtrapMs, and holds past the cap', () => {
 		const b = new SnapshotBuffer();
 		const out = emptySample();
 		b.push(st(10), 100);
 		b.push(st(20), 200);
 		b.sample(50, out);
 		expect(out.x).toBe(10);
+		expect(b.lastUnderrun).toBe(false);
+		// Within 50 ms cap: linearly extrapolates using vx = 20 u/s.
+		b.sample(225, out);
+		expect(out.x).toBeCloseTo(20 + 20 * 0.025, 5);
+		expect(b.lastUnderrun).toBe(true);
+		expect(b.lastExtrapMs).toBeCloseTo(25, 5);
+		// Past 50 ms cap: holds at the capped pose and reports freeze (lastExtrapMs = 0).
 		b.sample(500, out);
-		expect(out.x).toBe(20);
+		expect(out.x).toBeCloseTo(20 + 20 * (MAX_EXTRAP_MS / 1000), 5);
+		expect(b.lastUnderrun).toBe(true);
+		expect(b.lastExtrapMs).toBe(0);
 	});
-	it('snaps across teleports', () => {
+	it('snaps across teleports by distance or teleport counter even below snapDistance', () => {
 		const b = new SnapshotBuffer();
 		const out = emptySample();
 		b.push(st(0), 0);
 		b.push(st(5000), 100);
 		b.sample(10, out);
 		expect(out.x).toBe(5000);
+
+		// Short 400 u teleport (< 1024 snapDistance) without FLAG_TELEPORTED bit, caught via teleport counter.
+		const b2 = new SnapshotBuffer();
+		b2.push({ ...st(0), tick: 1, flags: withTeleportSeq(0, 0) }, 0);
+		b2.push({ ...st(400), tick: 3, flags: withTeleportSeq(0, 1) }, 31.25);
+		b2.sample(15, out);
+		expect(out.x).toBe(400);
 	});
 	it('keeps arrival times monotonic', () => {
 		const b = new SnapshotBuffer();
@@ -78,5 +96,107 @@ describe('snapshot interpolation', () => {
 		b.sample(100, out);
 		expect(out.x).toBe(0);
 		expect(b.size).toBe(2);
+	});
+	it('de-aliases 64->32 Hz tick spacing and drops duplicate ticks', () => {
+		const b = new SnapshotBuffer();
+		const out = emptySample();
+		const speed = 640; // 10 u per 64 Hz tick (15.625 ms)
+		const atTick = (tick: number): NetState => ({
+			...st(tick * 10),
+			tick,
+			vx: speed
+		});
+		// Snapshots arrive at uniform 31.25 ms server intervals, but sender ticks arrive as 2, 1, 3, 0 (dup), 4.
+		b.push(atTick(100), 1000, 5000);
+		b.push(atTick(102), 1031.25, 5031.25);
+		b.push(atTick(103), 1062.5, 5062.5);
+		b.push(atTick(106), 1093.75, 5093.75);
+		b.push(atTick(106), 1125.0, 5125.0); // duplicate tick: must be dropped while keeping lastArrival fresh
+		b.push(atTick(110), 1156.25, 5156.25);
+
+		expect(b.lastArrival).toBe(5156.25);
+		// Sample across the 1-tick/3-tick/dup region: velocity should stay constant at 640 u/s (10 u per 15.625 ms).
+		for (let t = 1005; t <= 1150; t += 10) {
+			expect(b.sample(t, out)).toBe(true);
+			const expectedX = 1000 + ((t - 1000) / 1000) * speed;
+			expect(Math.abs(out.x - expectedX)).toBeLessThan(1.5);
+		}
+	});
+	it('separates local arrival time from server timeline and detects idle sources', () => {
+		const b = new SnapshotBuffer();
+		b.push({ ...st(0), tick: 1 }, 1000, 9000);
+		b.push({ ...st(10), tick: 2 }, 1031.25, 9031.25);
+		expect(b.sourceIdle).toBe(false);
+		for (let i = 0; i < 8; i++) {
+			b.push({ ...st(10), tick: 2 }, 1062.5 + i * 31.25, 9062.5 + i * 31.25);
+		}
+		expect(b.sourceIdle).toBe(true);
+		expect(b.lastArrival).toBeCloseTo(9062.5 + 7 * 31.25);
+	});
+});
+
+describe('NetClient transport seam', () => {
+	it('routes JSON messages, v2 binary snapshots, traffic accounting, and close codes via injected NetTransport', () => {
+		let hooks!: NetTransportHandlers;
+		const sentText: string[] = [];
+		const sentBin: ArrayBuffer[] = [];
+		let open = true;
+		const fake: NetTransport = {
+			get isOpen() {
+				return open;
+			},
+			sendText: (s) => void sentText.push(s),
+			sendBinary: (b) => void sentBin.push(b),
+			close: () => {
+				open = false;
+			}
+		};
+
+		let opened = false;
+		let closedCode = -1;
+		const msgs: ServerMessage[] = [];
+		const snaps: SnapshotFrame[] = [];
+		let bytesIn = 0;
+		let bytesOut = 0;
+
+		const client = new NetClient(
+			'wss://example.invalid/ws',
+			{
+				open: () => (opened = true),
+				message: (m) => msgs.push(m),
+				snapshot: (f) => snaps.push(f),
+				traffic: (dir, bytes) => {
+					if (dir === 'in') bytesIn += bytes;
+					else bytesOut += bytes;
+				},
+				close: (_wasOpen, code) => (closedCode = code)
+			},
+			(_url, h) => {
+				hooks = h;
+				return fake;
+			}
+		);
+
+		hooks.open();
+		expect(opened).toBe(true);
+		expect(client.isOpen).toBe(true);
+
+		client.send({ type: 'ping', t: 10 });
+		client.sendBinary(new ArrayBuffer(44));
+		expect(sentText.length).toBe(1);
+		expect(sentBin.length).toBe(1);
+		expect(bytesOut).toBeGreaterThan(44);
+
+		hooks.text(JSON.stringify({ type: 'pong', t: 10, serverTime: 500 }), 120);
+		hooks.binary(encodeSnapshot([{ id: 2, ...st(40) }], 500, 7), 125);
+		expect(msgs).toEqual([{ type: 'pong', t: 10, serverTime: 500 }]);
+		expect(snaps.length).toBe(1);
+		expect(snaps[0]!.seq).toBe(7);
+		expect(snaps[0]!.serverTimeMs).toBe(500);
+		expect(bytesIn).toBeGreaterThan(0);
+
+		hooks.close(1000);
+		expect(closedCode).toBe(1000);
+		expect(client.isOpen).toBe(false);
 	});
 });

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { Worker } from 'node:worker_threads';
-import { COSMETIC_SLOTS, cosmeticPrice, emptyLoadout, getCosmetic, LOOTBOX, lootItems, pts, shopItems } from '@surf/shared';
+import { COSMETIC_SLOTS, cosmeticPrice, emptyLoadout, getCosmetic, LOOTBOX, lootItems, PROTOCOL_VERSION, pts, shopItems } from '@surf/shared';
 import { Db } from './db.ts';
 import { world } from './economy-helpers.ts';
 import type { GameServer } from './server.ts';
@@ -310,7 +310,7 @@ describe('shop on the server', () => {
 		const second = new TestClient(server.port);
 		clients.push(second);
 		await second.open();
-		second.send({ type: 'hello', playerId: crypto.randomUUID(), name: 'y', version: 1, token });
+		second.send({ type: 'hello', playerId: crypto.randomUUID(), name: 'y', version: PROTOCOL_VERSION, token });
 		for (const x of [c, second]) x.send({ type: 'shopBuy', item: 'bottom_cargo' });
 		await second.waitFor('shopResult');
 		assert.equal(server.db.accountStats(accountId).pointsBalance, PRICE * 4);
@@ -348,6 +348,7 @@ describe('shop on the server', () => {
 		assert.ok(!full.ok && /everything/.test(full.error));
 		assert.equal(server.db.accountStats(accountId).pointsBalance, LOOTBOX.price * 2 + 100);
 		c.close();
+		await c.until(() => server.lobby.playerCount === 0);
 	});
 
 	describe('loot box news', () => {
@@ -391,6 +392,7 @@ describe('shop on the server', () => {
 			const m = await guest.waitFor('boxNews', () => true, guest.messages.findIndex((x) => x.type === 'boxNews') + 1);
 			assert.deepEqual([m.item, m.duplicate], [d.item, d.item !== lootItems()[0]!.id]);
 			for (const x of all) x.close();
+			await c.until(() => server.lobby.playerCount === 0);
 		});
 
 		it('another open and a disconnect announce what is left', async () => {
@@ -402,8 +404,9 @@ describe('shop on the server', () => {
 			assert.deepEqual([first.id, first.item], [id, a.item]);
 			await other.barrier();
 			assert.equal(other.of('boxNews').length, 1);
+			const beforeLeave = other.messages.length;
 			c.close();
-			const left = await other.waitFor('leave', (m) => m.id === id);
+			const left = await other.waitFor('leave', (m) => m.id === id, beforeLeave);
 			assert.deepEqual(other.of('boxNews').slice(1).map((m) => [m.name, m.item]), [['NewsTwice', b.item]]);
 			assert.ok(left);
 			other.close();

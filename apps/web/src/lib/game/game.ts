@@ -43,6 +43,7 @@ import {
 	TICK_INTERVAL,
 	TICK_RATE,
 	VIEW_HEIGHT,
+	withTeleportSeq,
 	type AdminAction,
 	type ClientMessage,
 	type CollisionWorld,
@@ -57,7 +58,7 @@ import {
 	type RotationEvent,
 	type ScoreRow,
 	type ServerMessage,
-	type SnapshotEntry,
+	type SnapshotFrame,
 	type UserCmd,
 	type Vec3,
 	type VoteOption
@@ -67,10 +68,13 @@ import { GameFullscreen } from '../input/fullscreen.js';
 import { isBrowserShortcut } from '../input/guard.js';
 import { Input } from '../input/input.js';
 import { isMoveAction, SubtickSampler } from '../input/subtick.js';
+import { AdaptiveDelay } from '../net/adaptive.js';
 import type { NetClient } from '../net/client.js';
+import { ServerClock } from '../net/clock.js';
 import { Connection } from '../net/connection.js';
 import { serverOverride } from '../net/discovery.js';
-import { emptySample, INTERP_DELAY_MS, SnapshotBuffer, type Sample } from '../net/interp.js';
+import { emptySample, SnapshotBuffer, type Sample } from '../net/interp.js';
+import { NetStats } from '../net/stats.js';
 import { emptyPose } from '../render/players.js';
 import { GameRenderer } from '../render/renderer.js';
 import { Binds } from './binds.js';
@@ -222,6 +226,7 @@ export class Game implements CommandContext {
 	/** The newest tick moved the player (false: frozen or down, no movement sounds). */
 	private moves = true;
 	private teleported = true;
+	private tpSeq = 0;
 	private snapPending = false;
 	private mouse = { dx: 0, dy: 0 };
 
@@ -272,6 +277,12 @@ export class Game implements CommandContext {
 	private fpsSince = 0;
 	private trendAt = 0;
 	private trendSpeed = 0;
+	private serverClock = new ServerClock();
+	private adaptiveDelay = new AdaptiveDelay();
+	private lastRenderServerMs = 0;
+	private lastClientPing = 0;
+	private netStats = new NetStats();
+	private lastNetGraph = 0;
 
 	constructor(private canvas: HTMLCanvasElement) {
 		this.cvars = new ClientCvars(this.store);
@@ -337,6 +348,7 @@ export class Game implements CommandContext {
 				snapshot: (e, t) => this.onSnapshot(e, t),
 				ghost: (f) => this.client.ghostFrame?.(f),
 				zombies: (f, t) => this.client.zombies?.(f, t),
+				traffic: (dir, bytes, at) => this.netStats.recordTraffic(dir, bytes, at),
 				closed: (wasOpen, _url, code) => this.onClosed(wasOpen, code)
 			},
 			{
@@ -527,6 +539,7 @@ export class Game implements CommandContext {
 			r.buf.clear();
 			r.hasSample = false;
 		}
+		this.netStats.resetPlayers();
 		if (this.mode === 'solo') {
 			this.records = null;
 			this.soloPb = loadSoloPb(this.store, def.id);
@@ -1087,6 +1100,8 @@ export class Game implements CommandContext {
 			get renderer() { return game.renderer; },
 			get online() { return game.mode === 'online'; },
 			get selfId() { return game.selfId; },
+			get interpDelayMs() { return game.adaptiveDelay.currentMs; },
+			get renderServerTimeMs() { return game.lastRenderServerMs; },
 			get viewId() { return game.viewId(); },
 			get voteOpen() { return !!game.hud.vote && !game.hud.vote.result; },
 			get ghostStore() { return game.ghostStore; },
@@ -1269,7 +1284,11 @@ export class Game implements CommandContext {
 		s.vz = p.velocity.z;
 		s.pitch = this.pitch;
 		s.yaw = this.yaw;
-		s.flags = (p.ducked ? FLAG_DUCKED : 0) | (p.onGround ? FLAG_ON_GROUND : 0) | (this.teleported ? FLAG_TELEPORTED : 0);
+		if (this.teleported) this.tpSeq = (this.tpSeq + 1) & 3;
+		s.flags = withTeleportSeq(
+			(p.ducked ? FLAG_DUCKED : 0) | (p.onGround ? FLAG_ON_GROUND : 0) | (this.teleported ? FLAG_TELEPORTED : 0),
+			this.tpSeq
+		);
 		this.client.netState(s);
 		if (this.spec) s.status = Status.Spectating;
 		this.net.sendBinary(encodeState(s));
@@ -1331,13 +1350,17 @@ export class Game implements CommandContext {
 		let end = now - this.step.accMs - (n - 1) * stepMs;
 		for (let i = 0; i < n; i++, end += stepMs) this.simTick(now, end - stepMs, end);
 
+		if (this.mode === 'online' && now - this.lastClientPing >= 1000) {
+			this.lastClientPing = now;
+			this.net?.send({ type: 'ping', t: now });
+		}
 		if (this.mode === 'solo' && this.rotation && now - this.lastRotationUpdate >= 100) {
 			this.lastRotationUpdate = now;
 			for (const ev of this.rotation.update(now, 1)) this.onRotationEvent(ev, now);
 		}
 
 		const view = this.updateCamera(now);
-		this.updateRemotes(now);
+		this.updateRemotes(now, dt);
 		this.client.frame(now);
 		this.updateHud(now, view);
 		this.audio.update(Math.min(dt, 100) / 1000, {
@@ -1385,13 +1408,26 @@ export class Game implements CommandContext {
 		return n.z > 0.1 && n.z < 0.7 ? n : null;
 	}
 
-	private updateRemotes(now: number): void {
+	private updateRemotes(now: number, dtMs: number): void {
+		const delayMs = this.adaptiveDelay.update(now, dtMs);
+		const renderAt = this.serverClock.serverTime(now) - delayMs;
+		this.lastRenderServerMs = renderAt;
+		this.netStats.setInterpDelay(delayMs);
 		if (this.remotes.size === 0) return;
-		const renderAt = now - INTERP_DELAY_MS;
 		const players = this.renderer?.players;
 		const specTarget = this.spec && !this.spec.freeFly ? this.spec.targetId : null;
+		let anyUnderrun = false;
+		let anyExtrap = false;
+		let maxOverrun = 0;
 		for (const rm of this.remotes.values()) {
 			rm.hasSample = rm.buf.sample(renderAt, rm.sample);
+			if (rm.hasSample && !rm.spectating && !rm.buf.sourceIdle && now - rm.buf.lastArrival < 3000) {
+				if (rm.buf.lastUnderrun) {
+					anyUnderrun = true;
+					if (rm.buf.lastOverrunMs > maxOverrun) maxOverrun = rm.buf.lastOverrunMs;
+				}
+				if (rm.buf.lastExtrapMs > 0) anyExtrap = true;
+			}
 			if (!players) continue;
 			if (!players.has(rm.id)) players.upsert(rm.id, rm.name);
 			const s = rm.sample;
@@ -1418,6 +1454,8 @@ export class Game implements CommandContext {
 			players.setPose(rm.id, pose, visible);
 			this.client.dress?.(players, rm, visible, now);
 		}
+		if (maxOverrun > 0) this.adaptiveDelay.observeUnderrun(now, maxOverrun, this.serverClock.rtt);
+		this.netStats.recordFrame(now, dtMs, anyUnderrun, anyExtrap);
 	}
 
 	private updateHud(now: number, target: Sample | null): void {
@@ -1505,6 +1543,14 @@ export class Game implements CommandContext {
 			if (!cur || cur.targetName !== name || cur.freeFly !== this.spec.freeFly)
 				h.spectating = { targetName: name, freeFly: this.spec.freeFly };
 		} else if (h.spectating) h.spectating = null;
+
+		const netGraphLevel = this.cvars.num('net_graph');
+		if (netGraphLevel <= 0) {
+			if (h.netGraph !== null) h.netGraph = null;
+		} else if (h.netGraph === null || now - this.lastNetGraph >= 200) {
+			this.lastNetGraph = now;
+			h.netGraph = this.netStats.view(now, netGraphLevel >= 2);
+		}
 	}
 
 	private refreshSoloBoard(now: number): void {
@@ -1923,10 +1969,14 @@ export class Game implements CommandContext {
 			case 'timeLeft':
 				this.mapEndsAt = now + m.mapTimeLeft * 1000;
 				break;
-			case 'scoreboard':
+			case 'scoreboard': {
 				this.hud.scoreboard = m.rows;
 				this.hud.richest = Array.isArray(m.richest) ? m.richest : [];
+				const me = m.rows.find((r) => r.id === this.selfId);
+				if (me && this.netStats.rtt < 0) this.netStats.recordRtt(me.ping);
+				else if (me && me.ping > 0) this.netStats.recordRtt(me.ping);
 				break;
+			}
 			case 'modeState':
 				if (m.mode === this.gameMode.id) this.hud.modeState = m;
 				this.client.message?.(m, now);
@@ -1940,6 +1990,11 @@ export class Game implements CommandContext {
 			case 'ping':
 				this.net?.send({ type: 'pong', t: m.t });
 				break;
+			case 'pong': {
+				const rtt = this.serverClock.observePong(m.t, now, m.serverTime);
+				if (rtt >= 0) this.netStats.recordRtt(rtt);
+				break;
+			}
 			case 'auth':
 				this.onAuth(m);
 				if (m.ok && m.username === null) this.hud.coins = null;
@@ -2026,6 +2081,16 @@ export class Game implements CommandContext {
 		this.hud.rtvCooldown = null;
 		this.renderer?.players.clear();
 		this.remotes.clear();
+		this.serverClock.reset();
+		this.adaptiveDelay.reset(m.snapshotHz);
+		this.lastRenderServerMs = 0;
+		if (m.snapshotHz && m.snapshotHz > 0) this.serverClock.setNominalSnapHz(m.snapshotHz);
+		if (m.serverTime !== undefined) this.serverClock.seed(now, m.serverTime);
+		this.lastClientPing = now;
+		client.send({ type: 'ping', t: now });
+		this.netStats.reset();
+		if (m.snapshotHz && m.snapshotHz > 0) this.netStats.setNominalSnapHz(m.snapshotHz);
+		this.netStats.setInterpDelay(this.adaptiveDelay.currentMs);
 		this.hud.ban = null;
 		this.hud.coins = null;
 		this.hud.multiplier = null;
@@ -2047,11 +2112,26 @@ export class Game implements CommandContext {
 		this.print(`Connected to ${client.url}`);
 	}
 
-	private onSnapshot(entries: SnapshotEntry[], arrival: number): void {
+	private onSnapshot(frame: SnapshotFrame, arrival: number): void {
 		if (this.mode !== 'online') return;
-		for (const e of entries) {
+		const obs = this.serverClock.observeSnapshot(arrival, frame.serverTimeMs, frame.seq);
+		this.netStats.recordSnapshot(arrival, {
+			serverTimeMs: frame.serverTimeMs,
+			seq: frame.seq,
+			selfId: this.selfId,
+			entries: obs.accepted ? frame.entries : undefined
+		});
+		if (!obs.accepted) return;
+		this.adaptiveDelay.observeSnapshot(arrival, {
+			jitterMs: this.serverClock.jitter,
+			rttMs: this.serverClock.rtt,
+			arrivalGapMs: obs.arrivalGapMs,
+			transitExcessMs: obs.transitExcessMs,
+			seqGap: obs.seqGap
+		});
+		for (const e of frame.entries) {
 			if (e.id === this.selfId) continue;
-			this.remote(e.id).buf.push(e, arrival);
+			this.remote(e.id).buf.push(e, frame.serverTimeMs, arrival);
 		}
 	}
 
@@ -2112,6 +2192,10 @@ export class Game implements CommandContext {
 		this.hud.richest = [];
 		this.hud.modeState = null;
 		this.remotes.clear();
+		this.serverClock.reset();
+		this.adaptiveDelay.reset();
+		this.lastRenderServerMs = 0;
+		this.netStats.reset();
 		this.renderer?.players.clear();
 		this.records = null;
 		this.hud.adminState = null;
