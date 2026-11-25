@@ -799,6 +799,7 @@ export class Lobby {
 		for (const o of this.clients) if (o.helloed) players.push(info(o));
 		this.send(c, {
 			type: 'welcome',
+			version: PROTOCOL_VERSION,
 			serverId: this.db.serverId,
 			selfId: c.id,
 			map: this.map.id,

@@ -33,11 +33,11 @@ test('v1 uses the 44-byte sender and original arrival-time teleport behavior', a
 });
 
 test('unsupported health versions fail explicitly', async () => {
-	await assert.rejects(adapterFor(3), /Unsupported server protocol v3/);
+	await assert.rejects(adapterFor(4), /Unsupported server protocol v4/);
 });
 
-test('v2 uses the merged codec and snaps short teleports after four unseen generations', async () => {
-	const adapter = await adapterFor(2);
+for (const version of [2, 3]) test(`v${version} uses the merged codec and snaps short teleports after four unseen generations`, async () => {
+	const adapter = await adapterFor(version);
 	const { id, ...state } = first;
 	const v2 = decodeV2State(adapter.encode(state, 4));
 	assert.ok(v2);

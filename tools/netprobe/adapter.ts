@@ -57,7 +57,7 @@ const v1: Adapter = {
 
 export async function adapterFor(version: number): Promise<Adapter> {
 	if (version === 1) return v1;
-	if (version !== 2) throw new Error(`Unsupported server protocol v${version}`);
+	if (version !== 2 && version !== 3) throw new Error(`Unsupported server protocol v${version}`);
 	const { loadV2Adapter } = await import('./adapter-v2.ts');
 	return loadV2Adapter();
 }

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { WebSocket } from 'ws';
-import { CLOSE_IP_LIMIT, PROTOCOL_VERSION, SERVER_ID_PROTOCOL } from '@surf/shared';
+import { CLOSE_IP_LIMIT, CLOSE_PROTOCOL_MISMATCH, PROTOCOL_VERSION, SERVER_ID_PROTOCOL } from '@surf/shared';
 import { clientIp, isOriginAllowed, parseAllowedOrigins, parseTrustProxy } from './proxy.ts';
 import { startServer } from './server.ts';
 import { netState, sleep, TestClient, testMap } from './test-helpers.ts';
@@ -209,7 +209,7 @@ describe('ALLOWED_ORIGINS', () => {
 });
 
 describe('pre-hello caps, hello timeout, metrics, web handler, and graceful shutdown', () => {
-	it('rejects v1 before sending welcome or replacing a connected player', async () => {
+	for (const version of [1, 2]) it(`rejects v${version} before sending welcome or replacing a connected player`, async () => {
 		const server = await startServer(LOCAL_SERVER);
 		const live = new TestClient(server.port);
 		const legacy = new TestClient(server.port);
@@ -217,10 +217,10 @@ describe('pre-hello caps, hello timeout, metrics, web handler, and graceful shut
 			const id = crypto.randomUUID();
 			await live.hello('Current', id);
 			await legacy.open();
-			legacy.send({ type: 'hello', version: 1, playerId: id, name: 'Legacy' });
+			legacy.send({ type: 'hello', version, playerId: id, name: 'Legacy' });
 			await legacy.waitFor('chat', (m) => m.text.includes('Reload the page'));
 			await legacy.until(() => legacy.closed);
-			assert.equal(legacy.closeCode, 4002);
+			assert.equal(legacy.closeCode, version === 1 ? 4002 : CLOSE_PROTOCOL_MISMATCH);
 			assert.equal(legacy.of('welcome').length, 0);
 			assert.equal(live.closed, false);
 			assert.equal(server.lobby.playerCount, 1);

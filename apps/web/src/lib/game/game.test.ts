@@ -3,7 +3,7 @@
  * ClientMode and stubs for the renderer, sound, input and network. The modes
  * have tests of their own.
  */
-import { buildCollisionWorld, decodeState, getMap, Status, type ClientMessage, type CollisionWorld, type PlayerState, type ServerMessage } from '@surf/shared';
+import { buildCollisionWorld, decodeState, getMap, PROTOCOL_VERSION, Status, type ClientMessage, type CollisionWorld, type PlayerState, type ServerMessage } from '@surf/shared';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClientMode, ClientModeHost } from './modes/types.js';
 
@@ -87,7 +87,7 @@ vi.mock('../net/connection.js', () => ({
 			return true;
 		}
 		disconnect(): void {}
-		holdOff(): void {}
+		holdOff = vi.fn();
 		dispose(): void {}
 	}
 }));
@@ -163,10 +163,10 @@ function setup() {
 			for (let i = 0; i < n; i++) inside.frame((clock += 15.625));
 		},
 		/** Connected as player 7, with players 2 and 3. */
-		online(): void {
-			(T.connection as { client: unknown }).client = { url: 'x', send: (m: ClientMessage) => sent.push(m), sendBinary: (b: ArrayBuffer) => states.push(b), close: () => {} };
+		online(version: number | null = PROTOCOL_VERSION): void {
+			(T.connection as { client: unknown }).client = { url: 'x', send: (m: ClientMessage) => sent.push(m), sendBinary: (b: ArrayBuffer) => states.push(b), close: (code = 0) => conn.closed(true, 'x', code) };
 			conn.message({
-				type: 'welcome', selfId: 7, map: 'tag_quayside', mode: 'tag', mapTimeLeft: 60, cvars: {}, account: null,
+				type: 'welcome', ...(version === null ? {} : { version }), selfId: 7, map: 'tag_quayside', mode: 'tag', mapTimeLeft: 60, cvars: {}, account: null,
 				players: [2, 3].map((id) => ({ id, name: `P${id}`, spectating: false })),
 				records: { pbTicks: null, pbSplits: null, rank: null, recordTicks: null, recordName: null }
 			} as unknown as ServerMessage);
@@ -190,6 +190,16 @@ beforeEach(() => {
 	T.next = {};
 	T.construct = null;
 	T.mouse = { dx: 0, dy: 0 };
+});
+
+it.each([null, 1, 2])('stays solo and backs off on a welcome with version %s', (version) => {
+	const { game, online, sent } = setup();
+	online(version);
+	expect(game.hud.online).toBe(false);
+	expect(sent).toEqual([]);
+	expect(game.hud.chat.at(-1)?.text).toMatch(/server runs a different version.*reload.*wait/i);
+	expect((T.connection as { holdOff: ReturnType<typeof vi.fn> }).holdOff).toHaveBeenCalledWith(60_000);
+	game.destroy();
 });
 
 it('sends a login token in hello only for its identified session scope', () => {

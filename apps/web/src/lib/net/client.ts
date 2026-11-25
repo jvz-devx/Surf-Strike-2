@@ -119,10 +119,10 @@ export class NetClient {
 		this.h.traffic?.('out', buf.byteLength, performance.now());
 	}
 
-	close(): void {
+	close(code = 0): void {
 		if (this.closed) return;
 		this.transport?.close();
-		this.finish();
+		this.finish(code);
 	}
 
 	private identify(serverId: string | null): void {

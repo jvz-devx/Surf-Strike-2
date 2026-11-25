@@ -6,6 +6,7 @@ import type { Relay } from './relay.ts';
 
 export interface Welcome {
 	type: 'welcome';
+	version?: number;
 	selfId: number;
 	map: string;
 	mode?: string;
@@ -94,6 +95,13 @@ export class Peer {
 				}
 				if (message?.type === 'welcome') {
 					clearTimeout(timeout);
+					// v1 and v2 did not advertise a revision in welcome.
+					if ((version >= 3 || message.version !== undefined) && message.version !== version) {
+						const failure = new Error(`${name}: /health advertised v${version} but welcome reported ${message.version ?? 'no version'}`);
+						reject(failure);
+						handlers.fail(failure);
+						return;
+					}
 					resolve(message);
 				}
 				if (message?.type === 'ping' && ws.readyState === WebSocket.OPEN) {

@@ -75,11 +75,13 @@ describe('lobby', () => {
 		const res = await fetch(`http://127.0.0.1:${server.port}/health`);
 		const body = await res.json();
 		assert.equal(body.ok, true);
+		assert.equal(body.version, 3);
 		assert.equal(body.map, 'surf_a');
 	});
 
 	it('hello -> welcome, join broadcast, names sanitized', async () => {
 		const { c: a, welcome: wa } = await join('Alice');
+		assert.equal(wa.version, 3);
 		assert.equal(wa.map, 'surf_a');
 		assert.equal(wa.selfId, 1);
 		assert.equal(wa.mapTimeLeft, MAP_DURATION);

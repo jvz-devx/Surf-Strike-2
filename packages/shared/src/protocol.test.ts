@@ -48,8 +48,8 @@ function makeEntry(id: number, extra: Partial<NetState> = {}): SnapshotEntry {
 }
 
 describe('protocol v2 binary codec', () => {
-	it('bumps protocol version to 2', () => {
-		expect(PROTOCOL_VERSION).toBe(2);
+	it('advertises protocol version 3', () => {
+		expect(PROTOCOL_VERSION).toBe(3);
 	});
 
 	it('packs and unpacks the 8-bit wrapping teleport counter without disturbing other flag bits', () => {

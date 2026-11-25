@@ -121,6 +121,7 @@ const SOLO_VOTER = 'local';
 /** Scoreboard row id of the local player offline. */
 const SOLO_ROW_ID = 0;
 const FULL_HOLDOFF_MS = 60_000;
+const VERSION_HOLDOFF_MS = 60_000;
 /** Reconnect this long after a temporary ban lifted (clock and timer slack). */
 const BAN_RECONNECT_MS = 1_000;
 /** The shop stops waiting for a reply after this long. */
@@ -2093,6 +2094,7 @@ export class Game implements CommandContext {
 	private onWelcome(m: Extract<ServerMessage, { type: 'welcome' }>, now: number): void {
 		const client = this.conn.client;
 		if (!client) return;
+		if (m.version !== PROTOCOL_VERSION) return client.close(CLOSE_PROTOCOL_MISMATCH);
 		this.net = client;
 		this.mode = 'online';
 		// The loot box pictures get ready now, not in the middle of a run.
@@ -2198,8 +2200,8 @@ export class Game implements CommandContext {
 			this.notice('You connected from another tab or device. Playing solo here; reload the page to reconnect.');
 		}
 		if (code === CLOSE_PROTOCOL_MISMATCH) {
-			this.conn.disconnect();
-			this.notice('The server protocol changed. Reload the page to reconnect.');
+			this.conn.holdOff(VERSION_HOLDOFF_MS);
+			this.notice('The server runs a different version. Reload the page or wait to reconnect.');
 		}
 		if (code === CLOSE_IP_LIMIT) {
 			// Retrying would fail until someone on this network leaves.

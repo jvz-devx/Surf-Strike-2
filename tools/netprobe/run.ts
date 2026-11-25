@@ -119,7 +119,7 @@ export async function runProbe(config: Config, signal: AbortSignal) {
 			message(message, arrival) {
 				if (message.type === 'welcome' || message.type === 'pong') {
 					for (const { observer } of renderers) observer.timingMessage?.(message, arrival);
-					if (message.type === 'welcome' && before.version === 2) {
+					if (message.type === 'welcome' && before.version >= 2) {
 						observerPeer?.clockPing(arrival);
 						nextClockPing = arrival + 1000;
 					}

@@ -15,7 +15,7 @@ import type { WeaponId } from './modes/zombies/weapons.ts';
 import type { Vec3 } from './types.ts';
 import { TICK_RATE } from './units.ts';
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const CLOSE_PROTOCOL_MISMATCH = 4006;
 /** WebSocket subprotocol that sends a database identity before hello. */
 export const SERVER_ID_PROTOCOL = 'surf-server-identity';
@@ -358,6 +358,7 @@ export type ServerMessage =
 	| { type: 'serverIdentity'; serverId: string }
 	| {
 			type: 'welcome';
+			version: number;
 			/** Stable SQLite identity, absent on older servers. */
 			serverId?: string;
 			selfId: number;
