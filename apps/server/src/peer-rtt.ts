@@ -31,11 +31,15 @@ export class PeerRtt {
 	}
 
 	estimate(now: number): number {
+		return this.sample(now) ?? INITIAL_RTT_MS;
+	}
+
+	sample(now: number): number | null {
 		let min = Infinity;
 		for (const [sentAt, rtt] of this.samples) {
 			if (now - sentAt >= SAMPLE_WINDOW_MS) this.samples.delete(sentAt);
 			else min = Math.min(min, rtt);
 		}
-		return min === Infinity ? INITIAL_RTT_MS : min;
+		return min === Infinity ? null : min;
 	}
 }

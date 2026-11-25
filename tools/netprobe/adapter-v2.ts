@@ -1,74 +1,19 @@
 import type { Adapter, Rendered } from './adapter.ts';
-import type { Sample } from '../../apps/web/src/lib/net/interp.ts';
-import type { NetState, SnapshotEntry } from './wire-v1.ts';
+import { decodeSnapshot, encodeState, withTeleportSeq, type NetState } from '@surf/shared';
+import { ServerClock } from '../../apps/web/src/lib/net/clock.ts';
+import { AdaptiveDelay } from '../../apps/web/src/lib/net/adaptive.ts';
+import { SnapshotBuffer, emptySample } from '../../apps/web/src/lib/net/interp.ts';
 
-// The probe branch still has the v1 browser checkout. Load the v2 modules
-// only for a v2 endpoint and keep their compatibility types in this file.
-interface SnapshotTiming {
-	seqGap: number;
-	transitExcessMs: number;
-	arrivalGapMs: number;
-}
-
-interface BrowserClock {
-	rtt: number;
-	jitter: number;
-	setNominalSnapHz(hz: number): void;
-	seed(arrivalMs: number, serverTimeMs: number): void;
-	observePong(sentMs: number, arrivalMs: number, serverTimeMs: number): number;
-	observeSnapshot(arrivalMs: number, serverTimeMs: number, seq: number): SnapshotTiming & { accepted: boolean };
-	serverTime(nowMs: number): number;
-}
-
-interface BrowserDelay {
-	currentMs: number;
-	reset(snapshotHz?: number): void;
-	update(nowMs: number, dtMs: number): number;
-	observeSnapshot(arrivalMs: number, timing: SnapshotTiming & { jitterMs: number; rttMs: number }): void;
-	observeUnderrun(nowMs: number, overrunMs: number, rttMs: number): void;
-}
-
-interface BrowserBuffer {
-	sourceIdle: boolean;
-	push(state: NetState, serverTimeMs: number, arrivalMs: number): void;
-	sample(serverRenderMs: number, out: Sample): boolean;
-	lastArrival: number;
-	lastUnderrun: boolean;
-	lastOverrunMs: number;
-	lastExtrapMs: number;
-}
-
-interface V2Codec {
-	PROTOCOL_VERSION: number;
-	encodeState(state: NetState): ArrayBuffer;
-	withTeleportSeq(flags: number, count: number): number;
-	decodeSnapshot(data: ArrayBuffer): { entries: SnapshotEntry[]; serverTimeMs: number; seq: number } | null;
-}
-
-export async function loadV2Adapter(): Promise<Adapter> {
-	const codec = (await import('../../packages/shared/src/protocol.ts')) as unknown as V2Codec;
-	if (codec.PROTOCOL_VERSION !== 2 || typeof codec.withTeleportSeq !== 'function') {
-		throw new Error('Protocol v2 detected. Run netprobe in a checkout that includes the v2 game client.');
-	}
-	const { ServerClock } = await import(new URL('../../apps/web/src/lib/net/clock.ts', import.meta.url).href) as {
-		ServerClock: new () => BrowserClock;
-	};
-	const { AdaptiveDelay } = await import(new URL('../../apps/web/src/lib/net/adaptive.ts', import.meta.url).href) as {
-		AdaptiveDelay: new () => BrowserDelay;
-	};
-	const { SnapshotBuffer, emptySample } = (await import('../../apps/web/src/lib/net/interp.ts')) as unknown as {
-		SnapshotBuffer: new () => BrowserBuffer;
-		emptySample(): Sample;
-	};
+export function loadV2Adapter(): Adapter {
 	return {
 		encode(state, teleportCount) {
-			return codec.encodeState({ ...state, flags: codec.withTeleportSeq(state.flags, teleportCount) });
+			return encodeState({ ...state, flags: withTeleportSeq(state.flags, teleportCount) } as NetState);
 		},
 		observer(botIds) {
 			const clock = new ServerClock();
 			const delay = new AdaptiveDelay();
 			const rendered = new Map<number, Rendered>();
-			const buffers = new Map<number, BrowserBuffer>();
+			const buffers = new Map<number, SnapshotBuffer>();
 			const pose = emptySample();
 			return {
 				timingMessage(message, arrivalMs) {
@@ -81,7 +26,7 @@ export async function loadV2Adapter(): Promise<Adapter> {
 					}
 				},
 				snapshot(data, arrivalMs) {
-					const frame = codec.decodeSnapshot(data);
+					const frame = decodeSnapshot(data);
 					if (!frame) return false;
 					const timing = clock.observeSnapshot(arrivalMs, frame.serverTimeMs, frame.seq);
 					if (!timing.accepted) return true;

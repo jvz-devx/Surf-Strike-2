@@ -30,6 +30,8 @@ import {
 	encodeSnapshot,
 	decodeState,
 	FLAG_TELEPORTED,
+	teleportSeq,
+	withTeleportSeq,
 	isRaceMode,
 	mapCvars as sharedMapCvars,
 	MapRotation,
@@ -164,6 +166,12 @@ interface Client {
 	targetId: number | null;
 	state: NetState | null;
 	pendingSpawn: Vec3 | null;
+	spawnSeq: number;
+	spawnFrame: string | null;
+	spawnSentAt: number;
+	clientTeleportSeq: number;
+	relayTeleportSeq: number;
+	readonly hasRttSample: boolean;
 	ping: number;
 	rtt: PeerRtt;
 	/** Worn cosmetics (docs/economy.md#shop); the default look for guests. */
@@ -176,6 +184,7 @@ interface Client {
 const ZONE_KINDS = new Set<ZoneKind>(['start', 'stage', 'checkpoint', 'end']);
 /** State packets are ordered. The first pose near the spawn acknowledges it without changing the wire format. */
 const SPAWN_ACK_RADIUS = 64;
+const SPAWN_RETRY_MS = 250;
 const PLAYER_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 
 /** Full cvars for a map: its gamemode's profile, then the map's overrides. */
@@ -374,6 +383,7 @@ export class Lobby {
 			db: this.db,
 			economy: this.economy.forMode(),
 			now: () => this.now(),
+			serverNow: () => this.serverClock(),
 			rng: () => this.rng(),
 			*players() {
 				for (const c of lobby.clients) if (c.helloed) yield c;
@@ -483,7 +493,7 @@ export class Lobby {
 	maxBufferedBytes(): number {
 		let max = 0;
 		for (const c of this.clients) {
-			if (c.socket.bufferedAmount > max) max = c.socket.bufferedAmount;
+			if (c.transport.bufferedAmount > max) max = c.transport.bufferedAmount;
 		}
 		return max;
 	}
@@ -544,6 +554,14 @@ export class Lobby {
 			targetId: null,
 			state: null,
 			pendingSpawn: null,
+			spawnSeq: 0,
+			spawnFrame: null,
+			spawnSentAt: 0,
+			clientTeleportSeq: 0,
+			relayTeleportSeq: 0,
+			get hasRttSample() {
+				return this.rtt.sample(performance.now()) !== null;
+			},
 			get ping() {
 				return Math.min(MAX_REWIND_RTT_MS, this.rtt.estimate(performance.now()));
 			},
@@ -606,7 +624,7 @@ export class Lobby {
 	}
 
 	private onMessage(c: Client, data: Buffer, isBinary: boolean): void {
-		if (c.socket.readyState !== c.socket.OPEN) return;
+		if (!c.transport.open) return;
 		const t = performance.now();
 		if (isBinary) {
 			const n = c.rate.state.hit(t);
@@ -685,7 +703,7 @@ export class Lobby {
 			case 'callMoab':
 			case 'knife':
 				// Zombies/infected weapons and hide-and-seek knife (docs/modes.md); the mode validates every field.
-				if (!c.spectating) this.mode.message?.(c, msg);
+				if (!c.spectating && !c.pendingSpawn) this.mode.message?.(c, msg);
 				return;
 			case 'boxOpen':
 			case 'boxRevealed':
@@ -744,7 +762,7 @@ export class Lobby {
 		// Check the player cap after dropping duplicate connections.
 		if (this.playerCount >= this.maxPlayers) {
 			this.send(c, { type: 'full' });
-			c.socket.close(4003, 'server full');
+			c.transport.close(4003, 'server full');
 			return;
 		}
 		// After the duplicates are gone, so a reload or account takeover never counts twice.
@@ -1018,13 +1036,21 @@ export class Lobby {
 	/** Only server spawns and plausible map teleports break the combat pose history. */
 	private combatState(c: Client, state: NetState): NetState | null {
 		if (isRaceMode(this.mode.id)) return state;
+		if ((state.spawnSeq ?? 0) !== c.spawnSeq) return null;
+		const clientSeq = teleportSeq(state.flags);
+		let teleported = false;
 		if (c.pendingSpawn) {
 			if (!nearPose(state, c.pendingSpawn, SPAWN_ACK_RADIUS)) return null;
 			c.pendingSpawn = null;
-			return { ...state, flags: state.flags | FLAG_TELEPORTED };
+			c.spawnFrame = null;
+			teleported = true;
+		} else if (c.state && (clientSeq !== c.clientTeleportSeq || (state.flags & FLAG_TELEPORTED) !== 0)) {
+			teleported = mapTeleport(this.map, c.state, state);
 		}
-		if (!(state.flags & FLAG_TELEPORTED) || mapTeleport(this.map, c.state, state)) return state;
-		return { ...state, flags: state.flags & ~FLAG_TELEPORTED };
+		c.clientTeleportSeq = clientSeq;
+		if (teleported) c.relayTeleportSeq = (c.relayTeleportSeq + 1) & 3;
+		const flags = withTeleportSeq((state.flags & ~FLAG_TELEPORTED) | (teleported ? FLAG_TELEPORTED : 0), c.relayTeleportSeq);
+		return { ...state, flags };
 	}
 
 	private setSpectate(c: Client, spectating: boolean, targetId: number | null): void {
@@ -1041,6 +1067,7 @@ export class Lobby {
 		if (changed) {
 			c.state = null;
 			c.pendingSpawn = null;
+			c.spawnFrame = null;
 			if (spectating) this.rotation.removeVoter(String(c.id));
 		}
 		this.broadcast({ type: 'spectating', id: c.id, spectating, targetId });
@@ -1205,6 +1232,7 @@ export class Lobby {
 			if (!c.helloed) continue;
 			c.state = null;
 			c.pendingSpawn = null;
+			c.spawnFrame = null;
 			this.send(c, {
 				type: 'mapChange',
 				map: map.id,
@@ -1227,16 +1255,21 @@ export class Lobby {
 	// Periodic sends
 
 	sendSnapshot(): void {
-		const now = this.now();
+		const now = this.serverClock();
 		this.metrics?.recordSnapshotTick();
 		const entries: SnapshotEntry[] = [];
 		for (const c of this.clients) {
-			if (c.helloed && !c.spectating && c.state) entries.push({ id: c.id, ...c.state });
+			if (!c.helloed || c.spectating) continue;
+			if (c.spawnFrame && now - c.spawnSentAt >= SPAWN_RETRY_MS) {
+				c.spawnSentAt = now;
+				this.sendRaw(c, c.spawnFrame);
+			}
+			if (c.state) entries.push({ id: c.id, ...c.state });
 		}
 		if (entries.length === 0) return;
 		this.mode.snapshot?.(entries, now);
 		this.snapshotSeq = (this.snapshotSeq + 1) & 0xffff;
-		const buf = Buffer.from(encodeSnapshot(entries, this.serverClock(), this.snapshotSeq));
+		const buf = Buffer.from(encodeSnapshot(entries, now, this.snapshotSeq));
 		for (const c of this.clients) if (c.helloed) this.sendRaw(c, buf);
 	}
 
@@ -1299,6 +1332,11 @@ export class Lobby {
 		if ((msg.type === 'hns' || msg.type === 'inf' || msg.type === 'zm') && msg.ev.e === 'spawn' && msg.ev.id === c.id) {
 			c.pendingSpawn = 'pos' in msg.ev ? msg.ev.pos : { x: msg.ev.x, y: msg.ev.y, z: msg.ev.z };
 			c.state = null;
+			c.spawnSeq = c.spawnSeq === 0xffff ? 1 : c.spawnSeq + 1;
+			c.spawnFrame = JSON.stringify({ ...msg, spawnSeq: c.spawnSeq });
+			c.spawnSentAt = this.serverClock();
+			this.sendRaw(c, c.spawnFrame);
+			return;
 		}
 		this.sendRaw(c, JSON.stringify(msg));
 	}

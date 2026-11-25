@@ -35,7 +35,7 @@ import {
 } from '@surf/shared';
 import type { Command } from '../commands.ts';
 import type { ModeClientMessage, ModeHost, ModePlayer, ServerMode } from './types.ts';
-import { EMPTY_RECORDS } from './types.ts';
+import { EMPTY_RECORDS, renderRewindMs } from './types.ts';
 
 /** Mode state is re-sent at least this often (ms). */
 export const HNS_STATE_MS = 1000;
@@ -152,7 +152,8 @@ export class HnsMode implements ServerMode {
 		if (msg.type !== 'knife' || p.spectating || !this.game.has(p.id)) return;
 		const now = this.host.now();
 		if (now - (this.overCap.get(p.id) ?? -Infinity) < HNS_SPEED_PENALTY_MS) return;
-		const rewind = Math.min(HNS_MAX_REWIND_MS, p.ping + HNS_VIEW_DELAY_MS);
+		const rewind = renderRewindMs(msg.renderServerTimeMs, this.host.serverNow?.() ?? now, p, HNS_MAX_REWIND_MS)
+			?? Math.min(HNS_MAX_REWIND_MS, p.ping + HNS_VIEW_DELAY_MS);
 		const res = this.game.swing(p.id, { origin: msg.origin, dir: msg.dir }, now, rewind);
 		if (res.ok) this.hunt.attempt(p.id);
 		this.dispatch(res.events);

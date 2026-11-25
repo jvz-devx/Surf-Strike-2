@@ -26,10 +26,11 @@ export class ZombieBuffer {
 	tick = 0;
 
 	push(frame: ZombieFrame, arrivalMs: number): void {
+		let at = frame.serverTimeMs ?? arrivalMs;
 		const last = this.buf[this.buf.length - 1];
 		if (last && frame.tick <= last.tick) return; // late or duplicate frame
-		if (last && arrivalMs < last.t) arrivalMs = last.t;
-		this.buf.push({ t: arrivalMs, tick: frame.tick, byId: new Map(frame.zombies.map((z) => [z.id, z])) });
+		if (last && at < last.t) at = last.t;
+		this.buf.push({ t: at, tick: frame.tick, byId: new Map(frame.zombies.map((z) => [z.id, z])) });
 		if (this.buf.length > CAPACITY) this.buf.shift();
 	}
 

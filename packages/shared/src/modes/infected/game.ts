@@ -1060,7 +1060,7 @@ export class InfectedGame {
 	}
 
 	/** Throw the throwing knife (infected only, while playing). */
-	throwKnife(id: number, origin: Vec3, dir: Vec3, now: number): InfActionResult {
+	throwKnife(id: number, origin: Vec3, dir: Vec3, now: number, rewindMs = 0): InfActionResult {
 		const p = this.players.get(id);
 		if (!p) return { ok: false, reason: 'not playing', events: [] };
 		if (!p.alive) return { ok: false, reason: 'dead', events: [] };
@@ -1096,7 +1096,7 @@ export class InfectedGame {
 		this.knives.set(k.id, k);
 		this.pending.push({ e: 'knifeThrow', id: k.id, ownerId: id, x: k.pos.x, y: k.pos.y, z: k.pos.z, vx: vel.x, vy: vel.y, vz: vel.z });
 		// Point blank: a survivor between the eye and the spawn point is hit at once.
-		const victim = this.knifeVictim(start, aim, tr.fraction * KNIFE_SPAWN_DIST);
+		const victim = this.knifeVictim(start, aim, tr.fraction * KNIFE_SPAWN_DIST, now, rewindMs);
 		if (victim) {
 			this.removeKnife(k);
 			this.infect(victim, p, 'knife', aim);
@@ -1747,16 +1747,21 @@ export class InfectedGame {
 
 	/**
 	 * Closest living survivor the knife's segment (unit `u`, length `maxDist`)
-	 * passes through: the player hitboxes grown by INF_KNIFE_HIT_RADIUS. No
-	 * rewind: the knife is a projectile simulated here, so it meets the
-	 * survivors where the server has them now, as every client sees it fly.
+	 * passes through, with hitboxes grown by INF_KNIFE_HIT_RADIUS. Only the
+	 * throw's immediate spawn segment can rewind. Flight uses current poses.
 	 */
-	private knifeVictim(from: Vec3, u: Vec3, maxDist: number): InfPlayer | null {
+	private knifeVictim(from: Vec3, u: Vec3, maxDist: number, now = 0, rewindMs = 0): InfPlayer | null {
 		let best: InfPlayer | null = null;
 		let bestT = Infinity;
 		for (const s of this.livingSurvivors()) {
 			if (!s.pos) continue;
-			const t = sweepPlayer(from, u, this.poseOf(s, s.pos, this.scratch), maxDist, INF_KNIFE_HIT_RADIUS);
+			const current = this.poseOf(s, s.pos, this.scratch);
+			let pose = current;
+			if (rewindMs > 0) {
+				pose = { ...current, motion: undefined };
+				s.hist.poseAt(now - rewindMs, now, current, pose);
+			}
+			const t = sweepPlayer(from, u, pose, maxDist, INF_KNIFE_HIT_RADIUS);
 			if (t >= 0 && t < bestT) {
 				bestT = t;
 				best = s;

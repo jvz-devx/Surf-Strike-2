@@ -228,6 +228,7 @@ export class Game implements CommandContext {
 	private moves = true;
 	private teleported = true;
 	private tpSeq = 0;
+	private spawnSeq = 0;
 	private snapPending = false;
 	private mouse = { dx: 0, dy: 0 };
 
@@ -1111,7 +1112,12 @@ export class Game implements CommandContext {
 			cvar: (name) => this.cvars.num(name),
 			myName: () => this.myName(),
 			name: (id) => this.remoteName(id),
-			send: (msg) => this.send(msg),
+			send: (msg) => {
+				const renderServerTimeMs = game.lastRenderServerMs;
+				if (game.serverClock.isSynced && renderServerTimeMs > 0 && (msg.type === 'fire' || msg.type === 'knife' || msg.type === 'throwKnife')) {
+					game.send({ ...msg, renderServerTimeMs });
+				} else game.send(msg);
+			},
 			notice: (text) => this.notice(text),
 			print: (text, kind) => this.print(text, kind),
 			setAngles: (pitch, yaw) => {
@@ -1278,6 +1284,7 @@ export class Game implements CommandContext {
 		const p = this.player;
 		const s = this.netState;
 		s.tick = this.tick;
+		s.spawnSeq = this.spawnSeq;
 		s.x = p.origin.x;
 		s.y = p.origin.y;
 		s.z = p.origin.z;
@@ -1992,6 +1999,15 @@ export class Game implements CommandContext {
 			case 'zm':
 			case 'inf':
 			case 'hns':
+				if (m.ev.e === 'spawn' && m.ev.id === this.selfId && m.spawnSeq !== undefined) {
+					const step = (m.spawnSeq - this.spawnSeq) & 0xffff;
+					if (step === 0 || step >= 0x8000) break;
+					this.client.message?.(m, now);
+					this.spawnSeq = m.spawnSeq;
+					break;
+				}
+				this.client.message?.(m, now);
+				break;
 			case 'tagged':
 				this.client.message?.(m, now);
 				break;
@@ -2089,6 +2105,7 @@ export class Game implements CommandContext {
 		this.hud.rtvCooldown = null;
 		this.renderer?.players.clear();
 		this.remotes.clear();
+		this.spawnSeq = 0;
 		this.serverClock.reset();
 		this.adaptiveDelay.reset(m.snapshotHz);
 		this.lastRenderServerMs = 0;
@@ -2200,6 +2217,7 @@ export class Game implements CommandContext {
 		this.hud.richest = [];
 		this.hud.modeState = null;
 		this.remotes.clear();
+		this.spawnSeq = 0;
 		this.serverClock.reset();
 		this.adaptiveDelay.reset();
 		this.lastRenderServerMs = 0;

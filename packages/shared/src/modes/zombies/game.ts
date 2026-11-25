@@ -675,11 +675,23 @@ export class ZombiesGame {
 
 	/** Shot targets at the shooter's tick, or their current pose if they have no sample for it. */
 	private targets(tick: number, playerRenderTime?: number): Target[] {
-		const t = Math.round(Math.max(this.tick - HISTORY_TICKS, Math.min(this.tick, tick)));
-		const frame = t >= this.tick ? undefined : this.history.find((h) => h.tick === t);
+		const t = Math.max(this.tick - HISTORY_TICKS, Math.min(this.tick, tick));
+		const frame = t >= this.tick ? undefined : this.history.find((h) => h.tick === Math.floor(t));
+		const next = frame && t > frame.tick ? this.history.find((h) => h.tick === Math.ceil(t)) : undefined;
 		const out: Target[] = [];
 		for (const z of this.zombies.values()) {
-			const pose = frame?.poses.get(z.id) ?? { x: z.body.origin.x, y: z.body.origin.y, z: z.body.origin.z, yaw: z.yaw };
+			const a = frame?.poses.get(z.id);
+			const b = next?.poses.get(z.id);
+			const current = { x: z.body.origin.x, y: z.body.origin.y, z: z.body.origin.z, yaw: z.yaw };
+			let pose = a ?? b ?? current;
+			if (a && b && frame) {
+				const f = t - frame.tick;
+				const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+				const dyaw = ((((b.yaw - a.yaw + 180) % 360) + 360) % 360) - 180;
+				pose = dx * dx + dy * dy + dz * dz > 512 ** 2
+					? b
+					: { x: a.x + dx * f, y: a.y + dy * f, z: a.z + dz * f, yaw: a.yaw + dyaw * f };
+			}
 			out.push({ kind: 'ai', z, pose });
 		}
 		for (const p of this.players.values()) {

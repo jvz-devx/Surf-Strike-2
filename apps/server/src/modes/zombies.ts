@@ -28,7 +28,7 @@ import {
 } from '@surf/shared';
 import type { Command } from '../commands.ts';
 import type { ModeClientMessage, ModeHost, ModePlayer, ServerMode } from './types.ts';
-import { EMPTY_RECORDS } from './types.ts';
+import { EMPTY_RECORDS, renderRewindMs } from './types.ts';
 
 /** Mode state is re-sent at least this often (ms), and at most this often on changes. */
 export const ZM_STATE_MS = 1000;
@@ -111,7 +111,9 @@ export class ZombiesMode implements ServerMode {
 		const now = this.host.now();
 		switch (msg.type) {
 			case 'fire': {
-				const timing = this.shotTiming(msg.tick, now, p.ping);
+				const serverNow = this.host.serverNow?.() ?? now;
+				const rewind = renderRewindMs(msg.renderServerTimeMs, serverNow, p, ZM_HISTORY_MS);
+				const timing = this.shotTiming(msg.tick, serverNow, p.ping, rewind);
 				const res = this.game.fire(p.id, { weapon: msg.weapon, origin: msg.origin, dir: msg.dir, ...timing }, now);
 				this.dispatch(res.events);
 				return;
@@ -126,14 +128,12 @@ export class ZombiesMode implements ServerMode {
 		}
 	}
 
-	private shotTiming(tick: number, now: number, rtt: number): { tick: number; playerRenderTime: number } {
+	private shotTiming(tick: number, now: number, rtt: number, rewind?: number): { tick: number; playerRenderTime: number } {
 		const oldest = now - Math.min(ZM_HISTORY_MS, rtt + MAX_RENDER_INTERPOLATION_MS + RENDER_TIME_SLACK_MS);
-		// Protocol v2 can supply a validated render server time here directly.
 		const requested = Number.isFinite(tick) ? this.zombieFrameValue('tick', tick) : undefined;
-		const playerRenderTime = Math.max(oldest, requested ?? now);
-		const oldestTick = this.zombieFrameValue('at', oldest) ?? this.game.tick;
-		const wantedTick = this.zombieFrameValue('at', playerRenderTime) ?? this.game.tick;
-		return { tick: Math.max(Math.ceil(oldestTick), Math.round(wantedTick)), playerRenderTime };
+		const playerRenderTime = rewind === undefined ? Math.max(oldest, requested ?? now) : now - rewind;
+		const wantedTick = rewind === 0 ? this.game.tick : this.zombieFrameValue('at', playerRenderTime) ?? this.game.tick;
+		return { tick: wantedTick, playerRenderTime };
 	}
 
 	/** Interpolate between actual BIN_ZOMBIES send times and their fractional sim ticks. */
@@ -197,11 +197,11 @@ export class ZombiesMode implements ServerMode {
 			this.dirty = false;
 			this.host.broadcast(this.stateMessage());
 		}
-		this.sendZombies(now);
+		this.sendZombies();
 	}
 
 	/** BIN_ZOMBIES snapshot (every mode tick, 32 Hz; droppable under backlog like player snapshots). */
-	sendZombies(now = this.host.now()): void {
+	sendZombies(now = this.host.serverNow?.() ?? this.host.now()): void {
 		const g = this.game;
 		if (g.zombies.size === 0 && g.phase !== 'playing' && g.phase !== 'ended') return;
 		const times = this.zombieFrameTimes;
@@ -214,7 +214,7 @@ export class ZombiesMode implements ServerMode {
 			const o = z.body.origin;
 			list.push({ id: z.id, x: o.x, y: o.y, z: o.z, yaw: z.yaw, flags: g.zombieFlags(z), hp: Math.max(0, z.hp) / ZOMBIE_HP });
 		}
-		this.host.broadcastBinary(encodeZombies(g.tick, list), true);
+		this.host.broadcastBinary(encodeZombies(g.tick, list, now), true);
 	}
 
 	stateMessage(): Extract<ServerMessage, { type: 'modeState' }> {

@@ -39,15 +39,19 @@ export function mapTeleport(map: MapDef, prev: NetState | null, state: NetState)
 	// The client applies the teleport in the same movement tick as entry. Its
 	// immediately preceding pose can be up to a movement step outside the box.
 	const maxvel = Math.min(mapCvars(map).sv_maxvelocity, MAX_VELOCITY_HARD);
+	const ticks = Math.max(1, Math.min(4, (state.tick - prev.tick) >>> 0));
 	const step = (v: number) => Math.max(-maxvel, Math.min(maxvel, v)) / TICK_RATE;
+	const reach = (v: number) => 8 + (ticks - 1) * Math.abs(step(v));
+	const dx = reach(prev.vx), dy = reach(prev.vy), dz = reach(prev.vz);
+	const landingRadius = 16 + (ticks - 1) * Math.hypot(step(state.vx), step(state.vy), step(state.vz));
 	const projected = { x: prev.x + step(prev.vx), y: prev.y + step(prev.vy), z: prev.z + step(prev.vz) };
 	const stance = (state.flags & FLAG_DUCKED) !== 0;
 	for (const zone of map.zones) {
 		if (zone.type !== 'teleport') continue;
 		// Allow acceleration, a crouch change, and wire quantization around the trigger.
 		const box = {
-			min: { x: zone.min.x - 8, y: zone.min.y - 8, z: zone.min.z - 8 },
-			max: { x: zone.max.x + 8, y: zone.max.y + 8, z: zone.max.z + 8 }
+			min: { x: zone.min.x - dx, y: zone.min.y - dy, z: zone.min.z - dz },
+			max: { x: zone.max.x + dx, y: zone.max.y + dy, z: zone.max.z + dz }
 		};
 		if (!hullInBox(prev, stance, box) && !hullInBox(projected, stance, box)) continue;
 		let destinations: readonly Spawn[];
@@ -55,10 +59,10 @@ export function mapTeleport(map: MapDef, prev: NetState | null, state: NetState)
 		else if (map.kind === 'hns') {
 			const { hiders, seekers } = hnsSpawns(map);
 			destinations = [...hiders, ...seekers];
-		} else if (map.kind === 'tag' || map.kind === 'infected') destinations = tagSpawns(map);
+		} else if (map.kind === 'tag' || map.kind === 'infected' || map.kind === 'zombies') destinations = tagSpawns(map);
 		else continue;
 		// Movement already at the landing cannot renew the discontinuity.
-		if (destinations.some(({ pos }) => nearPose(state, pos, 16) && !nearPose(prev, pos, 16))) return true;
+		if (destinations.some(({ pos }) => nearPose(state, pos, landingRadius) && !nearPose(prev, pos, 16))) return true;
 	}
 	return false;
 }

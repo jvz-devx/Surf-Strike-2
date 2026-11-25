@@ -220,12 +220,12 @@ export type ClientMessage =
 	 * `dir` a unit vector, `tick` the zombie sim tick the shooter was looking at
 	 * (from BIN_ZOMBIES, interpolated) for lag compensation.
 	 */
-	| { type: 'fire'; weapon: WeaponId; origin: Vec3; dir: Vec3; tick: number }
+	| { type: 'fire'; weapon: WeaponId; origin: Vec3; dir: Vec3; tick: number; renderServerTimeMs?: number }
 	| { type: 'reload' }
 	/** Zombies: pick the weapon for this life (only while the loadout window is open). */
 	| { type: 'loadout'; weapon: WeaponId }
 	/** Infected: throw a throwing knife from eye `origin` along unit `dir`. */
-	| { type: 'throwKnife'; origin: Vec3; dir: Vec3 }
+	| { type: 'throwKnife'; origin: Vec3; dir: Vec3; renderServerTimeMs?: number }
 	/** Infected: place a respawn beacon at the feet. */
 	| { type: 'placeBeacon' }
 	/** Infected: a survivor calls their earned M.O.A.B. (kill streak; detonates after a countdown). */
@@ -235,7 +235,7 @@ export type ClientMessage =
 	 * `origin` is the eye, `dir` a unit vector; the server resolves the hit
 	 * (lag-compensated against the hiders' recent positions).
 	 */
-	| { type: 'knife'; origin: Vec3; dir: Vec3 }
+	| { type: 'knife'; origin: Vec3; dir: Vec3; renderServerTimeMs?: number }
 	/** Shop (docs/economy.md#shop): answered with `shopResult` and, on success, a fresh `shop`. */
 	| { type: 'shopBuy'; item: string }
 	/** Buy and open a loot box: answered with `boxResult`. Only when `shop.box` was sent. */
@@ -436,11 +436,11 @@ export type ServerMessage =
 	| ({ type: 'modeState' } & ModeState)
 	| { type: 'tagged'; by: number; target: number }
 	/** Zombies event (spawn/teleport, hit marker, kill feed, tracer, hurt, down, checkpoint, ammo, round end). */
-	| { type: 'zm'; ev: ZmEvent }
+	| { type: 'zm'; ev: ZmEvent; spawnSeq?: number }
 	/** Infected event (spawn, alpha, infect, hit, kill, shot, hurt, ammo, throwing knife, UAV pulse, round end). */
-	| { type: 'inf'; ev: InfEvent }
+	| { type: 'inf'; ev: InfEvent; spawnSeq?: number }
 	/** Hide and seek event (spawn/teleport to that player; swing, found, round flow to everyone). */
-	| { type: 'hns'; ev: HnsEvent }
+	| { type: 'hns'; ev: HnsEvent; spawnSeq?: number }
 	| { type: 'timeLeft'; mapTimeLeft: number }
 	/** `richest`: the accounts with the most coins, richest first, online or not (absent on older servers). */
 	| { type: 'scoreboard'; rows: ScoreRow[]; richest?: RichEntry[] }
@@ -560,6 +560,8 @@ export const BIN_SNAPSHOT = 2;
 export const BIN_GHOST = 3;
 
 export interface NetState {
+	/** Last applied server spawn, echoed in every client state. Zero means none. */
+	spawnSeq?: number;
 	tick: number;
 	x: number;
 	y: number;
@@ -575,7 +577,7 @@ export interface NetState {
 	runTicks: number;
 }
 
-const STATE_BODY = 4 + 4 * 8 + 1 + 1 + 1 + 4; // 43
+const STATE_BODY = 4 + 4 * 8 + 1 + 1 + 1 + 4 + 2; // 45
 export const STATE_SIZE = 1 + STATE_BODY;
 
 /** Snapshot v2 position quantisation: int24 at 1/8 unit (±1,048,576 u covers all maps). */
@@ -617,11 +619,14 @@ function writeBody(v: DataView, o: number, s: NetState): number {
 	v.setUint8(o + 37, s.status & 0xff);
 	v.setUint8(o + 38, s.stage & 0xff);
 	v.setUint32(o + 39, s.runTicks >>> 0, true);
+	v.setUint16(o + 43, s.spawnSeq ?? 0, true);
 	return o + STATE_BODY;
 }
 
 function readBody(v: DataView, o: number): NetState {
+	const spawnSeq = v.getUint16(o + 43, true);
 	return {
+		...(spawnSeq === 0 ? {} : { spawnSeq }),
 		tick: v.getUint32(o, true),
 		x: v.getFloat32(o + 4, true),
 		y: v.getFloat32(o + 8, true),

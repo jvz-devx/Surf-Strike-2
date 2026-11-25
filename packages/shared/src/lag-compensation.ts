@@ -1,5 +1,5 @@
 /** Largest client interpolation delay accepted by render-time rewind. */
-export const MAX_RENDER_INTERPOLATION_MS = 180;
+export const MAX_RENDER_INTERPOLATION_MS = 200;
 /** Allow for clock estimation and the frame between aiming and sending the shot. */
 export const RENDER_TIME_SLACK_MS = 32;
 

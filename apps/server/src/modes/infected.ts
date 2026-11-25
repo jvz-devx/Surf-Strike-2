@@ -19,6 +19,7 @@ import {
 	InfectedGame,
 	INFECTED_PAY,
 	infEventRoute,
+	INF_HISTORY_MS,
 	infRewindMs,
 	Status,
 	WEAPONS,
@@ -27,7 +28,7 @@ import {
 import type { Command } from '../commands.ts';
 import { clampFireTick, parseInfInput } from './infected-input.ts';
 import type { ModeClientMessage, ModeHost, ModePlayer, ServerMode } from './types.ts';
-import { EMPTY_RECORDS } from './types.ts';
+import { EMPTY_RECORDS, renderRewindMs } from './types.ts';
 
 /** Mode state is re-sent at least this often (ms), and at most this often on minor changes. */
 export const INF_STATE_MS = 1000;
@@ -178,13 +179,15 @@ export class InfectedMode implements ServerMode {
 		switch (input.type) {
 			case 'fire': {
 				const { weapon, origin, dir } = input;
+				const claim = renderRewindMs(input.renderServerTimeMs, this.host.serverNow?.() ?? now, p, INF_HISTORY_MS);
 				// Live clients name no tick (infected has no binary sim-tick frame): the shot or swing is
 				// tested against the poses on the shooter's screen, ping + interpolation delay + allowance
-				// back (infRewindMs, clamped to the history). A named tick (tools, tests) cannot reach
+				// back (INF_HISTORY_MS,
+	infRewindMs, clamped to the history). A named tick (tools, tests) cannot reach
 				// further back than that either: it is clamped to the same window.
-				const rewindMs = infRewindMs(p.ping);
+				const rewindMs = claim ?? infRewindMs(p.ping);
 				const res =
-					input.tick === null
+					claim !== undefined || input.tick === null
 						? this.game.fire(p.id, { weapon, origin, dir, tick: this.game.tick, rewindMs }, now)
 						: this.game.fire(p.id, { weapon, origin, dir, tick: clampFireTick(input.tick, this.game.tick, rewindMs) }, now);
 				// Holding an angle and shooting is playing (docs/economy.md): a real shot of a gun, not a swing.
@@ -201,8 +204,9 @@ export class InfectedMode implements ServerMode {
 				this.dirty = true;
 				break;
 			case 'throwKnife': {
-				// No rewind: the knife is a projectile the server simulates from here on.
-				const res = this.game.throwKnife(p.id, input.origin, input.dir, now);
+				// Rewind the immediate spawn segment. Subsequent flight uses current poses.
+				const rewind = renderRewindMs(input.renderServerTimeMs, this.host.serverNow?.() ?? now, p, INF_HISTORY_MS);
+				const res = this.game.throwKnife(p.id, input.origin, input.dir, now, rewind);
 				this.dispatch(res.events);
 				break;
 			}

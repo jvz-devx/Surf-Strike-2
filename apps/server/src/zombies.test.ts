@@ -108,7 +108,7 @@ describe('zombies mode', () => {
 		const w = await b.hello('Bob');
 		const msg = await b.waitFor('zm', (m) => m.ev.e === 'spawn');
 		assert.equal(msg.ev.e, 'spawn');
-		b.sendState(netState(99, msg.ev.x + 1000, { y: msg.ev.y, z: msg.ev.z }));
+		b.sendState(netState(99, msg.ev.x, { y: msg.ev.y, z: msg.ev.z, spawnSeq: 0 }));
 		await b.barrier();
 		assert.equal([...server.lobby.clients].find((p) => p.id === w.selfId)?.state, null);
 		await moveTo(b, w.selfId, msg.ev);

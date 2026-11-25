@@ -75,6 +75,7 @@ export class TestClient {
 	readonly zombieFrames: ZombieFrame[] = [];
 	closed = false;
 	closeCode = 0;
+	private spawnSeq = 0;
 	private waiters: Array<() => void> = [];
 
 	constructor(port: number, headers?: Record<string, string>, protocols: string[] = []) {
@@ -93,7 +94,9 @@ export class TestClient {
 				const ghost = snap ? null : decodeGhostFrame(data as ArrayBuffer);
 				if (ghost) this.ghosts.push(ghost);
 			} else {
-				this.messages.push(JSON.parse(Buffer.from(data as ArrayBuffer).toString('utf8')));
+				const message = JSON.parse(Buffer.from(data as ArrayBuffer).toString('utf8')) as ServerMessage;
+				if ((message.type === 'hns' || message.type === 'inf' || message.type === 'zm') && message.spawnSeq !== undefined) this.spawnSeq = message.spawnSeq;
+				this.messages.push(message);
 			}
 			this.notify();
 		});
@@ -123,7 +126,7 @@ export class TestClient {
 	}
 
 	sendState(s: NetState): void {
-		this.ws.send(encodeState(s));
+		this.ws.send(encodeState({ ...s, spawnSeq: s.spawnSeq ?? this.spawnSeq }));
 	}
 
 	/** Wait until `pred` holds (checked on every incoming frame). */

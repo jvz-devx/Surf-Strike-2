@@ -7,10 +7,10 @@
  * buffer), slews smoothly so remote render time stays strictly monotonic, and
  * shrinks slowly once the link stays clean.
  */
-import { SNAPSHOT_HZ } from '@surf/shared';
+import { MAX_RENDER_INTERPOLATION_MS, SNAPSHOT_HZ } from '@surf/shared';
 
 export const ADAPTIVE_MIN_MS = 50;
-export const ADAPTIVE_MAX_MS = 200;
+export const ADAPTIVE_MAX_MS = MAX_RENDER_INTERPOLATION_MS;
 
 /** Max growth rate (ms of delay added per ms of wall time): <=0.35 keeps renderServerTime advancing >=0.65x. */
 const GROW_RATE = 0.35;

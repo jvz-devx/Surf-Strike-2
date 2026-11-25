@@ -4,6 +4,7 @@
  * (timer/zones/leaderboards for race, rounds/tagging for tag, scoreboard
  * rows) lives behind `ServerMode`. One instance per map; replaced on map change.
  */
+import { clampRenderTime } from '@surf/shared';
 import type { ClientMessage, GameModeId, MapDef, MapRecordInfo, NetState, ScoreRow, ServerMessage, SnapshotEntry } from '@surf/shared';
 import type { Stillness } from '../activity.ts';
 import type { Command } from '../commands.ts';
@@ -25,6 +26,8 @@ export interface ModePlayer {
 	readonly state: NetState | null;
 	/** Fresh RTT in milliseconds, capped for combat rewind. */
 	readonly ping: number;
+	/** Whether the transport RTT estimate has a sample in its active window. */
+	readonly hasRttSample?: boolean;
 }
 
 /** Services the lobby gives a mode. */
@@ -34,6 +37,8 @@ export interface ModeHost {
 	/** Points and coins (docs/economy.md#paying-from-a-mode). */
 	readonly economy: ModeEconomy;
 	now(): number;
+	/** Monotonic clock used for both snapshot streams. */
+	serverNow?(): number;
 	rng(): number;
 	/** Helloed players (spectators included). */
 	players(): Iterable<ModePlayer>;
@@ -89,6 +94,15 @@ export interface ServerMode {
 
 /** Client messages the lobby forwards to the mode as they are. */
 export type ModeClientMessage = Extract<ClientMessage, { type: 'fire' | 'reload' | 'loadout' | 'throwKnife' | 'placeBeacon' | 'callMoab' | 'knife' }>;
+
+/** An absent claim or an unmeasured RTT uses the mode's fallback. An invalid claim uses the current pose. */
+export function renderRewindMs(claim: unknown, now: number, p: ModePlayer, historyMs: number): number | undefined {
+	if (claim === undefined) return undefined;
+	if (typeof claim !== 'number' || !Number.isFinite(claim)) return 0;
+	if (p.hasRttSample === false) return undefined;
+	const at = clampRenderTime(claim, now, p.ping, historyMs);
+	return at === null ? 0 : now - at;
+}
 
 export const EMPTY_RECORDS: MapRecordInfo = Object.freeze({
 	pbTicks: null,
