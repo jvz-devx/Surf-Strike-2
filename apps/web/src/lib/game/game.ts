@@ -537,7 +537,6 @@ export class Game implements CommandContext {
 	private startMode(): void {
 		this.client?.dispose();
 		this.client = createClientMode(this.modeHost);
-		if (this.client.world) this.world = this.client.world;
 	}
 
 	private applyRecords(): void {
@@ -1103,6 +1102,9 @@ export class Game implements CommandContext {
 			teleport: (s) => {
 				this.placeAt(s);
 				this.afterTeleport();
+			},
+			setWorld: (world) => {
+				this.world = world;
 			},
 			movedInTick: () => {
 				this.teleported = true;

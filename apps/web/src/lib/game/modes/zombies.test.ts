@@ -60,14 +60,25 @@ describe('ZombiesMode', () => {
 		expect(host.teleport).toHaveBeenCalledTimes(1);
 		const s = vi.mocked(host.teleport).mock.calls[0]![0];
 		expect(Math.hypot(s.pos.x - MAP.spawn.pos.x, s.pos.y - MAP.spawn.pos.y)).toBeLessThan(200);
-		expect(mode.world).toBe(mode.client.world);
+		expect(host.world).toBe(mode.client.world);
 		expect(buildCollisionWorld(MAP).trace(IN_GATE, IN_GATE, ZERO, ZERO).startsolid).toBe(false);
-		expect(mode.world.trace(IN_GATE, IN_GATE, ZERO, ZERO).startsolid).toBe(true);
+		expect(host.world.trace(IN_GATE, IN_GATE, ZERO, ZERO).startsolid).toBe(true);
+	});
+
+	it('solo: after a restart the player moves in the world of the new round', () => {
+		const s = setup(false);
+		const solid = () => s.host.world.trace(IN_GATE, IN_GATE, ZERO, ZERO).startsolid;
+		s.mode.client.world.setOpen(0, true);
+		expect(solid()).toBe(false);
+		s.mode.chatRestart(s.now);
+		expect(solid()).toBe(true);
+		s.mode.client.world.setOpen(0, true);
+		expect(solid()).toBe(false);
 	});
 
 	it('online: the gates of the mode state are the gates of the world', () => {
 		const s = setup();
-		const solid = () => s.mode.world.trace(IN_GATE, IN_GATE, ZERO, ZERO).startsolid;
+		const solid = () => s.host.world.trace(IN_GATE, IN_GATE, ZERO, ZERO).startsolid;
 		expect(solid()).toBe(true);
 		s.state({ gates: [{ state: 'open', secsLeft: 0 }] });
 		expect(solid()).toBe(false);

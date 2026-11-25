@@ -55,6 +55,9 @@ export function fakeHost(map: MapDef, view: 'zombies' | 'infected') {
 		name: (id) => `P${id}`
 	};
 	const host = mocks<Mutable<ClientModeHost>>(base);
+	host.setWorld = (world) => {
+		host.world = world;
+	};
 	return { host, hudWrites, cvars, renderer };
 }
 

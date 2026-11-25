@@ -4,7 +4,6 @@ import {
 	randomSpawn,
 	Status,
 	SURF_CVARS,
-	type CollisionWorld,
 	type Cvars,
 	type ModeState,
 	type NetState,
@@ -21,8 +20,6 @@ import type { ClientMode, ClientModeHost, ModeServerMessage, RemotePlayer } from
 export class ZombiesMode implements ClientMode {
 	readonly id = 'zombies';
 	readonly client: ZombiesClient;
-	/** Closed gates are solid for the local player too. Taken once, after construction: solo replaces the client's there. */
-	readonly world: CollisionWorld;
 	/** Physics cvars with the held weapon's max speed. */
 	private readonly sv: Cvars = { ...SURF_CVARS };
 
@@ -46,7 +43,8 @@ export class ZombiesMode implements ClientMode {
 		};
 		const now = performance.now();
 		this.client = new ZombiesClient(zm, host.map, host.sv, now);
-		this.world = this.client.world;
+		// Closed gates are solid for the local player too.
+		host.setWorld(this.client.world);
 		host.hud.zombies = this.client.frame(now, false, 0);
 	}
 
@@ -68,6 +66,8 @@ export class ZombiesMode implements ClientMode {
 
 	chatRestart(now: number): void {
 		this.client.chatRestart(now);
+		// Solo: the new round has gates of its own.
+		this.host.setWorld(this.client.world);
 	}
 
 	respawn(): void {

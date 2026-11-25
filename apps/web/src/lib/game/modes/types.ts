@@ -52,7 +52,7 @@ export interface ClientModeHost {
 	readonly map: MapDef;
 	/** Physics cvars of this map (solo: the player can change them). */
 	readonly sv: Cvars;
-	/** World the local player moves in: the map's, or the mode's own (`ClientMode.world`). */
+	/** World the local player moves in: the map's, or the one the mode set. */
 	readonly world: CollisionWorld;
 	readonly player: PlayerState;
 	/** Simulation tick being run, and the render fraction between the last two ticks (0..1). */
@@ -87,6 +87,8 @@ export interface ClientModeHost {
 	setAngles(pitch: number, yaw: number): void;
 	/** Put the player at a spawn, standing still, the view turned with it, as a teleport (nothing interpolates across it). */
 	teleport(s: Spawn): void;
+	/** The local player moves in this world from now on, instead of the map's (zombies: closed gates are solid). */
+	setWorld(world: CollisionWorld): void;
 	/** The player was moved by the mode inside a tick: flag it as a teleport, snap the eye at the end of the tick. */
 	movedInTick(): void;
 	/** The player was moved by the mode outside a tick (restart): flag it as a teleport and snap the eye now. */
@@ -130,8 +132,6 @@ export type ModeServerMessage = Extract<ServerMessage, { type: 'modeState' | 'zm
 
 export interface ClientMode {
 	readonly id: GameModeId;
-	/** World the local player moves in, when it is not the map's own (zombies: closed gates are solid). */
-	readonly world?: CollisionWorld;
 	readonly view?: Readonly<ModeView>;
 	/** Race: the local run. Absent: no timer. */
 	readonly run?: Readonly<RunState>;
