@@ -32,6 +32,7 @@ import {
 	SANDBOX,
 	Status,
 	tagSpawns,
+	WEAPONS,
 	type GameModeId,
 	type MapDef,
 	type ServerMessage,
@@ -111,8 +112,9 @@ Control API (http://127.0.0.1:<ctrl-port>)
   POST /bot/move?index=0&x=&y=&z=&yaw=&pitch=   teleport a bot (omitted axes keep)
   POST /bot/action?index=0&type=fire|throwKnife|placeBeacon|spectate|reload|loadout
         fire/throwKnife: aim with tx,ty,tz (point) or yaw/pitch; weapon=<id>
+        fire after a loadout waits for the draw (infected); the reply names delayMs
         spectate: target=<playerId> to watch, none to leave (default: toggle)
-        placeBeacon: infected bot plants a respawn beacon at its feet
+        placeBeacon: infected bot plants a respawn beacon on the ground below it
         loadout: weapon=<id>
   POST /shutdown                    stop everything (bots, servers, Vite)
 
@@ -377,6 +379,18 @@ export function dirTowards(from: Vec3, to: Vec3): Vec3 | null {
 	return len < 1e-6 ? null : { x: dx / len, y: dy / len, z: dz / len };
 }
 
+/**
+ * How long a bot must still hold its fire after it switched to `weapon`
+ * `sinceMs` ago (ms): the rest of the draw time (`WeaponDef.deployMs`). Only
+ * infected has a draw time; its server rejects a shot fired before the weapon
+ * is drawn ("too fast").
+ */
+export function drawWaitMs(mode: GameModeId, weapon: WeaponId, sinceMs: number): number {
+	if (mode !== 'infected') return 0;
+	const draw = WEAPONS[weapon]?.deployMs ?? 0;
+	return Math.max(0, Math.ceil(draw - Math.max(0, sinceMs)));
+}
+
 /** Status a bot reports in its state packets for a mode (the server owns the real one). */
 export function botStatus(mode: GameModeId): Status {
 	if (mode === 'tag') return Status.Runner;
@@ -405,6 +419,10 @@ export class Bot {
 	private teleported = true;
 	private zombieTick = 0;
 	private closed = false;
+	/** When the bot last switched weapons itself (the server enforces a draw time from then). */
+	private swapAt = -Infinity;
+	/** Shots held back until the weapon is drawn. */
+	private held = new Set<ReturnType<typeof setTimeout>>();
 
 	constructor(
 		readonly index: number,
@@ -493,6 +511,8 @@ export class Bot {
 			case 'inf':
 				if (msg.ev.e === 'spawn' && msg.ev.id === this.selfId) {
 					this.weapon = msg.ev.weapon;
+					// Handed out by the server: already drawn.
+					this.swapAt = -Infinity;
 					this.moveTo(msg.ev);
 				}
 				break;
@@ -573,9 +593,30 @@ export class Bot {
 		return { origin, dir };
 	}
 
-	fire(q: AimQuery, weapon?: WeaponId): void {
+	/**
+	 * Fire, or hold the shot until the weapon the bot just switched to is
+	 * drawn (the server would reject it). Returns the delay in ms; the aim is
+	 * taken when the shot leaves.
+	 */
+	fire(q: AimQuery, weapon?: WeaponId): number {
+		const wait = drawWaitMs(this.mode, this.weapon, performance.now() - this.swapAt);
+		if (wait <= 0) {
+			this.shoot(q, weapon);
+			return 0;
+		}
+		const timer = setTimeout(() => {
+			this.held.delete(timer);
+			// Checked again: the bot may have switched once more meanwhile.
+			if (!this.closed) this.fire(q, weapon);
+		}, wait);
+		this.held.add(timer);
+		return wait;
+	}
+
+	private shoot(q: AimQuery, weapon?: WeaponId): void {
 		const { origin, dir } = this.aim(q);
-		// Infected treats 2^31-1 as "rewind by half the ping"; zombies wants the last sim tick seen.
+		// Infected reads 2^31-1 as a live shot: the server rewinds the targets by the ping, the client
+		// interpolation delay and half a snapshot interval (infRewindMs). Zombies wants the last sim tick seen.
 		const tick = this.mode === 'zombies' ? this.zombieTick : 0x7fffffff;
 		this.send({ type: 'fire', weapon: weapon ?? this.weapon, origin, dir, tick });
 	}
@@ -585,7 +626,7 @@ export class Bot {
 		this.send({ type: 'throwKnife', origin, dir });
 	}
 
-	/** Infected: plant a respawn beacon at the feet (the server checks ground and cooldown). */
+	/** Infected: plant a respawn beacon on the ground below (the server checks ground and cooldown). */
 	placeBeacon(): void {
 		this.send({ type: 'placeBeacon' });
 	}
@@ -596,6 +637,7 @@ export class Bot {
 
 	loadout(weapon: WeaponId): void {
 		this.weapon = weapon;
+		this.swapAt = performance.now();
 		this.send({ type: 'loadout', weapon });
 	}
 
@@ -613,6 +655,8 @@ export class Bot {
 	close(): void {
 		this.closed = true;
 		this.stopTimer();
+		for (const t of this.held) clearTimeout(t);
+		this.held.clear();
 		try {
 			this.ws.close(1000, 'dev launcher stopping');
 		} catch {
@@ -739,8 +783,7 @@ async function route(deps: ControlDeps, method: string, path: string, q: URLSear
 			const aim: AimQuery = { tx: num(q, 'tx'), ty: num(q, 'ty'), tz: num(q, 'tz'), yaw: num(q, 'yaw'), pitch: num(q, 'pitch') };
 			switch (type) {
 				case 'fire':
-					bot.fire(aim, weaponArg(q));
-					return { ok: true, bot: bot.name, action: type };
+					return { ok: true, bot: bot.name, action: type, delayMs: bot.fire(aim, weaponArg(q)) };
 				case 'throwKnife':
 					bot.throwKnife(aim);
 					return { ok: true, bot: bot.name, action: type };

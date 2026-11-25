@@ -1,6 +1,6 @@
 # Gameplay
 
-This page covers the race modes (surf, bhop). Tag, Zombie Run and hide and seek have their own rules: see [modes.md](modes.md#tag), [modes.md](modes.md#zombies) and [modes.md](modes.md#hide-and-seek). Chat, spectating, map rotation, solo mode and the lobby apply to every mode.
+This page covers the race modes (surf, bhop). Tag, infected, Zombie Run and hide and seek have their own rules: see [modes.md](modes.md#tag), [modes.md](modes.md#infected), [modes.md](modes.md#zombies) and [modes.md](modes.md#hide-and-seek). Chat, spectating, map rotation, solo mode and the lobby apply to every mode.
 
 ## Runs and timer
 

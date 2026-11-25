@@ -91,6 +91,38 @@ The cash bag itself (`render/cashbag.ts`) is a canvas sack with banknotes and co
 
 Seekers hold a knife viewmodel (the Zombie Run knife, swing on Mouse1); hiders have none. Remote seekers are drawn red with a `SEEKER · name` tag. Name tags show only within 600 units and in line of sight, and never hiders' tags to a seeker. `!r` is refused during a round.
 
+## Infected HUD
+
+Shown on infected maps (`InfectedHud.svelte`, [modes.md](modes.md#infected)). Pure helpers are in `ui/infected-hud.ts`; what is derived from server events (score popups, hit direction, summary rows) is in `game/infected-hud-events.ts`.
+
+- **Crosshair.** The gap widens to the edge of the hip cone (`InfectedView.spreadDeg`, degrees to pixels from `fov` and the window height), and the crosshair fades out as the sights come up. Every other mode draws the cvar gap only.
+- **Ammo prompt** (left of the crosshair, just above its line), one at a time: `R Reload` (magazine at a fifth or less, reserve left), `Low ammo` (magazine plus reserve at 35% of a magazine or less), `No ammo` with the slots that still work (`1 Primary`, `2 Pistol`, `3 Knife`, one per line). Never while reloading, spectating, down, outside a round or on the infected team (Patient Zero included).
+- **Score popups** (right of the crosshair): `+100 Kill`, `+100 Headshot`, `+150 Infection`, `+200 Thrown knife`, `+250 Bank shot`, `+25 Survived`, `+50 Beacon`, `+250 Specialist`, `+500 M.O.A.B.`, `+250 Round won`. At most three, 2.4 s each, stacked upwards from just above the crosshair line, the newest lowest.
+- **Hit direction.** A red arc on a ring around the crosshair (radius 188 px × HUD scale) points to where a hit came from and turns with the view: 1.2 s, the killing blow 2.2 s, at most 4. The direction is `hurt.dx/dy`, else the knockback vector, else the `shot` event of the same flush. A thrown-knife or bank-shot infection shows a lethal arc from the `dx`, `dy` of the `infect` event. An arc that would come within 8 px of the round header stack is not drawn (only at small window heights with three or four header rows, for hits from the front).
+- **Hit marker.** White ticks for a body hit, longer gold ticks for a headshot, a wide red cross for a kill, with a gold pip when the kill was a headshot.
+- **Round summary.** With `end.stats`: a panel with the winner, round time, survivors left, the next loadout (`end.nextLoadout`) and one row per player (score, kills, infections, deaths, accuracy, best streak). The viewed player is highlighted, Patient Zero is tagged, and the team bar is cyan for survivors and red for infected. One table up to 8 players, two up to 16; above that the best 16 with the viewed player always among them, and "+N more players". The kill feed and the hit arcs are hidden while it shows. Without stats the one-line summary stays.
+- **Scope.** The rifles' overlay fades in over the last part of the aim while the lens closes in; the vertical hair starts below the header stack.
+- **Spectating.** Popups and the highlighted summary row are the target's; no popups in free-fly; no ammo prompt, hit arcs or hit marker.
+- **Reduced motion** (`prefers-reduced-motion: reduce`): no animation runs in this HUD and every event cue eases in and out (hurt vignette, hit marker, hit arcs, score popups, flash, UAV line, perk toast, +20s and +AMMO). The M.O.A.B. detonation is a dim amber wash (peak opacity 0.3) that eases in and fades once. The hurt vignette is softer: it takes 150 ms to reach 0.4 and continues from its level on repeated hits. Recoil is not affected ([modes.md](modes.md#infected)).
+
+Dev preview: `/?mockhud&mode=infected&scene=<scene>` with the scenes `survivor`, `reload`, `low`, `empty`, `emptypistol`, `scope`, `scopedry`, `alpha`, `infected`, `down`, `last`, `stack`, `moab`, `ended`, `ended2`, `ended16`, `ended32`, `spec`, `specended`, `practice` and `practicescope` (list: `INF_MOCK_SCENES` in `ui/infected-mock.ts`). `&vote=1` keeps the map vote open, `&keys=0` hides the keys display, `&scale=1` forces `--hud-scale`. The mock re-issues the scene about once a second and shows popups and timed labels mid-life.
+
+## Infected practice range
+
+While the practice range is open ([modes.md](modes.md#practice-range): waiting for players, or offline), the waiting banner reads "Practice range · a round needs 2+ players" and a line under it names the keys of the held weapon: LMB Fire (Swing for melee), RMB Aim (Scope for the two rifles; nothing for melee), R Reload (guns), 1 2 3 Weapons, 4 Next primary. No score, kill feed or round summary. Dev preview: `/?mockhud&mode=infected&scene=practice` and `scene=practicescope`.
+
+## Remote players
+
+Remote players are animated characters with cosmetics and a name tag ([characters.md](characters.md)). In Infected and Zombie Run they hold their weapon ([modes.md](modes.md#infected)).
+
+## Weapon model viewer
+
+Dev only: `/?mockvm` draws the first-person weapon and claw models without the game or the HUD (`render/viewmodel-viewer.ts`).
+
+- First person: `&weapon=<id>`, `&view=fp|side|right|front|top|iso|rear|bottom|left` (`fp` uses the game's viewmodel scene, camera and draw order; the others are orthographic), `&pose=rest|kick|draw|reload|bolt|fire|slash|throw|land|aim|parts` with `&t=0..1` for the phase of the pose (left out: its extreme). `reload` is an empty gun's, `&rounds=1` one with a round left; `bolt` is the sniper's after a shot; `fire` runs through the fire interval after a shot (at most 300 ms, `&aim=1` aimed, `&rounds=0` the last one). For `aim`, `t` is the linear aim progress, eased like the game, with the world zoomed over the last 180 ms of the aim as in the game; without `t` it is fully aimed, and the scoped rifles stop where the scope overlay starts. `&knife=0` hides the claws' off-hand knife, `&bg=sky|dark|light`, `&anim=1` loops the pose, `&gen=0` shows the code-built models. Contact sheets: `&sheet=weapons|poses|views|aim|parts`, and `&sheet=reload|bolt|fire` with twelve phases of one weapon. `&pose=parts&part=<name>&t=0..1` moves a part of the gun along its travel (`render/gun-rig.ts`; several with commas, none named: all), and `&hand=<pose>` shows the gloved hands in a named pose (`render/hand-poses.ts`: `grip`, `grip_off`, `fore`, `mag`, `bolt`, `cover`, `knife`, `open`, `fist`), with `&from=<pose>&blend=0..1` in between two and `&close=1` framing the hand.
+- Third person (`&tp=1`): another player's character holding the weapon, as in the game. `&look=infected|alpha` (claws only; everything else is held by a survivor), `&view=front|side|iso|rear|left`, `&dist=near|close|300|500|800` (300 and up: that many units away, as big as on a 1080 px high screen), `&duck=1`, `&pitch=<deg>`, `&fire=1`, `&hits=1` (the server's hit capsules over the character), `&pose=reload&t=0..1` (reloading; without `t` the new magazine is on its way), `&pose=bolt&t=0..1` (the sniper's bolt after a shot). Sheets: `&sheet=weapons|looks|views|pair|lineup|reload` (`pair`: each held model next to its first-person model; `lineup`: every weapon in one game view at 300 units; `reload`: six phases of one weapon's reload).
+- The first frame waits until the first-person model files have loaded or failed, and each first-person label says which model it shows. Fit data is in `render/weapon-assets.ts`, the build in `tools/models/`.
+
 ## Account panel
 
 Replaces the first-visit name prompt ([gameplay.md](gameplay.md#accounts-and-identity)). A small centred panel in the same style (`AuthPanel.svelte`):
@@ -110,6 +142,8 @@ Opened with `` ` `` or `~`. A CS-style panel in the top half of the screen: scro
 | --- | --- | --- |
 | `sensitivity` | 2.0 | Mouse sensitivity (Source-compatible) |
 | `m_yaw`, `m_pitch` | 0.022 | Degrees per mouse count |
+| `zoom_sensitivity_ratio` | 1 | Infected: mouse sensitivity while aimed or scoped = sensitivity × ratio × tan(aimed FOV / 2) / tan(`fov` / 2), FOVs horizontal at 4:3. At 1 a mouse move shifts the picture as far on screen as unaimed |
+| `cl_aimtoggle` | 0 | Infected: `Mouse2` toggles aiming down sights instead of holding it |
 | `fov` | 90 | Horizontal FOV at 4:3, scaled for widescreen as in CS (106.26° at 16:9) |
 | `volume` | 0.5 | Master volume 0–1 |
 | `cl_fullscreen` | 1 | Play in fullscreen, where `Ctrl+W` cannot close the tab (Chromium only, [Platform](#platform)) |
@@ -140,7 +174,7 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
 
 - **Change map**: tabs **All** plus one per gamemode with maps, in `GAME_MODES` registry order and labels (Surf, Bhop, Tag, …), so new modes appear without UI changes. Opens on the current map's mode. Within a mode, maps sort by difficulty (easy first), then title, then size. Each row shows title, id, an easy/hard badge (Medium/Large for maps that come in sizes, `mapTag` in `menu.ts`), and marks the current map. A filter box matches title, id or size. Picking a map switches at once and resumes in solo or when you are alone on the server (`canChangeMap`). With others online every map stays clickable (button tooltip and tag "Request map vote"): picking one starts an RTV request nominating it and resumes, so the modal is visible. The notice above the list says so, or, when requests are not possible, why and for how long: "Map vote declined — try again in 45 s", "Map vote requests open in 12 s" (first 20 s of a map), "A map vote is in progress", "A map vote request is open", or "Spectators cannot request a map vote" (rows read-only then). The current map and admin-disabled maps ("Disabled by admin") cannot be nominated. State logic: `mapMenuState` / `mapRowPickable` in `menu.ts`.
 - **Settings**: tabs
-  - Mouse: sensitivity (slider + number), `m_yaw`, `m_pitch`
+  - Mouse: sensitivity (slider + number), Scoped sensitivity (`zoom_sensitivity_ratio`), Toggle aim (`cl_aimtoggle`), `m_yaw`, `m_pitch`
   - Video: FOV, **Fullscreen (blocks Ctrl+W)** (`cl_fullscreen`; in browsers without the Keyboard Lock API a note instead), show FPS, show position
   - HUD: crosshair colour, size, gap, thickness, centre dot with a live 1:1 preview; show keys, show score panel (`cl_scorepanel`), show loot box news (`cl_boxnews`), show ghost (`cl_ghost`), hide players (`cl_hideplayers`)
   - Audio: master volume
@@ -176,7 +210,7 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
 
 All values are the same cvars as the console and are saved the same way.
 
-Dev preview: `/?mockhud&open=settings` (main menu), `&open=maps` (map submenu), `&open=settings&view=settings&tab=hud` (a settings tab), `&view=account`, `&view=shop` (`&balance=<coins>`, `&boxall` a loot box with every rarity, `&coins=0` a guest, `&noshop`), `&view=inventory` (130 items, most of them made up; `&items=<n>`, 0 = empty), `&view=coins`, `&view=admin` (logged in as an admin; `&tab=maps|players|bans|abuse`), and `&solo=0` for the read-only map list.
+Dev preview: `/?mockhud&open=settings` (main menu), `&open=maps` (map submenu), `&open=settings&view=settings&tab=hud` (a settings tab), `&view=account`, `&view=shop` (`&balance=<coins>`, `&boxall` a loot box with every rarity, `&coins=0` a guest, `&noshop`), `&view=inventory` (130 items, most of them made up; `&items=<n>`, 0 = empty), `&view=coins`, `&view=admin` (logged in as an admin; `&tab=maps|players|bans|abuse`), and `&solo=0` for the read-only map list. Infected HUD scenes: see [Infected HUD](#infected-hud); weapon models: see [Weapon model viewer](#weapon-model-viewer).
 
 ## Ghost
 
@@ -191,7 +225,9 @@ The race ghost ([gameplay.md](gameplay.md#ghosts)) is the player character ([cha
 | `Ctrl` | Crouch |
 | `Y` | Chat |
 | `Tab` | Scoreboard |
-| `1`–`8` | Map vote (while open); `1` / `2` = yes / no on an RTV request; else their binds (Zombie Run weapons `1`–`4`; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B.) |
+| `1`–`8` | Map vote (while open); `1` / `2` = yes / no on an RTV request; else their binds (Zombie Run weapons `1`–`4`; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B., or next primary on the practice range) |
+| `Mouse1` | Attack: fire, knife or claw swing |
+| `Mouse2` | Zombie Run: sniper scope. Infected: aim down sights (held; toggled with `cl_aimtoggle 1`), or throw the knife as infected |
 | `M` | Toggle spectate |
 | `R` | Restart run (`!r`); Zombie Run / Infected reload |
 | `E` | Infected: plant a respawn beacon (`beacon`) |
@@ -203,7 +239,7 @@ Binds added after a player first saved their table (`E` → `beacon`, `N` → `m
 
 ## Audio
 
-All sounds are real recordings released under CC0, sourced from Freesound and listed with their trims in [CREDITS.md](../CREDITS.md). Nothing is synthesised: code only selects, places, levels, filters and convolves the recordings. Files live in `apps/web/static/sfx/` (AAC `.m4a`, 48 kHz, mono events, about 0.85 MB in total) and are fetched after the first user gesture. A file that fails to load only silences that sound.
+All sounds are real recordings released under CC0, sourced from Freesound and listed with their trims in [CREDITS.md](../CREDITS.md). Nothing is synthesised: code only selects, places, levels, filters and convolves the recordings. Files live in `apps/web/static/sfx/` (AAC `.m4a`, 48 kHz, mono events, about 1.65 MB in total) and are fetched after the first user gesture; the combat pools (`SFX_DEFERRED`, about 0.8 MB) are fetched after the core set. A file that fails to load only silences that sound.
 
 | Sound | Trigger | Recording |
 | --- | --- | --- |
@@ -220,14 +256,25 @@ All sounds are real recordings released under CC0, sourced from Freesound and li
 | Click | New chat message (the only click voice); casino: bet, coin lands, reel stops | Computer mouse button |
 | Knife swing | Hide and seek: your knife swing; another seeker's swing within 1024 units (−6 dB per doubling of distance beyond 128) | Bamboo stick whooshes, pool of 4 |
 | Knife hit | Hide and seek: you found a hider, or you were found | Knife stabbing a foam block, pool of 4 |
+| Gunshots | Infected and zombies: your shot; another player's within 6000 units | One pool per weapon: 9 mm pistol (4), small-calibre shots for the SMG (5), rifle at an indoor range for the LMG (4), rifle shots with echo for the sniper rifle (4), large-gun shots for the .50 cal rifle (4), shotgun blasts (4) |
+| Handling | Infected: another player's reload (within 1200 units); your own move by move (gun taken up, magazine out, magazine in, bolt, slide or cover closed), the sniper's bolt, dry fire, draw, scope; zombies: reload | Magazine out and in (3, and cut apart 3 and 3), rifle bolt closing (4), revolver dry fire (3), rifle handling (4 and 3) |
+| Casings | Infected and zombies: a case or a shotgun shell lands, within 1200 units; 10 LU under the footsteps | Fired cases on a tiled floor (5), used shotgun shells on a hard floor (4) |
+| Knife | Infected: knife and claw swings (the hide and seek swing pool), throw, bounce, stick, pickup; within 1200 units | Stick whooshes (4), knife dropped on a floor (4), knife into wood (4), blade rings (4) |
+| Impact | A bullet hits the world, within 1200 units | Sticks hitting dirt (5) |
+| Hit confirm | Your shot hit: body, head, kill (only the shooter hears it) | Boxing-mitt punches (5), hammer on a crowbar (4), desk bell (3) |
+| Hurt, death, infect | You are hit; a body falls; a survivor turns (death and infect within 2400 units) | Punches (4), falls on a wooden floor (3), voiced growls (3) |
+| Beacon | Infected: plant, smash, respawn; within 2400 units | Hammer on a stake (3), plastic smashed (3), electric sparks (3) |
+| M.O.A.B. | Call; detonation; heard by everyone at one level | Air raid siren winding up; dynamite blast with mountain echo |
 
 Rules:
 
 - **One space.** Every event and the slide bed also feed one shared ConvolverNode with a measured impulse response (Liverpool Philharmonic Hall), with the send 14 dB below the dry signal. The wind is already an outdoor recording and stays dry.
 - **Variation.** Pooled takes play in order (1, 2, …, n, 1, …) with a random ±1.5 dB level change per play. No playback-rate or pitch variation; only the Crash drum rolls play faster as the multiplier climbs.
 - **Levels.** Takes in a pool are matched in loudness offline. The wind bed at full speed is the reference (−20 LUFS before the master volume). Events are placed relative to it in `apps/web/src/lib/audio/mix.ts`. Every file has a true peak of −1.5 dBTP or lower. The master volume (`volume` cvar) feeds a safety limiter.
+- **Combat position.** Combat sounds (infected and zombies, `apps/web/src/lib/audio/combat.ts`) are heard from the camera. Your own play at their mix level, centred. Another player's fall off by 6 dB per doubling of distance beyond the near distance (128, 256 or 384 units), fade out over the last quarter of their range, and are panned by the angle between your view and the source (at most 0.8). While spectating, the listener is the spectator camera, and the spectated player's own sounds play centred at full level (`game/infected-listener.ts`).
+- **Combat voices.** Combat sounds share 24 voices (`COMBAT_VOICES`). Each sound has 1 to 4 voices for your own plays and as many again for other players'. A new sound takes the oldest voice of the same sound when all of its voices sound, else a free voice, else the oldest voice of the same or a lower priority, and the old voice fades out over 3 ms. Combat levels leave the limiter untouched at the default volume.
 - **Loops.** Loop points are prepared offline with an equal-power crossfade, so the loops are seamless.
-- **Pipeline.** `tools/audio/process.py` rebuilds the files from the downloaded originals using `tools/audio/manifest.json`. `tools/audio/demo.py` renders a demo mix mastered to −14 LUFS for listening checks. Both scripts use Python 3 and ffmpeg.
+- **Pipeline.** `tools/audio/process.py` rebuilds the files from the downloaded originals using `tools/audio/manifest.json`. `tools/audio/demo.py` renders a demo mix mastered to −14 LUFS for listening checks. `process.py --only <groups>` adds or redoes pools and leaves every other shipped file byte-identical. Both scripts use Python 3 and ffmpeg.
 
 ## Platform
 

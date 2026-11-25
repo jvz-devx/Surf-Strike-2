@@ -52,10 +52,17 @@ const SUITES = {
 		web: () => ['src/lib/game/zombies-view.test.ts']
 	},
 	infected: {
-		about: 'shared infected rules + infected_outpost + maps, server infected.test.ts, web infected game/render + format',
-		shared: () => ['src/modes/infected/infected.test.ts', 'src/maps/maps.test.ts', ...byPrefix(SHARED, 'src/maps', ['infected_'])],
+		about: 'shared infected rules + weapons/hitbox + infected maps + maps, server infected*.test.ts, web infected* game/render/ui/audio + format',
+		// By prefix: a new `infected*.test.ts` (or any test in shared `src/modes/infected`) is picked up without editing this list.
+		shared: () => [...byPrefix(SHARED, 'src/modes/infected', ['']), 'src/maps/maps.test.ts', ...byPrefix(SHARED, 'src/maps', ['infected_'])],
 		server: () => byPrefix(SERVER, 'src', ['infected']),
-		web: () => ['src/lib/game/infected.test.ts', 'src/lib/render/infected.test.ts', 'src/lib/ui/format.test.ts']
+		web: () => [
+			...byPrefix(WEB, 'src/lib/game', ['infected']),
+			...byPrefix(WEB, 'src/lib/render', ['infected', 'fp-', 'casings', 'muzzle-flash', 'hand-contact', 'gun-rig', 'weapon-assets']),
+			...byPrefix(WEB, 'src/lib/render/character', ['held', 'reload']),
+			...byPrefix(WEB, 'src/lib/ui', ['infected', 'format']),
+			...byPrefix(WEB, 'src/lib/audio', ['infected', 'mix'])
+		]
 	}
 };
 
