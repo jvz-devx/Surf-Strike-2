@@ -47,7 +47,6 @@ The container listens on `HOST:PORT` (default `0.0.0.0:8080`):
 | `/` and static assets | SvelteKit client (`@sveltejs/adapter-node` handler) |
 | `/ws` | Game WebSocket upgrade endpoint (plain HTTP returns `426 Upgrade Required`) |
 | `/health` | Readiness probe (`{ ok, serverId, version, tickRate, map, mode, players }`). Returns HTTP 503 during shutdown. |
-| `/metrics` | Prometheus text metrics (`text/plain; version=0.0.4`) |
 
 ## Environment variables
 
@@ -56,6 +55,7 @@ The container listens on `HOST:PORT` (default `0.0.0.0:8080`):
 | `NODE_ENV` | `production` | Enables public connection limits and disables `MAP_DURATION_OVERRIDE` |
 | `HOST` | `0.0.0.0` | Network interface to bind |
 | `PORT` | `8080` | HTTP and WebSocket port (plain server default outside Docker is `27015`) |
+| `METRICS_PORT` | unset | Optional Prometheus listener on `127.0.0.1`. Leave unset to disable it. |
 | `DB_PATH` | `/data/surf.db` | SQLite database path |
 | `ORIGIN` | unset | Public origin used by the SvelteKit handler and the WebSocket `same-origin` check |
 | `WEB_HANDLER` | `/app/web/handler.js` | Path to the `@sveltejs/adapter-node` `handler.js`; unset to run API/WS only |
@@ -100,7 +100,7 @@ On `SIGTERM` or `SIGINT`, `/health` and new upgrade requests immediately return 
 
 ## Metrics
 
-`/metrics` exposes Prometheus gauges and counters:
+Set `METRICS_PORT` to scrape `http://127.0.0.1:<port>/metrics` from the same host or pod. Leave it unset if you have no local scraper. The public web listener returns 404 for `/metrics`, and the container service forwards only the game port. Metrics include
 
 - Lobby occupancy: `surf_players`, `surf_pending_connections`, `surf_max_players`
 - Event-loop delay (`perf_hooks.monitorEventLoopDelay`): `surf_event_loop_delay_p50_ms`, `surf_event_loop_delay_p99_ms`, `surf_event_loop_delay_max_ms`

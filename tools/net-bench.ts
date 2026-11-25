@@ -609,7 +609,7 @@ async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz = S
 				const elapsedSec = Math.max(0, (tickEnd - startMs) / 1000);
 				const p = evalTrajectory(def.trajectory, elapsedSec, prevElapsed);
 				prevElapsed = elapsedSec;
-				if (p.teleported) targetTpSeq = (targetTpSeq + 1) & 3;
+				if (p.teleported) targetTpSeq = (targetTpSeq + 1) & 0xff;
 				const flags = withTeleportSeq(FLAG_ON_GROUND | (p.teleported ? FLAG_TELEPORTED : 0), targetTpSeq);
 				if (target.ws.readyState === WebSocket.OPEN) {
 					target.ws.send(

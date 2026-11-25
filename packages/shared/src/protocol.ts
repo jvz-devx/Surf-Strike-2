@@ -16,6 +16,7 @@ import type { Vec3 } from './types.ts';
 import { TICK_RATE } from './units.ts';
 
 export const PROTOCOL_VERSION = 2;
+export const CLOSE_PROTOCOL_MISMATCH = 4006;
 /** WebSocket subprotocol that sends a database identity before hello. */
 export const SERVER_ID_PROTOCOL = 'surf-server-identity';
 export const MAX_PLAYERS = 32;
@@ -63,19 +64,19 @@ export const FLAG_ON_GROUND = 2;
 /** Set on the first state packet after a teleport (restart, !back, trigger). */
 export const FLAG_TELEPORTED = 4;
 /**
- * 2-bit wrapping teleport counter in bits 3..4 (0..3). Incremented by the
+ * 8-bit wrapping teleport generation packed above the three low flags in memory. Incremented by the
  * sender on every teleport so the change survives 64->32 Hz server relay
  * overwriting and dropped snapshots.
  */
 export const FLAG_TELEPORT_SEQ_SHIFT = 3;
-export const FLAG_TELEPORT_SEQ_MASK = 0x3 << FLAG_TELEPORT_SEQ_SHIFT;
+export const FLAG_TELEPORT_SEQ_MASK = 0xff << FLAG_TELEPORT_SEQ_SHIFT;
 
 export function teleportSeq(flags: number): number {
 	return (flags & FLAG_TELEPORT_SEQ_MASK) >>> FLAG_TELEPORT_SEQ_SHIFT;
 }
 
 export function withTeleportSeq(flags: number, seq: number): number {
-	return (flags & ~FLAG_TELEPORT_SEQ_MASK) | ((seq & 3) << FLAG_TELEPORT_SEQ_SHIFT);
+	return (flags & ~FLAG_TELEPORT_SEQ_MASK) | ((seq & 0xff) << FLAG_TELEPORT_SEQ_SHIFT);
 }
 
 export type VoteOption = { kind: 'map'; mapId: string } | { kind: 'extend' };
@@ -577,7 +578,7 @@ export interface NetState {
 	runTicks: number;
 }
 
-const STATE_BODY = 4 + 4 * 8 + 1 + 1 + 1 + 4 + 2; // 45
+const STATE_BODY = 4 + 4 * 8 + 1 + 1 + 1 + 4 + 2 + 1; // 46
 export const STATE_SIZE = 1 + STATE_BODY;
 
 /** Snapshot v2 position quantisation: int24 at 1/8 unit (±1,048,576 u covers all maps). */
@@ -596,10 +597,10 @@ const SNAP_ANGLE_SCALE = 65536 / 360;
 export const SNAP_FLAG_RACE = 1;
 /** Snapshot v2 header: u8 kind, u8 flags, u8 count, u16 seq, f64 serverTimeMs. */
 export const SNAPSHOT_HEADER_SIZE = 13;
-/** Per-entry bytes without race fields: u16 id, u32 tick, 3×i24 pos, 3×i16 vel, 2×u16 ang, u8 flags, u8 status. */
-export const SNAPSHOT_ENTRY_BASE = 27;
+/** Per-entry bytes without race fields: u16 id, u32 tick, 3×i24 pos, 3×i16 vel, 2×u16 ang, u8 flags, u8 status, u8 teleport generation. */
+export const SNAPSHOT_ENTRY_BASE = 28;
 /** Per-entry bytes with race fields (+ u8 stage, u24 runTicks). */
-export const SNAPSHOT_ENTRY_RACE = 31;
+export const SNAPSHOT_ENTRY_RACE = 32;
 
 function toDataView(buf: ArrayBuffer | Uint8Array): DataView {
 	return buf instanceof Uint8Array ? new DataView(buf.buffer, buf.byteOffset, buf.byteLength) : new DataView(buf);
@@ -615,11 +616,12 @@ function writeBody(v: DataView, o: number, s: NetState): number {
 	v.setFloat32(o + 24, s.vz, true);
 	v.setFloat32(o + 28, s.pitch, true);
 	v.setFloat32(o + 32, s.yaw, true);
-	v.setUint8(o + 36, s.flags & 0xff);
+	v.setUint8(o + 36, s.flags & ~FLAG_TELEPORT_SEQ_MASK);
 	v.setUint8(o + 37, s.status & 0xff);
 	v.setUint8(o + 38, s.stage & 0xff);
 	v.setUint32(o + 39, s.runTicks >>> 0, true);
 	v.setUint16(o + 43, s.spawnSeq ?? 0, true);
+	v.setUint8(o + 45, teleportSeq(s.flags));
 	return o + STATE_BODY;
 }
 
@@ -636,7 +638,7 @@ function readBody(v: DataView, o: number): NetState {
 		vz: v.getFloat32(o + 24, true),
 		pitch: v.getFloat32(o + 28, true),
 		yaw: v.getFloat32(o + 32, true),
-		flags: v.getUint8(o + 36),
+		flags: withTeleportSeq(v.getUint8(o + 36), v.getUint8(o + 45)),
 		status: v.getUint8(o + 37) as Status,
 		stage: v.getUint8(o + 38),
 		runTicks: v.getUint32(o + 39, true)
@@ -727,8 +729,8 @@ function unpackSnapAngle(q: number): number {
 }
 
 /**
- * Encode a v2 binary snapshot. At 32 players this is 877 B (non-race) or
- * 1005 B (race), fitting inside a single TCP segment and a single ~1150 B
+ * Encode a v2 binary snapshot. At 32 players this is 909 B (non-race) or
+ * 1037 B (race), fitting inside a single TCP segment and a single ~1150 B
  * QUIC/WebTransport datagram.
  */
 export function encodeSnapshot(entries: readonly SnapshotEntry[], serverTimeMs = 0, seq = 0): ArrayBuffer {
@@ -762,11 +764,12 @@ export function encodeSnapshot(entries: readonly SnapshotEntry[], serverTimeMs =
 		writeI16Clamped(v, o + 19, e.vz);
 		v.setUint16(o + 21, packSnapAngle(e.pitch), true);
 		v.setUint16(o + 23, packSnapAngle(e.yaw), true);
-		v.setUint8(o + 25, e.flags & 0xff);
+		v.setUint8(o + 25, e.flags & ~FLAG_TELEPORT_SEQ_MASK);
 		v.setUint8(o + 26, e.status & 0xff);
+		v.setUint8(o + 27, teleportSeq(e.flags));
 		if (hasRace) {
-			v.setUint8(o + 27, e.stage & 0xff);
-			writeU24Clamped(v, o + 28, e.runTicks);
+			v.setUint8(o + 28, e.stage & 0xff);
+			writeU24Clamped(v, o + 29, e.runTicks);
 		}
 		o += stride;
 	}
@@ -800,10 +803,10 @@ export function decodeSnapshot(buf: ArrayBuffer | Uint8Array): SnapshotFrame | n
 			vz: v.getInt16(o + 19, true),
 			pitch: unpackSnapAngle(v.getUint16(o + 21, true)),
 			yaw: unpackSnapAngle(v.getUint16(o + 23, true)),
-			flags: v.getUint8(o + 25),
+			flags: withTeleportSeq(v.getUint8(o + 25), v.getUint8(o + 27)),
 			status: v.getUint8(o + 26) as Status,
-			stage: hasRace ? v.getUint8(o + 27) : 0,
-			runTicks: hasRace ? readU24(v, o + 28) : 0
+			stage: hasRace ? v.getUint8(o + 28) : 0,
+			runTicks: hasRace ? readU24(v, o + 29) : 0
 		};
 		o += stride;
 	}

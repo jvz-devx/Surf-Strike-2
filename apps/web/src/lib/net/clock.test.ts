@@ -65,14 +65,22 @@ describe('ServerClock', () => {
 		expect(c.minRtt).toBe(24);
 	});
 
-	it('re-locks after a sustained large clock discontinuity (tab background/resume)', () => {
+	it('ignores delayed snapshot bursts and congested pongs as clock jump evidence', () => {
 		const c = new ServerClock();
-		c.observeSnapshot(1000, 0, 1);
-		// Single huge stall does NOT re-lock immediately.
-		c.observeSnapshot(2000, 31, 2);
-		expect(c.serverTime(1062)).toBeCloseTo(62, 0);
-		// Sustained 2000 ms jump re-locks on the 4th sample.
-		for (let i = 3; i <= 7; i++) c.observeSnapshot(3000 + i * 31.25, i * 31.25, i);
-		expect(c.serverTime(3000 + 300)).toBeCloseTo(300, 0);
+		c.seed(1000, 0);
+		for (let i = 1; i <= 8; i++) c.observeSnapshot(1700 + i * 31.25, i * 31.25, i);
+		for (let i = 0; i < 4; i++) c.observePong(2000 + i * 1000, 2700 + i * 1000, 1000 + i * 1000);
+		expect(c.serverTime(6000)).toBe(5000);
+	});
+
+	it('re-locks after fresh pongs confirm a shift and keeps render time monotonic', () => {
+		const c = new ServerClock();
+		c.seed(1000, 0);
+		for (let i = 0; i < 3; i++) c.observePong(4000 + i * 1000, 4020 + i * 1000, 1000 + i * 1000);
+		const before = c.renderTime(7019, 63);
+		c.observePong(7000, 7020, 4000);
+		expect(c.serverTime(7020)).toBe(4000);
+		expect(c.renderTime(7020, 63)).toBe(before);
+		expect(c.renderTime(10020, 63)).toBe(6937);
 	});
 });

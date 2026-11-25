@@ -35,6 +35,7 @@ async function shotOnTimeline(stale: boolean): Promise<boolean> {
 	const target = new TestClient(server.port);
 	try {
 		const a = (await shooter.hello('Shooter')).selfId;
+		await shooter.until(() => [...lobby.clients].find((p) => p.id === a)?.hasRttSample);
 		const b = (await target.hello('Target')).selfId;
 		const game = (lobby.gameMode as ZombiesMode).game;
 		const put = async (c: TestClient, id: number, pos: Vec3) => {
@@ -76,8 +77,8 @@ async function shotOnTimeline(stale: boolean): Promise<boolean> {
 		const playerFrame = async () => {
 			const n = shooter.snapshots.length;
 			lobby.sendSnapshot();
-			const entries = await shooter.until(() => shooter.snapshots[n]);
-			players.push(entries.find((p) => p.id === b)!, now + delivery);
+			const frame = await shooter.until(() => shooter.snapshotFrames[n]);
+			players.push(frame.entries.find((p) => p.id === b)!, frame.serverTimeMs, now + delivery);
 		};
 		const zombieFrame = async () => {
 			const next = game.tick + 1;
@@ -91,7 +92,7 @@ async function shotOnTimeline(stale: boolean): Promise<boolean> {
 		if (!stale) await put(target, b, targetPos(movementPerFrame));
 		now += 0.25;
 		await zombieFrame();
-		const renderAt = now + (stale ? 0 : 0.5);
+		const renderAt = now + (stale ? -0.25 : 0.5);
 		if (stale) await put(target, b, targetPos(96));
 		now += period - 0.25;
 		await playerFrame();
@@ -100,7 +101,7 @@ async function shotOnTimeline(stale: boolean): Promise<boolean> {
 		await zombieFrame();
 
 		const rendered = emptySample();
-		const aimAt = renderAt + delivery;
+		const aimAt = renderAt;
 		assert.ok(players.sample(aimAt, rendered));
 		zombies.sample(aimAt, []);
 		assert.ok(Math.abs(rendered.y) < 1);
@@ -109,9 +110,9 @@ async function shotOnTimeline(stale: boolean): Promise<boolean> {
 		const delta = { x: seen.x - origin.x, y: seen.y - origin.y, z: seen.z - origin.z };
 		const len = Math.hypot(delta.x, delta.y, delta.z);
 
-		advance(renderAt + (stale ? 300 : INTERP_DELAY_MS + 2 * delivery) - now);
+		advance(renderAt + (stale ? 400 : INTERP_DELAY_MS + 2 * delivery) - now);
 		const n = shooter.messages.length;
-		shooter.send({ type: 'fire', weapon: 'pistol', origin, dir: { x: delta.x / len, y: delta.y / len, z: delta.z / len }, tick: zombies.tick });
+		shooter.send({ type: 'fire', weapon: 'pistol', origin, dir: { x: delta.x / len, y: delta.y / len, z: delta.z / len }, tick: zombies.tick, renderServerTimeMs: aimAt });
 		await shooter.barrier();
 		return shooter.messages.slice(n).some((m) => m.type === 'zm' && m.ev.e === 'hit' && m.ev.pid === b);
 	} finally {

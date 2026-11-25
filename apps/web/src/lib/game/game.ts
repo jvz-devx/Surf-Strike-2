@@ -30,6 +30,7 @@ import {
 	DUCK_HULL_MAX,
 	playerMaxs,
 	PROTOCOL_VERSION,
+	CLOSE_PROTOCOL_MISMATCH,
 	passwordError,
 	playerMove,
 	playerRest,
@@ -1293,7 +1294,7 @@ export class Game implements CommandContext {
 		s.vz = p.velocity.z;
 		s.pitch = this.pitch;
 		s.yaw = this.yaw;
-		if (this.teleported) this.tpSeq = (this.tpSeq + 1) & 3;
+		if (this.teleported) this.tpSeq = (this.tpSeq + 1) & 0xff;
 		s.flags = withTeleportSeq(
 			(p.ducked ? FLAG_DUCKED : 0) | (p.onGround ? FLAG_ON_GROUND : 0) | (this.teleported ? FLAG_TELEPORTED : 0),
 			this.tpSeq
@@ -1419,7 +1420,7 @@ export class Game implements CommandContext {
 
 	private updateRemotes(now: number, dtMs: number): void {
 		const delayMs = this.adaptiveDelay.update(now, dtMs);
-		const renderAt = this.serverClock.serverTime(now) - delayMs;
+		const renderAt = this.serverClock.renderTime(now, delayMs);
 		this.lastRenderServerMs = renderAt;
 		this.netStats.setInterpDelay(delayMs);
 		if (this.remotes.size === 0) return;
@@ -1429,7 +1430,7 @@ export class Game implements CommandContext {
 		let anyExtrap = false;
 		let maxOverrun = 0;
 		for (const rm of this.remotes.values()) {
-			rm.hasSample = rm.buf.sample(renderAt, rm.sample);
+			rm.hasSample = rm.buf.sample(renderAt, rm.sample, this.world);
 			if (rm.hasSample && !rm.spectating && !rm.buf.sourceIdle && now - rm.buf.lastArrival < 3000) {
 				if (rm.buf.lastUnderrun) {
 					anyUnderrun = true;
@@ -2196,6 +2197,10 @@ export class Game implements CommandContext {
 			this.conn.disconnect();
 			this.notice('You connected from another tab or device. Playing solo here; reload the page to reconnect.');
 		}
+		if (code === CLOSE_PROTOCOL_MISMATCH) {
+			this.conn.disconnect();
+			this.notice('The server protocol changed. Reload the page to reconnect.');
+		}
 		if (code === CLOSE_IP_LIMIT) {
 			// Retrying would fail until someone on this network leaves.
 			this.conn.disconnect();
@@ -2236,7 +2241,7 @@ export class Game implements CommandContext {
 		else this.startMode();
 		this.startSoloRotation();
 		this.updatePlayerCount();
-		if (code !== 4002 && code !== 4009 && code !== CLOSE_IP_LIMIT) this.notice('Disconnected from server. Playing solo; reconnecting automatically.');
+		if (code !== 4002 && code !== 4009 && code !== CLOSE_IP_LIMIT && code !== CLOSE_PROTOCOL_MISMATCH) this.notice('Disconnected from server. Playing solo; reconnecting automatically.');
 	}
 
 	// -----------------------------------------------------------------------

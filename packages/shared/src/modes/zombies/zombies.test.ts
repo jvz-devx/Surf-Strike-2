@@ -210,10 +210,11 @@ describe('route and spawner', () => {
 	});
 
 	it('zombie snapshot round-trips', () => {
-		const frame = encodeZombies(1234, [{ id: 7, x: 100.5, y: -2000.5, z: 64, yaw: -90, flags: 5, hp: 0.5 }]);
-		expect(frame.byteLength).toBe(7 + 11);
+		const frame = encodeZombies(1234, [{ id: 7, x: 100.5, y: -2000.5, z: 64, yaw: -90, flags: 5, hp: 0.5 }], 12456.25);
+		expect(frame.byteLength).toBe(15 + 11);
 		const d = decodeZombies(frame)!;
 		expect(d.tick).toBe(1234);
+		expect(d.serverTimeMs).toBe(12456.25);
 		expect(d.zombies[0]!).toMatchObject({ id: 7, x: 100.5, y: -2000.5, z: 64, flags: 5 });
 		expect(d.zombies[0]!.yaw).toBeCloseTo(-90, 0);
 		expect(d.zombies[0]!.hp).toBeCloseTo(0.5, 1);

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SERVER_ID_PROTOCOL, encodeSnapshot, withTeleportSeq, type NetState, type ServerMessage, type SnapshotFrame } from '@surf/shared';
+import { SERVER_ID_PROTOCOL, buildCollisionWorld, encodeSnapshot, withTeleportSeq, type NetState, type ServerMessage, type SnapshotFrame } from '@surf/shared';
 import { NetClient } from './client.js';
 import { parseDiscovery, sameOriginWsUrl, serverOverride, toWsUrl } from './discovery.js';
 import { emptySample, lerpAngle, MAX_EXTRAP_MS, SnapshotBuffer } from './interp.js';
@@ -196,9 +196,26 @@ describe('snapshot interpolation', () => {
 		// Short 400 u teleport (< 1024 snapDistance) without FLAG_TELEPORTED bit, caught via teleport counter.
 		const b2 = new SnapshotBuffer();
 		b2.push({ ...st(0), tick: 1, flags: withTeleportSeq(0, 0) }, 0);
-		b2.push({ ...st(400), tick: 3, flags: withTeleportSeq(0, 1) }, 31.25);
+		b2.push({ ...st(400), tick: 3, flags: withTeleportSeq(0, 4) }, 31.25);
 		b2.sample(15, out);
 		expect(out.x).toBe(400);
+	});
+	it('clamps extrapolation to map geometry and holds the confirmed pose for a stalled sender', () => {
+		const world = buildCollisionWorld({ brushes: [{ type: 'box', min: { x: 60, y: -128, z: -128 }, max: { x: 70, y: 128, z: 128 }, material: 'concrete' }] });
+		const b = new SnapshotBuffer();
+		const out = emptySample();
+		b.push({ ...st(0), tick: 1, vx: 1200 }, 1000);
+		b.push({ ...st(37.5), tick: 3, vx: 1200 }, 1031.25);
+		b.sample(1081.25, out, world);
+		expect(out.x).toBeCloseTo(43.96875);
+		for (let t = 1062.5; t <= 1250; t += 31.25) b.push({ ...st(37.5), tick: 3, vx: 1200 }, t);
+		b.sample(1250, out);
+		expect(out.x).toBe(37.5);
+		expect(b.sourceIdle).toBe(true);
+		b.push({ ...st(39), tick: 19, vx: 1200 }, 1281.25);
+		expect(b.sourceIdle).toBe(true);
+		b.push({ ...st(40), tick: 21, vx: 1200 }, 1312.5);
+		expect(b.sourceIdle).toBe(false);
 	});
 	it('keeps arrival times monotonic', () => {
 		const b = new SnapshotBuffer();

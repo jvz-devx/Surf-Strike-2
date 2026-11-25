@@ -41,7 +41,7 @@ export function loadV2Adapter(): Adapter {
 				},
 				beginFrame(nowMs, dtMs) {
 					const delayMs = delay.update(nowMs, dtMs);
-					const target = clock.serverTime(nowMs) - delayMs;
+					const target = clock.renderTime(nowMs, delayMs);
 					let maxOverrun = 0;
 					for (const [id, buffer] of buffers) {
 						const visible = buffer.sample(target, pose) && nowMs - buffer.lastArrival < 3000;

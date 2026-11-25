@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { decodeState as decodeV2State, encodeSnapshot as encodeV2Snapshot, Status, teleportSeq } from '@surf/shared';
 import { adapterFor } from './adapter.ts';
 import { decodeState, encodeSnapshot, type SnapshotEntry } from './wire-v1.ts';
 
@@ -33,4 +34,18 @@ test('v1 uses the 44-byte sender and original arrival-time teleport behavior', a
 
 test('unsupported health versions fail explicitly', async () => {
 	await assert.rejects(adapterFor(3), /Unsupported server protocol v3/);
+});
+
+test('v2 uses the merged codec and snaps short teleports after four unseen generations', async () => {
+	const adapter = await adapterFor(2);
+	const { id, ...state } = first;
+	const v2 = decodeV2State(adapter.encode(state, 4));
+	assert.ok(v2);
+	assert.equal(teleportSeq(v2.flags), 4);
+	const observer = adapter.observer(new Set([id]));
+	observer.timingMessage?.({ type: 'welcome', selfId: 2, map: 'surf_test', serverTime: 1000 }, 6000);
+	assert.equal(observer.snapshot(encodeV2Snapshot([{ ...state, id, status: Status.Idle }], 1000, 1), 6000), true);
+	assert.equal(observer.snapshot(encodeV2Snapshot([{ ...v2, id, tick: 12, z: 384 }], 1031.25, 2), 6031.25), true);
+	observer.beginFrame?.(6075, 16);
+	assert.equal(observer.render(id, 6075).point?.z, 384);
 });

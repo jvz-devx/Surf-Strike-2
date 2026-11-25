@@ -41,6 +41,7 @@ import {
 	modeOf,
 	POINTS_SCALE,
 	PROTOCOL_VERSION,
+	CLOSE_PROTOCOL_MISMATCH,
 	RICHEST,
 	sanitizeText,
 	SNAPSHOT_HZ,
@@ -384,6 +385,9 @@ export class Lobby {
 			economy: this.economy.forMode(),
 			now: () => this.now(),
 			serverNow: () => this.serverClock(),
+			replaySaved: (mapId) => {
+				if (!this.closing && this.map.id === mapId) this.mode.replayChanged?.();
+			},
 			rng: () => this.rng(),
 			*players() {
 				for (const c of lobby.clients) if (c.helloed) yield c;
@@ -703,7 +707,7 @@ export class Lobby {
 			case 'callMoab':
 			case 'knife':
 				// Zombies/infected weapons and hide-and-seek knife (docs/modes.md); the mode validates every field.
-				if (!c.spectating && !c.pendingSpawn) this.mode.message?.(c, msg);
+				if (!c.spectating) this.mode.message?.(c, msg);
 				return;
 			case 'boxOpen':
 			case 'boxRevealed':
@@ -738,6 +742,12 @@ export class Lobby {
 	private onHello(c: Client, msg: Extract<ClientMessage, { type: 'hello' }>): void {
 		if (typeof msg.playerId !== 'string' || !PLAYER_ID_RE.test(msg.playerId)) {
 			c.transport.close(4001, 'bad player id');
+			return;
+		}
+		if (msg.version !== PROTOCOL_VERSION) {
+			this.systemTo(c, `Server protocol changed to v${PROTOCOL_VERSION}. Reload the page to reconnect.`);
+			// The v1 browser stops retrying and shows a reload notice on 4002.
+			c.transport.close(msg.version === 1 ? 4002 : CLOSE_PROTOCOL_MISMATCH, 'protocol mismatch: reload the page');
 			return;
 		}
 		// Same player connecting again (reload, second tab): drop the old socket.
@@ -815,9 +825,6 @@ export class Lobby {
 		this.mode.join(c);
 		this.broadcast({ type: 'join', player: info(c) }, c);
 		this.system(`${name} joined.`, c);
-		if (msg.version !== PROTOCOL_VERSION) {
-			this.systemTo(c, `Protocol version mismatch (server ${PROTOCOL_VERSION}, client ${String(msg.version)}). Reload the page.`);
-		}
 		const v = this.rotation.vote;
 		if (v) {
 			this.send(c, {
@@ -1048,7 +1055,7 @@ export class Lobby {
 			teleported = mapTeleport(this.map, c.state, state);
 		}
 		c.clientTeleportSeq = clientSeq;
-		if (teleported) c.relayTeleportSeq = (c.relayTeleportSeq + 1) & 3;
+		if (teleported) c.relayTeleportSeq = (c.relayTeleportSeq + 1) & 0xff;
 		const flags = withTeleportSeq((state.flags & ~FLAG_TELEPORTED) | (teleported ? FLAG_TELEPORTED : 0), c.relayTeleportSeq);
 		return { ...state, flags };
 	}

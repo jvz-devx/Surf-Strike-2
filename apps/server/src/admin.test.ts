@@ -432,7 +432,7 @@ describe('connection limit per IP', () => {
 		const refused = async (headers?: Record<string, string>) => {
 			const c = open(headers);
 			await c.open();
-			c.send({ type: 'hello', version: 0, playerId: crypto.randomUUID(), name: 'Bot' });
+			c.send({ type: 'hello', version: PROTOCOL_VERSION, playerId: crypto.randomUUID(), name: 'Bot' });
 			await c.until(() => c.closed);
 			assert.equal(c.closeCode, CLOSE_IP_LIMIT);
 		};

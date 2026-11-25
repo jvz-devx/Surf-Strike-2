@@ -3,7 +3,7 @@
  * monotonic timeline with per-player `NetState.tick` spacing to remove
  * 64->32 Hz aliasing and uplink jitter (docs/architecture.md#netcode).
  */
-import { FLAG_TELEPORTED, INTERP_DELAY_MS, teleportSeq, TICK_RATE, type NetState } from '@surf/shared';
+import { DUCK_HULL_MAX, FLAG_DUCKED, FLAG_TELEPORTED, HULL_MAX, HULL_MIN, INTERP_DELAY_MS, teleportSeq, TICK_RATE, type CollisionWorld, type NetState } from '@surf/shared';
 
 /** Shared with the server's lag compensation (packages/shared protocol.ts). */
 export { INTERP_DELAY_MS };
@@ -15,8 +15,8 @@ const ANCHOR_WINDOW = 32;
 /** Discontinuity threshold (ms) between observed `serverTime - tick*TICK_MS` and the current anchor. */
 const ANCHOR_JUMP_MS = 250;
 const ANCHOR_JUMP_CONFIRM = 3;
-/** Consecutive duplicate ticks before a sender is treated as paused/idle rather than link-starved. */
-const SOURCE_IDLE_DUPS = 8;
+/** No sender progress across this much server time indicates a slow or paused sender. */
+const SOURCE_STALL_MS = 125;
 
 export interface Sample {
 	x: number;
@@ -68,7 +68,9 @@ export class SnapshotBuffer {
 	private obsIdx = 0;
 	private obsCount = 0;
 	private anchorJumpStreak = 0;
-	private dupStreak = 0;
+	private latestServerTime = -Infinity;
+	private tickSeenAt = -Infinity;
+	private slowSender = false;
 
 	/** Teleport threshold: larger jumps snap instead of interpolating. */
 	snapDistance = 1024;
@@ -88,28 +90,24 @@ export class SnapshotBuffer {
 	 */
 	push(state: NetState, serverTimeMs: number, localArrivalMs = serverTimeMs): void {
 		this.lastLocalArrival = localArrivalMs;
+		this.latestServerTime = Math.max(this.latestServerTime, serverTimeMs);
 
 		let sampleTime = serverTimeMs;
 		if (this.lastTick < 0) {
 			this.lastTick = state.tick;
 			this.resetAnchor(serverTimeMs - state.tick * TICK_MS);
-			this.dupStreak = 0;
+			this.tickSeenAt = serverTimeMs;
 		} else {
 			const dt = state.tick - this.lastTick;
 			if (dt === 0) {
-				if (this.tickProgressed) {
-					// Same sim tick repeated by the 32 Hz snapshot loop: drop it so the avatar
-					// doesn't freeze for one snapshot then jump double speed on the next.
-					this.dupStreak++;
-					return;
-				}
-				// Constant-tick stream (e.g. idle test stub): fall back to serverTimeMs directly.
-				this.dupStreak = 0;
+				// Keep constant-tick fixtures working until the source is old enough to be idle.
+				if (this.tickProgressed || this.sourceIdle) return;
 			} else if (dt < 0) {
 				if (dt < -64) {
 					// Sender tick counter reset (reconnect/respawn/test reset): re-anchor cleanly.
 					this.lastTick = state.tick;
-					this.dupStreak = 0;
+					this.tickSeenAt = serverTimeMs;
+					this.slowSender = false;
 					this.resetAnchor(serverTimeMs - state.tick * TICK_MS);
 				} else {
 					// Out-of-order / late tick: drop.
@@ -118,7 +116,8 @@ export class SnapshotBuffer {
 			} else {
 				this.tickProgressed = true;
 				this.lastTick = state.tick;
-				this.dupStreak = 0;
+				this.slowSender = serverTimeMs - this.tickSeenAt >= SOURCE_STALL_MS;
+				this.tickSeenAt = serverTimeMs;
 
 				const obs = serverTimeMs - state.tick * TICK_MS;
 				const err = obs - this.tickAnchor;
@@ -179,7 +178,7 @@ export class SnapshotBuffer {
 
 	/** True when this remote player's sim tick has stopped advancing (e.g. backgrounded tab). */
 	get sourceIdle(): boolean {
-		return this.dupStreak >= SOURCE_IDLE_DUPS;
+		return this.slowSender || this.latestServerTime - this.tickSeenAt >= SOURCE_STALL_MS;
 	}
 
 	clear(): void {
@@ -192,14 +191,16 @@ export class SnapshotBuffer {
 		this.obsIdx = 0;
 		this.obsCount = 0;
 		this.anchorJumpStreak = 0;
-		this.dupStreak = 0;
+		this.latestServerTime = -Infinity;
+		this.tickSeenAt = -Infinity;
+		this.slowSender = false;
 		this.lastUnderrun = false;
 		this.lastExtrapMs = 0;
 		this.lastOverrunMs = 0;
 	}
 
 	/** Sample at `renderMs` (server time, already delayed). Returns false when empty. */
-	sample(renderMs: number, out: Sample): boolean {
+	sample(renderMs: number, out: Sample, world?: CollisionWorld): boolean {
 		const n = this.buf.length;
 		if (n === 0) {
 			this.lastUnderrun = false;
@@ -221,10 +222,12 @@ export class SnapshotBuffer {
 			if (over > 0) {
 				this.lastUnderrun = true;
 				this.lastOverrunMs = over;
-				const clamped = Math.min(over, this.maxExtrapMs);
-				extrapSec = clamped / 1000;
-				// Actively extrapolating within the cap; past the cap the avatar holds at the capped pose (freeze).
-				this.lastExtrapMs = over <= this.maxExtrapMs ? clamped : 0;
+				if (!this.sourceIdle) {
+					const clamped = Math.min(over, this.maxExtrapMs);
+					extrapSec = clamped / 1000;
+					// Past the cap the avatar holds at the capped pose.
+					this.lastExtrapMs = over <= this.maxExtrapMs ? clamped : 0;
+				}
 			}
 		} else {
 			for (let i = 1; i < n; i++) {
@@ -253,6 +256,14 @@ export class SnapshotBuffer {
 		out.x = sa.x + dx * t + (extrapSec > 0 ? sb.vx * extrapSec : 0);
 		out.y = sa.y + dy * t + (extrapSec > 0 ? sb.vy * extrapSec : 0);
 		out.z = sa.z + dz * t + (extrapSec > 0 ? sb.vz * extrapSec : 0);
+		if (world && extrapSec > 0) {
+			const hull = (sb.flags & FLAG_DUCKED) !== 0 ? DUCK_HULL_MAX : HULL_MAX;
+			const trace = world.trace(sb, out, HULL_MIN, hull);
+			const end = trace.startsolid ? sb : trace.endpos;
+			out.x = end.x;
+			out.y = end.y;
+			out.z = end.z;
+		}
 		out.vx = sa.vx + (sb.vx - sa.vx) * t;
 		out.vy = sa.vy + (sb.vy - sa.vy) * t;
 		out.vz = sa.vz + (sb.vz - sa.vz) * t;

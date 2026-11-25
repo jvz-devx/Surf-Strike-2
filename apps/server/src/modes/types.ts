@@ -39,6 +39,8 @@ export interface ModeHost {
 	now(): number;
 	/** Monotonic clock used for both snapshot streams. */
 	serverNow?(): number;
+	/** Invalidate the active race mode when a queued replay save completes. */
+	replaySaved?(mapId: string): void;
 	rng(): number;
 	/** Helloed players (spectators included). */
 	players(): Iterable<ModePlayer>;
@@ -76,6 +78,7 @@ export interface ServerMode {
 	records(p: ModePlayer): MapRecordInfo;
 	/** `getGhost`: send the map's record ghost (race modes; others ignore it). */
 	ghost?(p: ModePlayer, map: string): void;
+	replayChanged?(): void;
 	/** Mode-specific client messages (zombies: fire, reload, loadout; infected: also throwKnife, placeBeacon, callMoab); others ignore them. */
 	message?(p: ModePlayer, msg: ModeClientMessage): void;
 	/** Chat command for this mode (!top, !pb); return false if not handled. */
@@ -99,9 +102,9 @@ export type ModeClientMessage = Extract<ClientMessage, { type: 'fire' | 'reload'
 export function renderRewindMs(claim: unknown, now: number, p: ModePlayer, historyMs: number): number | undefined {
 	if (claim === undefined) return undefined;
 	if (typeof claim !== 'number' || !Number.isFinite(claim)) return 0;
-	if (p.hasRttSample === false) return undefined;
 	const at = clampRenderTime(claim, now, p.ping, historyMs);
-	return at === null ? 0 : now - at;
+	if (at === null) return 0;
+	return p.hasRttSample === false ? undefined : now - at;
 }
 
 export const EMPTY_RECORDS: MapRecordInfo = Object.freeze({

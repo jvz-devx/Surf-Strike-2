@@ -8,6 +8,7 @@
 		"check": "tsc --noEmit"
 	},
 	"dependencies": {
+		"@surf/shared": "workspace:*",
 		"ws": "^8.23.0"
 	},
 	"devDependencies": {

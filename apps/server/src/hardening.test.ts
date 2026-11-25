@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { WebSocket } from 'ws';
-import { CLOSE_IP_LIMIT, SERVER_ID_PROTOCOL } from '@surf/shared';
+import { CLOSE_IP_LIMIT, PROTOCOL_VERSION, SERVER_ID_PROTOCOL } from '@surf/shared';
 import { clientIp, isOriginAllowed, parseAllowedOrigins, parseTrustProxy } from './proxy.ts';
 import { startServer } from './server.ts';
 import { netState, sleep, TestClient, testMap } from './test-helpers.ts';
@@ -209,6 +209,28 @@ describe('ALLOWED_ORIGINS', () => {
 });
 
 describe('pre-hello caps, hello timeout, metrics, web handler, and graceful shutdown', () => {
+	it('rejects v1 before sending welcome or replacing a connected player', async () => {
+		const server = await startServer(LOCAL_SERVER);
+		const live = new TestClient(server.port);
+		const legacy = new TestClient(server.port);
+		try {
+			const id = crypto.randomUUID();
+			await live.hello('Current', id);
+			await legacy.open();
+			legacy.send({ type: 'hello', version: 1, playerId: id, name: 'Legacy' });
+			await legacy.waitFor('chat', (m) => m.text.includes('Reload the page'));
+			await legacy.until(() => legacy.closed);
+			assert.equal(legacy.closeCode, 4002);
+			assert.equal(legacy.of('welcome').length, 0);
+			assert.equal(live.closed, false);
+			assert.equal(server.lobby.playerCount, 1);
+		} finally {
+			live.close();
+			legacy.close();
+			await server.close();
+		}
+	});
+
 	it('rejects pending overflows with HTTP 429 or 503 and terminates silent peers', async () => {
 		const server = await startServer({
 			...LOCAL_SERVER,
@@ -232,7 +254,7 @@ describe('pre-hello caps, hello timeout, metrics, web handler, and graceful shut
 				new TestClient(server.port, { 'cf-connecting-ip': '198.51.100.11' }).open(),
 				/Unexpected server response: 503/
 			);
-			second.send({ type: 'hello', version: 1, playerId: 'second-peer', name: 'Second' });
+			second.send({ type: 'hello', version: PROTOCOL_VERSION, playerId: 'second-peer', name: 'Second' });
 			await second.waitFor('welcome');
 			assert.equal(server.lobby.playerCount, 1);
 			await firstClosed;
@@ -259,7 +281,7 @@ describe('pre-hello caps, hello timeout, metrics, web handler, and graceful shut
 				new TestClient(server.port, { 'cf-connecting-ip': '198.51.100.11' }).open(),
 				/Unexpected server response: 503/
 			);
-			extra.send({ type: 'hello', version: 1, playerId: 'extra-player', name: 'Extra' });
+			extra.send({ type: 'hello', version: PROTOCOL_VERSION, playerId: 'extra-player', name: 'Extra' });
 			await extra.waitFor('full');
 			await extra.until(() => extra.closed);
 			assert.equal(extra.closeCode, 4003);
@@ -281,7 +303,7 @@ describe('pre-hello caps, hello timeout, metrics, web handler, and graceful shut
 			assert.equal(server.lobby.playerCount, 12);
 			const extra = new TestClient(server.port, ip);
 			await extra.open();
-			extra.send({ type: 'hello', version: 1, playerId: 'extra-peer', name: 'Extra' });
+			extra.send({ type: 'hello', version: PROTOCOL_VERSION, playerId: 'extra-peer', name: 'Extra' });
 			await extra.until(() => extra.closed);
 			assert.equal(extra.closeCode, CLOSE_IP_LIMIT);
 
@@ -311,9 +333,10 @@ describe('pre-hello caps, hello timeout, metrics, web handler, and graceful shut
 		}
 	});
 
-	it('serves /metrics in Prometheus format, mounts webHandler for other paths, and closes sockets with 1001 on shutdown', async () => {
+	it('serves Prometheus on loopback, keeps /metrics private, and closes sockets on shutdown', async () => {
 		const server = await startServer({
 			port: 0,
+			metricsPort: 0,
 			host: '127.0.0.1',
 			dbPath: ':memory:',
 			maps: MAPS,
@@ -338,7 +361,8 @@ describe('pre-hello caps, hello timeout, metrics, web handler, and graceful shut
 		const wsHttpRes = await fetch(`http://127.0.0.1:${server.port}/ws`);
 		assert.equal(wsHttpRes.status, 426);
 
-		const metricsRes = await fetch(`http://127.0.0.1:${server.port}/metrics`);
+		assert.equal((await fetch(`http://127.0.0.1:${server.port}/metrics`)).status, 404);
+		const metricsRes = await fetch(`http://127.0.0.1:${server.metricsPort}/metrics`);
 		assert.equal(metricsRes.status, 200);
 		assert.match(metricsRes.headers.get('content-type') ?? '', /^text\/plain; version=0\.0\.4/);
 		const body = await metricsRes.text();

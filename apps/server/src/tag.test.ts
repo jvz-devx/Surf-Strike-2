@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import type { MapDef, ServerMessage } from '@surf/shared';
-import { FLAG_TELEPORTED, Status, TAG_IMMUNITY_SECS, TAG_INTERMISSION_SECS, TAG_MAX_SWEEP_MS, TAG_ROUND_SECS } from '@surf/shared';
+import { FLAG_TELEPORTED, Status, TAG_IMMUNITY_SECS, TAG_INTERMISSION_SECS, TAG_MAX_SWEEP_MS, TAG_ROUND_SECS, withTeleportSeq } from '@surf/shared';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
 import { netState, sleep, TestClient, testMap } from './test-helpers.ts';
@@ -154,7 +154,7 @@ describe('tag mode', () => {
 		await moveTo(b, -50, 500);
 		await tick(a);
 		clock += 15.625;
-		await moveTo(b, 49, 500, 0, FLAG_TELEPORTED);
+		await moveTo(b, 49, 500, 0, withTeleportSeq(0, 4));
 		assert.ok([...server.lobby.clients].find((p) => p.id === bId)!.state!.flags & FLAG_TELEPORTED);
 		clock += 15.625;
 		await moveTo(b, 50, 500);

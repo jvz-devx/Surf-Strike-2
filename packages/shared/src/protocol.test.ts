@@ -52,11 +52,11 @@ describe('protocol v2 binary codec', () => {
 		expect(PROTOCOL_VERSION).toBe(2);
 	});
 
-	it('packs and unpacks the 2-bit wrapping teleport counter without disturbing other flag bits', () => {
+	it('packs and unpacks the 8-bit wrapping teleport counter without disturbing other flag bits', () => {
 		const base = FLAG_DUCKED | FLAG_ON_GROUND | FLAG_TELEPORTED;
-		for (let seq = 0; seq < 8; seq++) {
+		for (let seq = 0; seq < 260; seq++) {
 			const packed = withTeleportSeq(base, seq);
-			expect(teleportSeq(packed)).toBe(seq & 3);
+			expect(teleportSeq(packed)).toBe(seq & 0xff);
 			expect(packed & FLAG_DUCKED).toBe(FLAG_DUCKED);
 			expect(packed & FLAG_ON_GROUND).toBe(FLAG_ON_GROUND);
 			expect(packed & FLAG_TELEPORTED).toBe(FLAG_TELEPORTED);
@@ -74,7 +74,8 @@ describe('protocol v2 binary codec', () => {
 			vz: 500.25,
 			pitch: -88.75,
 			yaw: 179.5,
-			flags: withTeleportSeq(FLAG_DUCKED | FLAG_TELEPORTED, 3),
+			flags: withTeleportSeq(FLAG_DUCKED | FLAG_TELEPORTED, 203),
+			spawnSeq: 40512,
 			status: Status.Running,
 			stage: 6,
 			runTicks: 44123

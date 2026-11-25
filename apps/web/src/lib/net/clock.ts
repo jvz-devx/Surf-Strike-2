@@ -11,7 +11,7 @@ import { SNAPSHOT_HZ } from '@surf/shared';
 
 const OFFSET_WINDOW = 64; // ~2 s at 32 Hz
 const RTT_WINDOW = 16;
-/** Consecutive >500 ms jumps before snapping the clock (e.g. background tab resume). */
+/** Consecutive fresh pong offsets >500 ms away before snapping the clock (e.g. background tab resume). */
 const SNAP_THRESHOLD_MS = 500;
 const SNAP_CONFIRM_COUNT = 4;
 
@@ -32,6 +32,9 @@ export class ServerClock {
 	private readonly offsetWin: number[] = [];
 	private offsetIdx = 0;
 	private jumpStreak = 0;
+	private jumpDirection = 0;
+	private lastPongSent = -Infinity;
+	private lastRenderMs = -Infinity;
 
 	private lastSeq = -1;
 	private lastArrivalMs = -Infinity;
@@ -49,6 +52,9 @@ export class ServerClock {
 		this.offsetWin.length = 0;
 		this.offsetIdx = 0;
 		this.jumpStreak = 0;
+		this.jumpDirection = 0;
+		this.lastPongSent = -Infinity;
+		this.lastRenderMs = -Infinity;
 		this.lastSeq = -1;
 		this.lastArrivalMs = -Infinity;
 		this.lastTransitMs = NaN;
@@ -72,6 +78,11 @@ export class ServerClock {
 		return this.synced ? localMs - this.offset : localMs;
 	}
 
+	/** Render timestamps cannot move backwards if a confirmed shift moves the estimate back. */
+	renderTime(localMs: number, delayMs: number): number {
+		return this.lastRenderMs = Math.max(this.lastRenderMs, this.serverTime(localMs) - delayMs);
+	}
+
 	/** RFC 3550 smoothed downlink transit jitter (ms). */
 	get jitter(): number {
 		return this.jitterMs;
@@ -93,13 +104,16 @@ export class ServerClock {
 	/** Observe a client->server `ping` / `pong` reply carrying `serverTimeMs`. */
 	observePong(sentLocalMs: number, arrivalLocalMs: number, serverTimeMs: number): number {
 		const rtt = arrivalLocalMs - sentLocalMs;
-		if (Number.isFinite(rtt) && rtt >= 0 && rtt < 60_000) {
+		if (Number.isFinite(rtt) && rtt >= 0 && rtt < 60_000 && sentLocalMs > this.lastPongSent) {
+			this.lastPongSent = sentLocalMs;
+			const minRtt = this.minRtt;
+			const fresh = rtt <= 250 && (minRtt < 0 || rtt <= minRtt + Math.max(50, minRtt / 4));
 			this.lastRttMs = rtt;
 			if (this.rttWin.length < RTT_WINDOW) this.rttWin.push(rtt);
 			else this.rttWin[this.rttIdx] = rtt;
 			this.rttIdx = (this.rttIdx + 1) % RTT_WINDOW;
+			if (fresh && Number.isFinite(serverTimeMs)) this.observeOffset(arrivalLocalMs - serverTimeMs, true);
 		}
-		if (Number.isFinite(serverTimeMs)) this.observeOffset(arrivalLocalMs - serverTimeMs);
 		return rtt;
 	}
 
@@ -142,7 +156,7 @@ export class ServerClock {
 		};
 	}
 
-	private observeOffset(transit: number): void {
+	private observeOffset(transit: number, freshPong = false): void {
 		if (!this.synced) {
 			this.synced = true;
 			this.offset = transit;
@@ -153,20 +167,18 @@ export class ServerClock {
 			return;
 		}
 
-		if (Math.abs(transit - this.offset) > SNAP_THRESHOLD_MS) {
-			this.jumpStreak++;
-			if (this.jumpStreak >= SNAP_CONFIRM_COUNT) {
-				// Genuine clock jump (e.g. tab slept and resumed): re-lock cleanly.
-				this.offset = transit;
-				this.offsetWin.length = 0;
-				this.offsetWin.push(transit);
-				this.offsetIdx = 1 % OFFSET_WINDOW;
-				this.jumpStreak = 0;
-				return;
-			}
-		} else {
-			this.jumpStreak = 0;
+		const delta = transit - this.offset;
+		if (Math.abs(delta) > SNAP_THRESHOLD_MS) {
+			if (!freshPong) return;
+			const direction = Math.sign(delta);
+			this.jumpStreak = direction === this.jumpDirection ? this.jumpStreak + 1 : 1;
+			this.jumpDirection = direction;
+			if (this.jumpStreak < SNAP_CONFIRM_COUNT) return;
+			this.offset = transit;
+			this.offsetWin.length = 0;
+			this.offsetIdx = 0;
 		}
+		if (freshPong) this.jumpStreak = 0;
 
 		if (this.offsetWin.length < OFFSET_WINDOW) this.offsetWin.push(transit);
 		else this.offsetWin[this.offsetIdx] = transit;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { FLAG_TELEPORTED, MAP_DURATION, Status, VOTE_AT, VOTE_DURATION, TICK_RATE } from '@surf/shared';
+import { FLAG_TELEPORTED, MAP_DURATION, PROTOCOL_VERSION, Status, VOTE_AT, VOTE_DURATION, TICK_RATE } from '@surf/shared';
 import { hashPassword } from './auth.ts';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
@@ -219,7 +219,7 @@ describe('lobby', () => {
 		clients.push(extra);
 		try {
 			await extra.open();
-			extra.send({ type: 'hello', playerId: 'extra-player', name: 'Extra', version: 1 });
+			extra.send({ type: 'hello', playerId: 'extra-player', name: 'Extra', version: PROTOCOL_VERSION });
 			await extra.waitFor('full');
 			await extra.until(() => extra.closed);
 			assert.equal(extra.closeCode, 4003);

@@ -111,6 +111,11 @@ describe('zombies mode', () => {
 		b.sendState(netState(99, msg.ev.x, { y: msg.ev.y, z: msg.ev.z, spawnSeq: 0 }));
 		await b.barrier();
 		assert.equal([...server.lobby.clients].find((p) => p.id === w.selfId)?.state, null);
+		assert.ok(msg.spawnSeq);
+		const resendFrom = b.messages.length;
+		clock += 251;
+		server.lobby.sendSnapshot();
+		await b.waitFor('zm', (m) => m.spawnSeq === msg.spawnSeq, resendFrom);
 		await moveTo(b, w.selfId, msg.ev);
 		b.close();
 		await a.waitFor('leave', (m) => m.id === w.selfId);

@@ -584,6 +584,7 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		const n = b!.c.messages.length;
 		let simulatedRtt = 0;
 		mock.method(lobbyClient(b!).rtt, 'estimate', () => simulatedRtt);
+		mock.method(lobbyClient(b!).rtt, 'sample', () => simulatedRtt || 1);
 		const o = eye(b!);
 		const aimOld = { x: -400, y: 1350, z: 30 };
 		const dir = unit(aimOld.x - o.x, aimOld.y - o.y, aimOld.z - o.z);
@@ -593,14 +594,14 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		assert.equal(game().secondaryOf(b!.id)!.mag, 11, 'the pistol fired');
 		assert.equal(events(b!.c, 'hit', n).length, 0, 'no ping: misses the old spot');
 		await run(200);
-		// Re-stage with a 150 ms ping: his screen is 266 ms behind, so 250 ms after the move he still sees the old spot.
+		// Re-stage with a 100 ms RTT. A 266 ms v2 claim reaches the old pose beyond the 216 ms fallback.
 		await moveTo(a!, -400, 1350);
 		await run(500);
 		await moveTo(a!, -400, 1500);
 		await run(250);
-		simulatedRtt = 150;
+		simulatedRtt = 100;
 		const m = b!.c.messages.length;
-		b!.c.send({ type: 'fire', weapon: 'pistol', origin: o, dir, tick: 0x7fffffff });
+		b!.c.send({ type: 'fire', weapon: 'pistol', origin: o, dir, tick: 0x7fffffff, renderServerTimeMs: clock - 266 });
 		await settle();
 		assert.deepEqual(
 			events(b!.c, 'hit', m).map((h) => [h.targetId, h.kill]),

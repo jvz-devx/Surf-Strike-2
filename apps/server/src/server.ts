@@ -18,6 +18,7 @@ import { DEFAULT_MAX_PENDING_PER_IP, Lobby, MODE_TICK_HZ, parseSnapshotHz } from
 import type { LobbyOptions } from './lobby.ts';
 import { defaultMapId, loadMaps } from './maps.ts';
 import { ServerMetrics } from './metrics.ts';
+import { flushRaceReplays } from './modes/race.ts';
 import {
 	clientIp,
 	isOriginAllowed,
@@ -40,6 +41,8 @@ export type WebHandler = (req: IncomingMessage, res: ServerResponse, next?: () =
 export interface ServerOptions extends Omit<LobbyOptions, 'maps' | 'db'> {
 	/** 0 = random free port. Default PORT env or 27015. */
 	port?: number;
+	/** Private loopback metrics listener. Omit to disable, 0 for an ephemeral test port. */
+	metricsPort?: number;
 	/** Apply public connection-limit defaults when hosting a quick tunnel. */
 	publicHost?: boolean;
 	/** Bind address. Default HOST env or all interfaces. */
@@ -66,6 +69,7 @@ export interface ServerOptions extends Omit<LobbyOptions, 'maps' | 'db'> {
 
 export interface GameServer {
 	port: number;
+	metricsPort: number | null;
 	host: string;
 	lobby: Lobby;
 	db: Db;
@@ -101,6 +105,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 		);
 	}
 	const port = opts.port ?? Number(process.env.PORT || DEFAULT_PORT);
+	const metricsPort = opts.metricsPort ?? parseOptionalInt(process.env.METRICS_PORT, 'METRICS_PORT', 1);
+	if (metricsPort !== undefined && (!Number.isInteger(metricsPort) || metricsPort < 0 || metricsPort > 65535)) {
+		throw new Error('METRICS_PORT must be a valid TCP port');
+	}
 	const host = opts.host ?? (process.env.HOST?.trim() || undefined);
 	const dbPath = opts.dbPath ?? (process.env.DB_PATH || DEFAULT_DB_PATH);
 	const trustProxy =
@@ -138,7 +146,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 	const closeGraceMs = opts.closeGraceMs ?? DEFAULT_CLOSE_GRACE_MS;
 
 	const db = new Db(dbPath);
-	const metrics = new ServerMetrics(MODE_TICK_HZ);
+	const snapshotHz = opts.snapshotHz ?? parseSnapshotHz(process.env.SNAPSHOT_HZ);
+	const metrics = new ServerMetrics(MODE_TICK_HZ, undefined, snapshotHz);
 	let lobby: Lobby;
 	try {
 		lobby = new Lobby({
@@ -152,7 +161,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 			maps,
 			db,
 			initialMap: opts.initialMap ?? defaultMapId(maps),
-			snapshotHz: opts.snapshotHz ?? parseSnapshotHz(process.env.SNAPSHOT_HZ),
+			snapshotHz,
 			adminUsernames: opts.adminUsernames ?? parseAdminUsernames(process.env.ADMIN_USERNAMES)
 		});
 	} catch (err) {
@@ -184,11 +193,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 			return;
 		}
 		if (path === '/metrics') {
-			res.writeHead(200, {
-				'content-type': 'text/plain; version=0.0.4; charset=utf-8',
-				'cache-control': 'no-store'
-			});
-			res.end(metrics.render(lobby));
+			res.writeHead(404, { 'content-type': 'text/plain' }).end('not found');
 			return;
 		}
 		if (path === '/ws') {
@@ -231,15 +236,29 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 		wss.handleUpgrade(req, socket, head, (ws) => lobby.handleConnection(ws, ip));
 	});
 
-	try {
-		await new Promise<void>((ok, fail) => {
-			http.once('error', fail);
-			http.listen(port, host, () => {
-				http.off('error', fail);
-				ok();
-			});
+	const metricsHttp = metricsPort === undefined ? null : createServer((req, res) => {
+		if (req.method !== 'GET' || req.url !== '/metrics') {
+			res.writeHead(404).end();
+			return;
+		}
+		res.writeHead(200, {
+			'content-type': 'text/plain; version=0.0.4; charset=utf-8',
+			'cache-control': 'no-store'
+		}).end(metrics.render(lobby));
+	});
+	const listen = (server: typeof http, port: number, host?: string) => new Promise<void>((ok, fail) => {
+		server.once('error', fail);
+		server.listen(port, host, () => {
+			server.off('error', fail);
+			ok();
 		});
+	});
+	try {
+		if (metricsHttp) await listen(metricsHttp, metricsPort!, '127.0.0.1');
+		await listen(http, port, host);
 	} catch (err) {
+		metricsHttp?.close();
+		wss.close();
 		lobby.close();
 		metrics.close();
 		db.close();
@@ -300,7 +319,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 				});
 				http.closeAllConnections();
 			});
+			if (metricsHttp) await new Promise<void>((done) => {
+				metricsHttp.close(() => done());
+				metricsHttp.closeAllConnections();
+			});
 			if (backups) await backups.stop();
+			await flushRaceReplays(db);
 			metrics.close();
 			db.close();
 		})();
@@ -309,6 +333,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 
 	return {
 		port: addr.port,
+		metricsPort: metricsHttp ? (metricsHttp.address() as AddressInfo).port : null,
 		host: addr.address,
 		lobby,
 		db,

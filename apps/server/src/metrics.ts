@@ -95,8 +95,8 @@ export class ServerMetrics implements LobbyMetricsHooks {
 	private readonly bytes: BytesRate;
 	private framesDropped = 0;
 
-	constructor(modeTickHz: number, private readonly now: () => number = () => performance.now()) {
-		this.snapshotLateness = new LatenessRing(1000 / SNAPSHOT_HZ);
+	constructor(modeTickHz: number, private readonly now: () => number = () => performance.now(), snapshotHz = SNAPSHOT_HZ) {
+		this.snapshotLateness = new LatenessRing(1000 / snapshotHz);
 		this.modeLateness = new LatenessRing(1000 / modeTickHz);
 		this.bytes = new BytesRate(this.now());
 		this.eld = monitorEventLoopDelay({ resolution: 10 });

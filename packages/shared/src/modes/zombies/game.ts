@@ -642,13 +642,13 @@ export class ZombiesGame {
 		}
 		if (!p.ws.fire(now)) return reject(p.ws.reloading(now) ? 'reloading' : p.ws.mag <= 0 ? 'empty' : 'too fast');
 		const dir = { x: d.x / len, y: d.y / len, z: d.z / len };
-		if (p.team === 'zombie') return { ok: true, events: this.claw(p, o, dir, now) };
+		if (p.team === 'zombie') return { ok: true, events: this.claw(p, o, dir, now, shot.playerRenderTime) };
 		const tick = Number.isFinite(shot.tick) ? shot.tick : this.tick;
 		return { ok: true, events: this.resolveShot(p, o, dir, tick, shot.playerRenderTime) };
 	}
 
 	/** Player-zombie melee: the nearest survivor in reach and in the cone takes one hit. */
-	private claw(p: ZmPlayer, o: Vec3, d: Vec3, now: number): ZmEvent[] {
+	private claw(p: ZmPlayer, o: Vec3, d: Vec3, now: number, playerRenderTime?: number): ZmEvent[] {
 		const def = WEAPONS.claws;
 		this.pending.push({ e: 'shot', by: p.id, weapon: 'claws', o: { ...o }, d: { ...d }, len: 0 });
 		if (this.phase !== 'playing') return this.flush();
@@ -656,9 +656,11 @@ export class ZombiesGame {
 		let bestT = Infinity;
 		for (const s of this.survivors()) {
 			if (!s.pos) continue;
-			const h = meleeZombie(o, d, { x: s.pos.x, y: s.pos.y, z: s.pos.z, yaw: s.pos.yaw ?? 0 }, def.range, def.coneDeg);
+			const rewound = playerRenderTime === undefined ? undefined : this.playerPoseAt(s.poseHistory, playerRenderTime);
+			const pose = rewound ?? { ...s.pos, yaw: s.pos.yaw ?? 0 };
+			const h = meleeZombie(o, d, pose, def.range, def.coneDeg);
 			if (!h || h.t >= bestT) continue;
-			const los = this.world.trace(o, { x: s.pos.x, y: s.pos.y, z: s.pos.z + 40 }, ZERO, ZERO);
+			const los = this.world.trace(o, { x: pose.x, y: pose.y, z: pose.z + 40 }, ZERO, ZERO);
 			if (los.fraction < 1) continue;
 			best = s;
 			bestT = h.t;
@@ -1231,7 +1233,7 @@ export class ZombiesGame {
 	recordPlayerSnapshot(entries: readonly SnapshotEntry[], now: number): void {
 		for (const entry of entries) {
 			const p = this.players.get(entry.id);
-			if (p?.team === 'zombie' && p.alive) this.recordPlayerPose(p, entry, now);
+			if (p?.alive) this.recordPlayerPose(p, entry, now);
 		}
 	}
 

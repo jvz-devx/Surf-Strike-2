@@ -180,11 +180,7 @@ export class InfectedMode implements ServerMode {
 			case 'fire': {
 				const { weapon, origin, dir } = input;
 				const claim = renderRewindMs(input.renderServerTimeMs, this.host.serverNow?.() ?? now, p, INF_HISTORY_MS);
-				// Live clients name no tick (infected has no binary sim-tick frame): the shot or swing is
-				// tested against the poses on the shooter's screen, ping + interpolation delay + allowance
-				// back (INF_HISTORY_MS,
-	infRewindMs, clamped to the history). A named tick (tools, tests) cannot reach
-				// further back than that either: it is clamped to the same window.
+				// Fall back to the legacy rewind budget when the client has no usable timing yet.
 				const rewindMs = claim ?? infRewindMs(p.ping);
 				const res =
 					claim !== undefined || input.tick === null
