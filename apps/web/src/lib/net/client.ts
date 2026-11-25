@@ -3,6 +3,7 @@ import {
 	BIN_GHOST,
 	BIN_SNAPSHOT,
 	BIN_ZOMBIES,
+	SERVER_ID_PROTOCOL,
 	decodeGhostFrame,
 	decodeSnapshot,
 	decodeZombies,
@@ -14,7 +15,7 @@ import {
 } from '@surf/shared';
 
 export interface NetClientHandlers {
-	open(): void;
+	open(serverId: string | null): void;
 	message(msg: ServerMessage): void;
 	snapshot(entries: SnapshotEntry[], arrivalMs: number): void;
 	/** BIN_GHOST frame: a map's record ghost, or "none" (docs/gameplay.md#ghosts). */
@@ -26,6 +27,7 @@ export interface NetClientHandlers {
 }
 
 const OPEN_TIMEOUT_MS = 8000;
+const SERVER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export class NetClient {
 	private ws: WebSocket | null;
@@ -39,7 +41,8 @@ export class NetClient {
 	) {
 		let ws: WebSocket | null = null;
 		try {
-			ws = new WebSocket(url);
+			// Older servers select the first offered protocol and accept a guest hello.
+			ws = new WebSocket(url, ['surf', SERVER_ID_PROTOCOL]);
 		} catch {
 			ws = null;
 		}
@@ -52,10 +55,8 @@ export class NetClient {
 		ws.binaryType = 'arraybuffer';
 		this.openTimer = setTimeout(() => this.close(), OPEN_TIMEOUT_MS);
 		ws.onopen = () => {
-			if (this.openTimer) clearTimeout(this.openTimer);
-			this.openTimer = null;
 			this.opened = true;
-			this.h.open();
+			if (ws.protocol !== SERVER_ID_PROTOCOL) this.identify(null);
 		};
 		ws.onmessage = (ev) => {
 			if (this.closed) return;
@@ -67,7 +68,14 @@ export class NetClient {
 				} catch {
 					return;
 				}
-				if (msg && typeof msg === 'object' && typeof msg.type === 'string') this.h.message(msg);
+				if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
+				if (msg.type === 'serverIdentity') {
+					if (ws.protocol === SERVER_ID_PROTOCOL && typeof msg.serverId === 'string' && SERVER_ID_RE.test(msg.serverId)) {
+						this.identify(msg.serverId);
+					}
+					return;
+				}
+				this.h.message(msg);
 			} else if (data instanceof ArrayBuffer && data.byteLength > 0) {
 				const kind = new Uint8Array(data, 0, 1)[0];
 				if (kind === BIN_GHOST) {
@@ -111,6 +119,13 @@ export class NetClient {
 			// ignore
 		}
 		this.finish();
+	}
+
+	private identify(serverId: string | null): void {
+		if (this.openTimer === null) return;
+		clearTimeout(this.openTimer);
+		this.openTimer = null;
+		this.h.open(serverId);
 	}
 
 	private finish(code = 0): void {

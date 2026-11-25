@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocketServer } from 'ws';
 import type { MapDef } from '@surf/shared';
-import { PROTOCOL_VERSION, RTV_BLOCK, TICK_RATE } from '@surf/shared';
+import { PROTOCOL_VERSION, RTV_BLOCK, SERVER_ID_PROTOCOL, TICK_RATE } from '@surf/shared';
 import { parseAdminUsernames } from './admin.ts';
 import {
 	DEFAULT_BACKUP_INTERVAL_MS,
@@ -172,6 +172,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 					players: lobby.playerCount
 				})
 			);
+					serverId: db.serverId,
 			return;
 		}
 		if (path === '/metrics') {
@@ -195,7 +196,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 		res.writeHead(404, { 'content-type': 'text/plain' }).end('not found');
 	});
 
-	const wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 });
+	const wss = new WebSocketServer({
+		noServer: true,
+		maxPayload: 8 * 1024,
+		handleProtocols: (protocols) => protocols.has(SERVER_ID_PROTOCOL)
+			? SERVER_ID_PROTOCOL
+			: (protocols.values().next().value ?? false)
+	});
 	http.on('upgrade', (req, socket, head) => {
 		socket.on('error', () => socket.destroy());
 		const reject = (status: number) => {

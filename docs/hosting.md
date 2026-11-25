@@ -46,7 +46,7 @@ The container listens on `HOST:PORT` (default `0.0.0.0:8080`):
 | --- | --- |
 | `/` and static assets | SvelteKit client (`@sveltejs/adapter-node` handler) |
 | `/ws` | Game WebSocket upgrade endpoint (plain HTTP returns `426 Upgrade Required`) |
-| `/health` | Readiness probe (`{ ok, version, tickRate, map, mode, players }`). Returns HTTP 503 during shutdown. |
+| `/health` | Readiness probe (`{ ok, serverId, version, tickRate, map, mode, players }`). Returns HTTP 503 during shutdown. |
 | `/metrics` | Prometheus text metrics (`text/plain; version=0.0.4`) |
 
 ## Environment variables

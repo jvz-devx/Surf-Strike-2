@@ -7,8 +7,8 @@ import { NetClient } from './client.js';
 import { DEV_FALLBACK_URL, discover, RETRY_MS, sessionScope, toWsUrl } from './discovery.js';
 
 export interface ConnectionHandlers {
-	connecting(url: string, scope: string): void;
-	open(client: NetClient): void;
+	connecting(url: string): void;
+	open(client: NetClient, scope: string | null): void;
 	message(msg: ServerMessage): void;
 	snapshot(entries: SnapshotEntry[], arrivalMs: number): void;
 	/** BIN_GHOST frame (docs/gameplay.md#ghosts). */
@@ -116,10 +116,10 @@ export class Connection {
 			this.h.idle();
 			return this.schedule();
 		}
-		this.h.connecting(url, sessionScope(url, discovered));
+		this.h.connecting(url);
 		const target = url;
 		const client: NetClient = new NetClient(target, {
-			open: () => this.h.open(client),
+			open: (serverId) => this.h.open(client, serverId === null ? null : sessionScope(target, serverId, discovered)),
 			message: (m) => this.h.message(m),
 			snapshot: (e, t) => this.h.snapshot(e, t),
 			ghost: (f) => this.h.ghost?.(f),

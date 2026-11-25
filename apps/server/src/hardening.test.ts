@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { createConnection } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { WebSocket } from 'ws';
-import { CLOSE_IP_LIMIT } from '@surf/shared';
+import { CLOSE_IP_LIMIT, SERVER_ID_PROTOCOL } from '@surf/shared';
 import { clientIp, isOriginAllowed, parseAllowedOrigins, parseTrustProxy } from './proxy.ts';
 import { startServer } from './server.ts';
 import { netState, sleep, TestClient, testMap } from './test-helpers.ts';
@@ -31,6 +34,36 @@ async function silentSocket(port: number, headers = '') {
 function fakeReq(remoteAddress: string, headers: Record<string, string | string[]> = {}) {
 	return { socket: { remoteAddress }, headers };
 }
+
+it('advertises the same server identity before hello and across database restarts', async () => {
+	const dir = mkdtempSync(join(tmpdir(), 'surf-server-id-'));
+	async function identity(dbPath: string): Promise<string> {
+		const server = await startServer({ ...LOCAL_SERVER, dbPath });
+		try {
+			const health = await fetch(`http://127.0.0.1:${server.port}/health`);
+			const { serverId } = await health.json() as { serverId: string };
+			assert.match(serverId, /^[0-9a-f-]{36}$/);
+			const client = new TestClient(server.port, undefined, ['surf', SERVER_ID_PROTOCOL]);
+			await client.open();
+			assert.equal(client.ws.protocol, SERVER_ID_PROTOCOL);
+			const greeting = await client.until(() => client.messages[0]);
+			assert.deepEqual(greeting, { type: 'serverIdentity', serverId });
+			const welcome = await client.hello('Identity');
+			assert.equal(welcome.serverId, serverId);
+			return serverId;
+		} finally {
+			await server.close();
+		}
+	}
+	try {
+		const firstPath = join(dir, 'first.db');
+		const first = await identity(firstPath);
+		assert.equal(await identity(firstPath), first);
+		assert.notEqual(await identity(join(dir, 'second.db')), first);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
 
 describe('TRUST_PROXY and clientIp', () => {
 	it('default (loopback) trusts CF-Connecting-IP and X-Forwarded-For only from loopback', () => {

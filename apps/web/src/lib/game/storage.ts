@@ -66,7 +66,7 @@ export const STORAGE_KEYS = {
 	binds: 'surf.binds',
 	name: 'surf.name',
 	playerId: 'surf.playerId',
-	/** Session for the server origin or quick-tunnel discovery source. */
+	/** Session for a database identity within its origin or discovery source. */
 	session: (scope: string) => `surf.session:${scope}`,
 	/** '1' once the player chose "Play as guest" (the account panel stays closed on load). */
 	guest: 'surf.guest',

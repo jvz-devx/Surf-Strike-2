@@ -86,8 +86,9 @@ Each client simulates its own movement with zero input lag. The server trusts po
 
 | Direction | Message | Encoding |
 | --- | --- | --- |
+| S→C | `serverIdentity { serverId }` immediately after the upgrade. Clients that negotiate `surf-server-identity` wait for this frame before sending hello. | JSON |
 | C→S | `hello { playerId, name, version, token? }` (`token`: stored session, auto-login) | JSON |
-| S→C | `welcome { selfId, map, mode, mapTimeLeft, players[], cvars, records, account }` (`account`: `{ username, admin }` or `null` for guests; `admin` only decides whether the client shows the Admin menu) | JSON |
+| S→C | `welcome { serverId, selfId, map, mode, mapTimeLeft, players[], cvars, records, account }` (`account`: `{ username, admin }` or `null` for guests; `admin` only decides whether the client shows the Admin menu) | JSON |
 | S→C | `maps { enabled[] }`: maps players may pick (votes, Change map); right after `welcome` and to everyone on every change | JSON |
 | C→S | `register { username, password }`, `login { username, password }`, `logout {}` (any time after `welcome`, on the open socket) | JSON |
 | S→C | `auth { ok: true, username, token?, records?, admin? }` / `auth { ok: false, error }` (`username: null` = logged out; also sent with `ok: false` after a `welcome` whose hello token was rejected) | JSON |
@@ -129,7 +130,7 @@ Username + password, no email or verification ([gameplay.md](gameplay.md#account
 
 - **Rules:** username 1–24 characters, no whitespace at all, printable characters only (no control, zero-width or bidi characters), stored NFC with its original casing and unique case-insensitively (`username_lower`). Password 5–128 characters, nothing else.
 - **Hashing:** `node:crypto` scrypt (N = 16384, r = 8, p = 1, 32-byte key) with a random 16-byte salt per account, stored as `scrypt$N$r$p$salt$hash` (base64url); checked with `timingSafeEqual`. A login for an unknown username hashes against a dummy hash so both failures take the same time and return the same error ("Wrong username or password.").
-- **Sessions:** a successful register or login returns a token (32 random bytes, base64url). The server stores only its SHA-256 hash in `sessions`, valid for 90 days. The client keeps the token in localStorage and sends it in `hello` to log in automatically. `logout` deletes the session row. Expired rows are deleted when looked up and pruned on each new login.
+- **Sessions:** a successful register or login returns a token (32 random bytes, base64url). The server stores only its SHA-256 hash in `sessions`, valid for 90 days. The client stores the token in localStorage under the server's SQLite identity and sends it in `hello` after receiving the identity on that socket. Discovery can rotate a quick tunnel without changing the identity. Players with sessions saved before this change sign in once to save a session under the new key. `logout` deletes the session row. Expired rows are deleted when looked up and pruned on each new login.
 - **Rate limits** (sliding one-minute window): 5 failed logins per connection and 5 per username (across all connections), then "Too many attempts. Wait a minute and try again."; 3 register attempts per connection. One register/login at a time per connection.
 - **One connection per account:** a login (message or hello token) closes any other connection of that account with 4002.
 - **Never logged:** passwords and tokens. The log shows only `login #id account <id> <username>` or `login failed #id`.
@@ -138,6 +139,7 @@ Username + password, no email or verification ([gameplay.md](gameplay.md#account
 | --- | --- |
 | `accounts` | `id`, `username`, `username_lower` (unique), `password_hash`, `created_at`, `last_login` |
 | `sessions` | `token_hash` (SHA-256 hex), `account_id`, `created_at`, `expires_at` |
+| `server_settings` | `key` (primary key), `value`. The `serverId` row holds the UUID generated when the database is first opened by this version. |
 | `replays` | `map` (primary key), `account_id`, `time_ticks`, `samples`, `data` (deflate-raw BLOB), `created_at`: one record ghost per map, replaced only by a faster validated account run ([gameplay.md](gameplay.md#ghosts)) |
 | `owned_items` | `account_id`, `item_id` (primary key together), `bought_at`, `price` ([economy.md](economy.md#shop)) |
 | `equipped` | `account_id`, `slot` (primary key together), `item_id`; references `owned_items` |
