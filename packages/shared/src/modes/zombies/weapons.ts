@@ -50,6 +50,8 @@ export interface WeaponDef {
 	pellets?: number;
 	/** Shotguns: pellet scatter half-angle (degrees) around the aim. */
 	pelletSpread?: number;
+	/** Time after switching to this weapon before it can fire (ms, the draw animation); default 0. */
+	deployMs?: number;
 }
 
 /** Zombie hit points. */
@@ -73,7 +75,8 @@ export const WEAPONS: Readonly<Record<WeaponId, WeaponDef>> = Object.freeze({
 		spread: 1.6,
 		scopedSpread: 1.6,
 		zoomFov: null,
-		knockback: 40
+		knockback: 40,
+		deployMs: 650
 	},
 	pistol: {
 		id: 'pistol',
@@ -92,7 +95,8 @@ export const WEAPONS: Readonly<Record<WeaponId, WeaponDef>> = Object.freeze({
 		spread: 0.5,
 		scopedSpread: 0.5,
 		zoomFov: null,
-		knockback: 80
+		knockback: 80,
+		deployMs: 250
 	},
 	knife: {
 		id: 'knife',
@@ -111,7 +115,8 @@ export const WEAPONS: Readonly<Record<WeaponId, WeaponDef>> = Object.freeze({
 		spread: 0,
 		scopedSpread: 0,
 		zoomFov: null,
-		knockback: 0
+		knockback: 0,
+		deployMs: 200
 	},
 	sniper: {
 		id: 'sniper',
@@ -130,7 +135,8 @@ export const WEAPONS: Readonly<Record<WeaponId, WeaponDef>> = Object.freeze({
 		spread: 3,
 		scopedSpread: 0,
 		zoomFov: 40,
-		knockback: 0
+		knockback: 0,
+		deployMs: 600
 	},
 	barrett: {
 		id: 'barrett',
@@ -149,7 +155,8 @@ export const WEAPONS: Readonly<Record<WeaponId, WeaponDef>> = Object.freeze({
 		spread: 2.8,
 		scopedSpread: 0,
 		zoomFov: 38,
-		knockback: 140
+		knockback: 140,
+		deployMs: 650
 	},
 	striker: {
 		id: 'striker',
@@ -170,7 +177,8 @@ export const WEAPONS: Readonly<Record<WeaponId, WeaponDef>> = Object.freeze({
 		spread: 1.2,
 		scopedSpread: 1.2,
 		zoomFov: null,
-		knockback: 28 // per pellet
+		knockback: 28, // per pellet
+		deployMs: 450
 	},
 	smg: {
 		id: 'smg',
@@ -189,7 +197,8 @@ export const WEAPONS: Readonly<Record<WeaponId, WeaponDef>> = Object.freeze({
 		spread: 1.3,
 		scopedSpread: 1.3,
 		zoomFov: null,
-		knockback: 30
+		knockback: 30,
+		deployMs: 350
 	},
 	claws: {
 		id: 'claws',
@@ -279,6 +288,15 @@ export class WeaponState {
 		this.reserve = WEAPONS[weapon].reserve;
 		this.reloadEndsAt = 0;
 		this.nextFireAt = 0;
+	}
+
+	/**
+	 * The weapon was just switched to: it cannot fire before its draw time
+	 * (`deployMs`, scaled by the fire tolerance like the fire interval).
+	 */
+	deploy(now: number): void {
+		const ms = (this.def.deployMs ?? 0) * this.fireTolerance;
+		if (ms > 0) this.nextFireAt = Math.max(this.nextFireAt, now + ms);
 	}
 
 	/** Refill the reserve (checkpoints); the magazine is kept. */

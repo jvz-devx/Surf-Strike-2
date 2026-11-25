@@ -8,7 +8,7 @@
 		"start": "tsx src/index.ts",
 		"host": "tsx src/host.ts",
 		"check": "tsc --noEmit",
-		"test": "node --import tsx --test src/*.test.ts"
+		"test": "node --import tsx --test src/*.test.ts ../../tools/dev-launch.test.ts"
 	},
 	"dependencies": {
 		"@surf/shared": "workspace:*",

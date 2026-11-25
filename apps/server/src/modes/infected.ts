@@ -3,26 +3,28 @@
  * `InfectedGame` (round flow, teams, limited ammo, lag-compensated hits,
  * throwing-knife projectiles, UAV pulses) runs here on the latest state
  * packets; clients send `fire`/`reload`/`loadout`/`throwKnife`/`placeBeacon`/`callMoab`
- * and display the results.
+ * (checked in infected-input.ts) and display the results.
  */
 import type { InfEvent, InfPerkId, InfPhase, MapRecordInfo, NetState, ScoreRow, ServerMessage, WeaponId } from '@surf/shared';
 import {
 	buildCollisionWorld,
 	decayed,
 	FLAG_DUCKED,
+	FLAG_ON_GROUND,
 	INF_PERK_KILLS,
 	INF_ROUND_SECS,
 	INF_SECONDARY,
-	INF_SIM_HZ,
 	INF_UAV_INTERVAL_MS,
 	InfectedGame,
 	INFECTED_PAY,
 	infEventRoute,
+	infRewindMs,
 	Status,
 	WEAPONS,
 	type InfectedGameOptions
 } from '@surf/shared';
 import type { Command } from '../commands.ts';
+import { clampFireTick, parseInfInput } from './infected-input.ts';
 import type { ModeClientMessage, ModeHost, ModePlayer, ServerMode } from './types.ts';
 import { EMPTY_RECORDS } from './types.ts';
 
@@ -141,7 +143,19 @@ export class InfectedMode implements ServerMode {
 	}
 
 	state(p: ModePlayer, s: NetState): void {
-		this.game.setPlayerPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0, yaw: s.yaw });
+		// The view and the motion too: the hit body leans, runs, jumps and aims as the drawn one does.
+		this.game.setPlayerPos(p.id, {
+			x: s.x,
+			y: s.y,
+			z: s.z,
+			ducked: (s.flags & FLAG_DUCKED) !== 0,
+			yaw: s.yaw,
+			pitch: s.pitch,
+			vx: s.vx,
+			vy: s.vy,
+			vz: s.vz,
+			onGround: (s.flags & FLAG_ON_GROUND) !== 0
+		});
 	}
 
 	zone(): void {}
@@ -153,31 +167,37 @@ export class InfectedMode implements ServerMode {
 	/** fire / reload / loadout (weapon switch) / throwKnife / placeBeacon / callMoab from a player. */
 	message(p: ModePlayer, msg: ModeClientMessage): void {
 		if (p.spectating || !this.game.hasPlayer(p.id)) return;
+		const input = parseInfInput(msg);
+		if (!input) return;
 		const now = this.host.now();
-		switch (msg.type) {
+		switch (input.type) {
 			case 'fire': {
-				const rawTick = Number(msg.tick);
-				// Live clients send 2^31-1 because infected has no binary sim-tick frame:
-				// rewind by half-RTT (clamped to INF_HISTORY_MS inside InfectedGame).
-				const tick =
-					!Number.isFinite(rawTick) || rawTick >= 0x7fffffff
-						? this.game.tick - Math.round(((Math.max(0, p.ping) * 0.5) / 1000) * INF_SIM_HZ)
-						: rawTick;
-				const res = this.game.fire(p.id, { weapon: msg.weapon, origin: msg.origin, dir: msg.dir, tick }, now);
+				const { weapon, origin, dir } = input;
+				// Live clients name no tick (infected has no binary sim-tick frame): the shot or swing is
+				// tested against the poses on the shooter's screen, ping + interpolation delay + allowance
+				// back (infRewindMs, clamped to the history). A named tick (tools, tests) cannot reach
+				// further back than that either: it is clamped to the same window.
+				const rewindMs = infRewindMs(p.ping);
+				const res =
+					input.tick === null
+						? this.game.fire(p.id, { weapon, origin, dir, tick: this.game.tick, rewindMs }, now)
+						: this.game.fire(p.id, { weapon, origin, dir, tick: clampFireTick(input.tick, this.game.tick, rewindMs) }, now);
 				// Holding an angle and shooting is playing (docs/economy.md): a real shot of a gun, not a swing.
-				if (res.ok && this.game.phase === 'playing' && (WEAPONS[msg.weapon]?.magazine ?? 0) > 0) this.host.economy.acted(p.id);
+				if (res.ok && this.game.phase === 'playing' && WEAPONS[weapon].magazine > 0) this.host.economy.acted(p.id);
 				this.dispatch(res.events);
 				break;
 			}
 			case 'reload':
-				this.game.reload(p.id, now);
+				// A reload that starts is heard by the other players (`reload` event, not sent to the reloader).
+				if (this.game.reload(p.id, now)) this.dispatch(this.game.takeEvents());
 				return;
 			case 'loadout':
-				this.dispatch(this.game.selectWeapon(p.id, msg.weapon, now));
+				this.dispatch(this.game.selectWeapon(p.id, input.weapon, now));
 				this.dirty = true;
 				break;
 			case 'throwKnife': {
-				const res = this.game.throwKnife(p.id, msg.origin, msg.dir, now);
+				// No rewind: the knife is a projectile the server simulates from here on.
+				const res = this.game.throwKnife(p.id, input.origin, input.dir, now);
 				this.dispatch(res.events);
 				break;
 			}
@@ -286,7 +306,8 @@ export class InfectedMode implements ServerMode {
 				for (const p of h.players()) if (p.id !== route.except) h.send(p, msg);
 			} else h.broadcast(msg);
 			if (URGENT.has(ev.e)) this.urgent = true;
-			else if (ev.e !== 'shot') this.dirty = true;
+			// A shot and a reload change nothing the mode state shows.
+			else if (ev.e !== 'shot' && ev.e !== 'reload') this.dirty = true;
 			this.announce(ev);
 			this.pay(ev);
 		}

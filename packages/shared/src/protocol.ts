@@ -21,6 +21,13 @@ export const MAX_PLAYERS = 32;
 export const CLOSE_IP_LIMIT = 4010;
 export const MAX_NAME = 24;
 export const MAX_CHAT = 128;
+/** Snapshots (all players' states) go to every client at this rate (Hz). */
+export const SNAPSHOT_HZ = 32;
+/**
+ * Clients draw remote players this far in the past (ms), interpolated between
+ * snapshots. Server lag compensation rewinds by the same amount.
+ */
+export const INTERP_DELAY_MS = 100;
 
 /** Player status shown on the scoreboard. */
 export const Status = {
@@ -41,7 +48,7 @@ export const Status = {
 	Hider: 9,
 	/** Hide and seek: seeking (picked at round start or found). */
 	Seeker: 10,
-	/** Infected: Patient Zero (first infected, keeps gun until first infection). */
+	/** Infected: Patient Zero (the first infected, until the first infection). */
 	Alpha: 11,
 	/** Infected: turned player hunting with claws and throwing knife. */
 	Infected: 12

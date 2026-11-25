@@ -337,7 +337,8 @@ describe('infected mode', () => {
 		assert.equal(thrown[0]!.ownerId, a!.id);
 		assert.equal(lastState(a!.c).knives.length, 1);
 		const inf = await runUntil(() => events(a!.c, 'infect', n)[0], 500);
-		assert.deepEqual(inf, { e: 'infect', id: c!.id, by: a!.id, method: 'knife', timeAdded: INF_INFECTION_BONUS_SECS });
+		// Thrown along +x: the event carries the way the knife travelled.
+		assert.deepEqual(inf, { e: 'infect', id: c!.id, by: a!.id, method: 'knife', timeAdded: INF_INFECTION_BONUS_SECS, dx: 1, dy: 0 });
 		assert.equal(events(a!.c, 'knifeRemove', n).length, 1);
 		assert.equal(game().playerView(a!.id)!.score - before, INF_SCORE_INFECT + INF_SCORE_KNIFE_BONUS);
 		assert.equal(chats(a!.c, /Alice infected Carol with a throwing knife! \+20 s/, n).length, 1);
@@ -406,7 +407,8 @@ describe('infected mode', () => {
 		const b = events(a!.c, 'knifeBounce', n);
 		assert.equal(b.length, 1);
 		assert.ok(b[0]!.vx < 0 && b[0]!.x < 400);
-		assert.deepEqual(inf, { e: 'infect', id: d!.id, by: a!.id, method: 'bank', timeAdded: INF_INFECTION_BONUS_SECS });
+		// Thrown along +x, it came back off the wall: the direction after the bounce.
+		assert.deepEqual(inf, { e: 'infect', id: d!.id, by: a!.id, method: 'bank', timeAdded: INF_INFECTION_BONUS_SECS, dx: -1, dy: 0 });
 		assert.equal(game().playerView(a!.id)!.score - before, INF_SCORE_INFECT + INF_SCORE_KNIFE_BONUS + INF_SCORE_BANK_BONUS);
 		assert.equal(chats(a!.c, /BANK SHOT! Alice infected Dave with a throwing knife off the wall! \+20 s/, n).length, 1);
 		await moveTo(d!, -1000, -900);
@@ -552,7 +554,7 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 	const survivorsOf = () => lastState(ps.Ann!.c).players.filter((p) => p.team === 'survivor').map((p) => byId(p.id));
 	const toPhase = (phase: InfState['phase'], maxMs: number) => runUntil(() => game().phase === phase, maxMs);
 
-	it('round 1 (barrett): half-RTT lag compensation (tick 2^31-1), gun kill + scavenger, Patient Zero infects', async () => {
+	it('round 1 (barrett): lag compensation by ping + view delay (tick 2^31-1), gun kill + scavenger, Patient Zero infects', async () => {
 		for (const name of ['Ann', 'Ben', 'Cat', 'Dan']) await join(name);
 		const { Ann: a, Ben: b, Cat: c, Dan: d } = ps as Record<string, P>;
 		assert.equal(a!.c.of('welcome')[0]!.mode, 'infected');
@@ -568,11 +570,14 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		await moveTo(c!, 300, 1350);
 		await moveTo(d!, 1400, -1400);
 		await run(300);
-		// Ann moves on; Ben (200 ms ping) shoots where he saw her with the live client's tick 2^31-1.
+		// Ann moves on; Ben shoots where he saw her with the live client's tick 2^31-1.
 		// He uses his pistol (slot 2): a body hit that does not kill.
+		// Without ping his screen is 116 ms behind (interpolation delay + allowance): after 250 ms he sees the new spot.
 		b!.c.send({ type: 'loadout', weapon: 'pistol' });
+		await settle();
+		await run(200); // the draw (deployMs × the fire tolerance)
 		await moveTo(a!, -400, 1500);
-		await run(60);
+		await run(250);
 		const n = b!.c.messages.length;
 		lobbyClient(b!).ping = 0;
 		const o = eye(b!);
@@ -584,11 +589,11 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		assert.equal(game().secondaryOf(b!.id)!.mag, 11, 'the pistol fired');
 		assert.equal(events(b!.c, 'hit', n).length, 0, 'no ping: misses the old spot');
 		await run(200);
-		// Re-stage: old pose 6 ticks back with a 200 ms ping (100 ms half-RTT).
+		// Re-stage with a 200 ms ping: his screen is 316 ms behind, so 250 ms after the move he still sees the old spot.
 		await moveTo(a!, -400, 1350);
-		await run(300);
+		await run(500);
 		await moveTo(a!, -400, 1500);
-		await run(60);
+		await run(250);
 		lobbyClient(b!).ping = 200;
 		const m = b!.c.messages.length;
 		b!.c.send({ type: 'fire', weapon: 'pistol', origin: o, dir, tick: 0x7fffffff });
@@ -596,11 +601,12 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		assert.deepEqual(
 			events(b!.c, 'hit', m).map((h) => [h.targetId, h.kill]),
 			[[a!.id, false]],
-			'half-RTT rewind lands the hit'
+			'the rewind to what he saw lands the hit'
 		);
 		lobbyClient(b!).ping = 0;
 		b!.c.send({ type: 'loadout', weapon: 'barrett' });
-		await run(200); // fire rate
+		await settle();
+		await run(500); // fire rate and the draw
 		assert.equal(game().weaponOf(b!.id)!.weapon, 'barrett');
 		assert.equal(game().primaryOf(b!.id)!.mag, 10, 'the primary kept its magazine');
 
@@ -666,7 +672,7 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		assert.ok(kv, 'bounced off the deck');
 		await moveTo(d!, Math.round(kv.x + kv.vx * 0.08), Math.round(kv.y + kv.vy * 0.08), Math.max(0, Math.round(kv.z + kv.vz * 0.08 - 30)));
 		const inf = await runUntil(() => events(a!.c, 'infect', n)[0], 400);
-		assert.deepEqual(inf, { e: 'infect', id: d!.id, by: c!.id, method: 'bank', timeAdded: INF_INFECTION_BONUS_SECS });
+		assert.deepEqual(inf, { e: 'infect', id: d!.id, by: c!.id, method: 'bank', timeAdded: INF_INFECTION_BONUS_SECS, dx: -1, dy: 0 });
 		assert.equal(chats(a!.c, /BANK SHOT! Cat infected Dan/, n).length, 1);
 
 		// Ben is the last survivor against three infected: UAV pulses, announced once.
@@ -980,6 +986,7 @@ describe('infected kill streaks, three slots and the M.O.A.B. over the wire', ()
 		m!.c.send({ type: 'loadout', weapon: 'barrett' });
 		await settle();
 		assert.equal(game().weaponOf(m!.id)!.weapon, 'barrett');
+		await run(500); // the draw
 
 		// Nothing to call yet.
 		n = d!.c.messages.length;

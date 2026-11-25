@@ -74,19 +74,37 @@
  * a `hit` with targetId 0 for the hitmarker); infected cannot. Beacons go
  * when their owner leaves or spectates and at every round end / grace /
  * waiting.
+ *
+ * Hit registration: bullets, melee and throwing knives are tested against the
+ * player hitboxes (../zombies/hitbox.ts: capsules on the drawn character's
+ * bones, posed like it). Shots and swings are tested against the poses the shooter
+ * saw (lagcomp.ts: per-player pose history, never from before the target's
+ * last spawn or teleport). Throwing knives are simulated here and hit the
+ * current poses.
+ *
+ * Round stats (stats.ts): shots, hits, headshots, kills, infections, best
+ * streak and time survived per player, reset with the score at every grace
+ * period, kept through a leave and rejoin, sent with the `end` event for the
+ * players present.
  */
+import { copyMotion, PlayerBody, restMotion } from '../../body-motion.ts';
+import type { BodyInput } from '../../body-pose.ts';
 import type { CollisionWorld } from '../../collision/api.ts';
 import type { MapDef, Spawn, Zone } from '../../maps/types.ts';
+import { SURF_CVARS } from '../../cvars.ts';
 import { DUCK_VIEW_HEIGHT, HULL_MAX, HULL_MIN, VIEW_HEIGHT } from '../../movement/api.ts';
 import type { Vec3 } from '../../types.ts';
 import { hullInBox, tagSpawns } from '../tag.ts';
 import { ZM_FIRE_TOLERANCE, ZM_RELOAD_TOLERANCE, ZM_SLOW_FACTORS, ZM_SLOW_MS, zmSlowFactor } from '../zombies/game.ts';
-import { headCentre, meleeZombie, rayCylinder, raySphere, rayZombie, ZOMBIE_BODY, ZOMBIE_HEAD, type HitboxPose } from '../zombies/hitbox.ts';
+import { meleePlayer, playerUp, rayPlayer, raySphere, sweepPlayer, type PlayerPose } from '../zombies/hitbox.ts';
 import { hitDamage, isWeaponId, WEAPONS, WeaponState, type WeaponId } from '../zombies/weapons.ts';
+import { INF_HISTORY_MS, PoseHistory } from './lagcomp.ts';
+import { infRoundStat, newInfTally, type InfTally } from './stats.ts';
 
 export type InfPhase = 'waiting' | 'grace' | 'playing' | 'ended';
 export type InfTeam = 'survivor' | 'infected';
 export type InfSpawnReason = 'round' | 'join' | 'respawn' | 'fall' | 'beacon';
+/** 'gun' is sent by older servers only (Patient Zero had the round gun). */
 export type InfMethod = 'claws' | 'knife' | 'bank' | 'gun';
 
 export const INF_MIN_PLAYERS = 2;
@@ -101,16 +119,16 @@ export const INF_SURVIVOR_HP = 5;
 export const INF_RESPAWN_SECS = 3;
 /** Infected speed with claws; holding a gun uses WEAPONS[weapon].moveSpeed. */
 export const INF_INFECTED_SPEED = 265;
+/** Horizontal speed (u/s) no play in this mode reaches (`SPEED_LIMIT` of the economy). */
+export const INF_SPEED_LIMIT = 1000;
 export const INF_SIM_HZ = 64;
 export const INF_STEP_MS = 1000 / INF_SIM_HZ;
-/** Lag compensation history of player poses. */
-export const INF_HISTORY_MS = 400;
 /** A fire/throw origin may be this far from the player's last known eye. */
 export const INF_ORIGIN_SLACK = 80;
 /** UAV pulse interval on the last survivor (with >= 2 infected). */
 export const INF_UAV_INTERVAL_MS = 5000;
 /** Survivor primary per round: INF_PRESETS[(round - 1) % length]. */
-export const INF_PRESETS: readonly WeaponId[] = ['barrett', 'striker', 'lmg', 'smg'];
+export const INF_PRESETS: readonly WeaponId[] = ['barrett', 'striker', 'lmg', 'smg', 'sniper'];
 /** Survivor secondary (slot 2) every round. */
 export const INF_SECONDARY: WeaponId = 'pistol';
 
@@ -210,6 +228,8 @@ export const INF_KNIFE_LIFETIME_SECS = 45;
 /** Knife hull for world traces. */
 export const INF_KNIFE_MIN: Vec3 = Object.freeze({ x: -2, y: -2, z: -2 });
 export const INF_KNIFE_MAX: Vec3 = Object.freeze({ x: 2, y: 2, z: 2 });
+/** Melee line of sight: from the eye to a point this far up the target's leaning body. */
+export const INF_MELEE_LOS_HEIGHT = 40;
 /** The knife spawns this far in front of the eye (traced). */
 const KNIFE_SPAWN_DIST = 16;
 /** The pickup sight line starts in the owner's hull at the knife's height, clamped to these heights above the feet. */
@@ -222,8 +242,9 @@ const KNIFE_DROP_SPEED = 40;
 /** Grace after a teleport (stale positions in flight are ignored for fall checks). */
 const TELEPORT_GRACE_MS = 1000;
 const HISTORY_TICKS = Math.ceil(INF_HISTORY_MS / INF_STEP_MS);
-/** Frames kept: the current tick and HISTORY_TICKS back (the clamp limit itself). */
-const HISTORY_FRAMES = HISTORY_TICKS + 1;
+/** Poses kept per player: the current tick and HISTORY_TICKS back, plus slack for uneven update times. */
+const HISTORY_SAMPLES = HISTORY_TICKS + 3;
+const round3 = (v: number) => Math.round(v * 1000) / 1000;
 /** Kill height when the map has no teleport zones. */
 const FALLBACK_KILL_Z = -32768;
 
@@ -233,6 +254,13 @@ export interface InfPlayerPos {
 	z: number;
 	ducked: boolean;
 	yaw?: number;
+	/** View pitch (Source degrees, positive = down): the raised arms of the model follow it. */
+	pitch?: number;
+	/** Velocity (u/s) and ground state: the hit body leans, runs and jumps with them. Absent: standing. */
+	vx?: number;
+	vy?: number;
+	vz?: number;
+	onGround?: boolean;
 }
 
 export interface InfPlayerView {
@@ -320,12 +348,26 @@ export type InfEvent =
 			reason: InfSpawnReason;
 	  }
 	| { e: 'alpha'; id: number }
-	| { e: 'infect'; id: number; by: number | null; method: InfMethod; timeAdded: number }
+	/** `dx`, `dy` (throwing knife and bank shot): unit horizontal direction the knife travelled when it hit, for the victim's hit-direction cue. */
+	| { e: 'infect'; id: number; by: number | null; method: InfMethod; timeAdded: number; dx?: number; dy?: number }
 	| { e: 'hit'; by: number; targetId: number; head: boolean; kill: boolean }
 	| { e: 'kill'; by: number; targetId: number; weapon: WeaponId; head: boolean; x: number; y: number; z: number; yaw: number }
-	| { e: 'shot'; by: number; weapon: WeaponId; o: Vec3; d: Vec3; len: number }
-	| { e: 'hurt'; id: number; hp: number; stacks: number; kx: number; ky: number }
+	/**
+	 * `pellets` (shotguns): every pellet after the first as flat
+	 * `[dx, dy, dz, len, ...]` (unit direction, length to the first surface or the
+	 * last pierced hit), so other clients draw one tracer per pellet.
+	 */
+	| { e: 'shot'; by: number; weapon: WeaponId; o: Vec3; d: Vec3; len: number; pellets?: number[] }
+	/** `dx`, `dy`: unit horizontal direction the hit travelled (attacker towards victim), also when the knockback is 0. */
+	| { e: 'hurt'; id: number; hp: number; stacks: number; kx: number; ky: number; dx?: number; dy?: number }
 	| { e: 'ammo'; id: number; weapon: WeaponId; mag: number; reserve: number; scavenger?: boolean }
+	/**
+	 * `id` started reloading `weapon`: the other players hear and see it (the reloader's client plays
+	 * its own, so it is not sent to them). `ms`: how long the reload takes the player (the weapon's time,
+	 * shorter with sleight of hand); 0: the reload that was running ended early (a weapon swap). Read it
+	 * with `infReloadMs`.
+	 */
+	| { e: 'reload'; id: number; weapon: WeaponId; ms?: number }
 	| { e: 'knifeThrow'; id: number; ownerId: number; x: number; y: number; z: number; vx: number; vy: number; vz: number }
 	| { e: 'knifeBounce'; id: number; x: number; y: number; z: number; vx: number; vy: number; vz: number }
 	| { e: 'knifeStick'; id: number; ownerId: number; x: number; y: number; z: number; pitch: number; yaw: number }
@@ -344,7 +386,42 @@ export type InfEvent =
 	| { e: 'moabCall'; by: number; secs: number }
 	/** Every living infected died (`kills`); the survivors win the round. */
 	| { e: 'moabDetonate'; by: number; kills: number }
-	| { e: 'end'; winner: 'survivors' | 'infected'; round: number; secs: number; survivorsLeft: number; topId: number | null; topScore: number };
+	/** `stats`: one row per player of the round (for the round summary); `nextLoadout`: the next round's survivor primary. */
+	| {
+			e: 'end';
+			winner: 'survivors' | 'infected';
+			round: number;
+			secs: number;
+			survivorsLeft: number;
+			topId: number | null;
+			topScore: number;
+			stats?: InfRoundStat[];
+			nextLoadout?: WeaponId;
+	  };
+
+/** Round summary row of one player (`end` event). */
+export interface InfRoundStat {
+	id: number;
+	/** Team when the round ended. */
+	team: InfTeam;
+	/** Was Patient Zero this round. */
+	alpha: boolean;
+	score: number;
+	/** Infected killed as a survivor. */
+	kills: number;
+	/** Survivors infected (as Patient Zero or infected). */
+	infections: number;
+	deaths: number;
+	/** Trigger pulls with a gun while the round was played, and how many of them hit a player. */
+	shots: number;
+	hits: number;
+	/** Trigger pulls that hit at least one player in the head. */
+	headshots: number;
+	/** Longest survivor kill streak this round. */
+	bestStreak: number;
+	/** Seconds survived as a survivor (the whole round for a survivor at the end). */
+	survivedSecs: number;
+}
 
 /** Who receives an event: one player (`to`), everyone except one (`except`), or everyone. */
 export function infEventRoute(ev: InfEvent): { to?: number; except?: number } {
@@ -358,17 +435,40 @@ export function infEventRoute(ev: InfEvent): { to?: number; except?: number } {
 			return { to: ev.by };
 		case 'shot':
 			return { except: ev.by };
+		case 'reload':
+			return { except: ev.id };
 		default:
 			return {};
 	}
+}
+
+/** Longest reload a `reload` event can name (ms). */
+export const INF_RELOAD_MAX_MS = 10_000;
+
+/**
+ * Length (ms) of the reload a `reload` event starts; 0 when the event ends a
+ * running one, or names a weapon that has nothing to reload. A missing or
+ * malformed `ms` counts as the weapon's own reload time.
+ */
+export function infReloadMs(ev: { weapon: unknown; ms?: unknown }): number {
+	const full = isWeaponId(ev.weapon) ? WEAPONS[ev.weapon].reloadMs : 0;
+	const ms = ev.ms;
+	if (full <= 0 || ms === 0) return 0;
+	return typeof ms === 'number' && ms > 0 && ms <= INF_RELOAD_MAX_MS ? ms : full;
 }
 
 export interface InfFire {
 	weapon: WeaponId;
 	origin: Vec3;
 	dir: Vec3;
-	/** Sim tick the shooter saw (lag compensation); clamped to the history. */
+	/** Sim tick the shooter saw (lag compensation); clamped to the history. Not used when `rewindMs` is given. */
 	tick: number;
+	/**
+	 * Live clients: age (ms) of the poses on the shooter's screen (`infRewindMs`
+	 * of their ping). The hit test uses the poses of `now - rewindMs`,
+	 * interpolated between history samples and clamped to INF_HISTORY_MS.
+	 */
+	rewindMs?: number;
 }
 
 export interface InfActionResult {
@@ -403,8 +503,12 @@ interface InfPlayer {
 	graceUntil: number;
 	/** Infected: respawns at this sim time while not alive. */
 	respawnAt: number;
-	/** Sim tick of the last spawn/teleport (lag compensation never rewinds past it). */
-	spawnTick: number;
+	/** Recent poses for lag compensation; cleared on every spawn/teleport, so it never rewinds past one. */
+	hist: PoseHistory;
+	/** The body as the characters show it, stepped towards every state (hit poses). */
+	body: PlayerBody;
+	/** Round stats (stats.ts); follow the player through the bench like the score. */
+	stats: InfTally;
 	slowUntil: number;
 	slowStacks: number;
 	/** Earliest time (ms) of the next beacon placement. */
@@ -447,11 +551,7 @@ interface Benched {
 	deaths: number;
 	/** Comes back holding a knife (held one, or was dead and due a fresh one). */
 	knife: boolean;
-}
-
-interface HistoryFrame {
-	tick: number;
-	poses: Map<number, HitboxPose>;
+	stats: InfTally;
 }
 
 type Teleport = Extract<Zone, { type: 'teleport' }>;
@@ -478,6 +578,25 @@ export interface InfectedGameOptions {
 export function infLoadout(round: number): WeaponId {
 	const n = INF_PRESETS.length;
 	return INF_PRESETS[(((Math.max(1, round) - 1) % n) + n) % n]!;
+}
+
+/** Keep a claimed velocity within what the mode's movement can do, in place. The server poses the hit body with it and clients draw it. */
+export function clampInfVelocity(v: { vx: number; vy: number; vz: number }): void {
+	const axis = (x: number) => Math.max(-SURF_CVARS.sv_maxvelocity, Math.min(SURF_CVARS.sv_maxvelocity, x));
+	const vx = axis(v.vx);
+	const vy = axis(v.vy);
+	const f = Math.min(1, INF_SPEED_LIMIT / (Math.hypot(vx, vy) || 1));
+	v.vx = vx * f;
+	v.vy = vy * f;
+	v.vz = axis(v.vz);
+}
+
+/** Velocity of a state packet for the hit body, clamped. A component that is not a number keeps its last value. */
+function bodyVelocity(pos: InfPlayerPos, last: InfPlayerPos | null): [number, number, number] {
+	const axis = (v: number | undefined, was: number | undefined) => (v === undefined ? 0 : Number.isFinite(v) ? v : (was ?? 0));
+	const v = { vx: axis(pos.vx, last?.vx), vy: axis(pos.vy, last?.vy), vz: axis(pos.vz, last?.vz) };
+	clampInfVelocity(v);
+	return [v.vx, v.vy, v.vz];
 }
 
 /** Pitch (Source: positive = down) and yaw in degrees of a direction. */
@@ -525,7 +644,9 @@ export class InfectedGame {
 	private nextKnifeId = 1;
 	private nextBeaconId = 1;
 	private nextUavAt = 0;
-	private history: HistoryFrame[] = [];
+	/** Scratch pose (current pose of a player for the history and knife tests). */
+	private readonly scratch: PlayerPose = { x: 0, y: 0, z: 0, yaw: 0, ducked: false, hunched: false };
+	private readonly bodyInput: BodyInput = { vx: 0, vy: 0, vz: 0, yaw: 0, pitch: 0, onGround: true, ducked: false };
 	private pending: InfEvent[] = [];
 	/** Players who left this round, by key. */
 	private readonly bench = new Map<string, Benched>();
@@ -572,7 +693,8 @@ export class InfectedGame {
 			if (this.phase !== 'waiting') {
 				// Survivors and dead infected are due a fresh knife; a living infected keeps what they held.
 				const knife = p.team !== 'infected' || !p.alive || p.hasKnife;
-				this.bench.set(p.key, { score: p.score, kills: p.kills, deaths: p.deaths, knife });
+				this.stopSurviving(p);
+				this.bench.set(p.key, { score: p.score, kills: p.kills, deaths: p.deaths, knife, stats: p.stats });
 			}
 			this.players.delete(id);
 			if (this.alphaId === id) this.alphaId = null;
@@ -589,6 +711,7 @@ export class InfectedGame {
 				p.score = b.score;
 				p.kills = b.kills;
 				p.deaths = b.deaths;
+				p.stats = b.stats;
 			}
 			if (this.phase === 'playing') {
 				this.makeInfected(p, false);
@@ -607,13 +730,24 @@ export class InfectedGame {
 	setPlayerPos(id: number, pos: InfPlayerPos): void {
 		const p = this.players.get(id);
 		if (!p || !Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) return;
-		if (!p.pos) p.pos = { ...pos };
+		// The hitboxes turn with the yaw, their arms with the pitch: one that is not a number keeps the last one.
+		const yaw = pos.yaw === undefined || Number.isFinite(pos.yaw) ? pos.yaw : (p.pos?.yaw ?? 0);
+		const pitch = pos.pitch === undefined || Number.isFinite(pos.pitch) ? pos.pitch : (p.pos?.pitch ?? 0);
+		// The body moves with the velocity: the same, within what the mode's movement can do.
+		const [vx, vy, vz] = bodyVelocity(pos, p.pos);
+		const onGround = pos.onGround !== false;
+		if (!p.pos) p.pos = { ...pos, yaw, pitch, vx, vy, vz, onGround };
 		else {
 			p.pos.x = pos.x;
 			p.pos.y = pos.y;
 			p.pos.z = pos.z;
 			p.pos.ducked = pos.ducked;
-			p.pos.yaw = pos.yaw;
+			p.pos.yaw = yaw;
+			p.pos.pitch = pitch;
+			p.pos.vx = vx;
+			p.pos.vy = vy;
+			p.pos.vz = vz;
+			p.pos.onGround = onGround;
 		}
 	}
 
@@ -692,7 +826,9 @@ export class InfectedGame {
 			pos: null,
 			graceUntil: 0,
 			respawnAt: 0,
-			spawnTick: 0,
+			hist: new PoseHistory(HISTORY_SAMPLES),
+			body: new PlayerBody(),
+			stats: newInfTally(),
 			slowUntil: 0,
 			slowStacks: 0,
 			nextBeaconAt: 0,
@@ -759,7 +895,8 @@ export class InfectedGame {
 
 	private spawnEvent(p: InfPlayer, s: Spawn, now: number, reason: InfSpawnReason): void {
 		p.graceUntil = now + TELEPORT_GRACE_MS;
-		p.spawnTick = this.tick;
+		p.hist.clear();
+		p.body.reset();
 		p.pos = { x: s.pos.x, y: s.pos.y, z: s.pos.z, ducked: false, yaw: s.yaw };
 		this.pending.push({
 			e: 'spawn',
@@ -826,9 +963,11 @@ export class InfectedGame {
 		if (surv.length === 0) return;
 		const p = surv[Math.min(surv.length - 1, Math.floor(this.rng() * surv.length))]!;
 		const alpha = this.infections === 0;
+		this.stopSurviving(p);
 		this.makeInfected(p, alpha);
 		this.ammoEvent(p);
 		if (alpha) {
+			p.stats.alpha = true;
 			this.alphaId = p.id;
 			this.pending.push({ e: 'alpha', id: p.id });
 		} else this.pending.push({ e: 'infect', id: p.id, by: null, method: 'claws', timeAdded: 0 });
@@ -845,18 +984,39 @@ export class InfectedGame {
 		const next =
 			weapon === 'knife' ? p.meleeWs : weapon === this.roundLoadout ? p.primaryWs : weapon === INF_SECONDARY ? p.secondaryWs : null;
 		if (!next || next.weapon !== weapon) return [];
+		let cancelled: WeaponId | null = null;
 		if (p.ws !== next) {
-			p.ws.update(now);
+			if (p.ws.reloading(now)) cancelled = p.ws.weapon;
 			p.ws.reloadEndsAt = 0; // switching away cancels a reload
 			p.ws = next;
+			// The draw: no shot before deployMs (× the fire tolerance on the server, like the fire rate).
+			next.deploy(now);
 		}
-		return [{ e: 'ammo', id, weapon: p.ws.weapon, mag: p.ws.mag, reserve: p.ws.reserve }];
+		const events: InfEvent[] = [{ e: 'ammo', id, weapon: p.ws.weapon, mag: p.ws.mag, reserve: p.ws.reserve }];
+		// The others see the reload; swaps themselves are not relayed.
+		if (cancelled) events.push({ e: 'reload', id, weapon: cancelled, ms: 0 });
+		return events;
 	}
 
+	/**
+	 * Start a reload of the held gun; false when it is refused (no gun held, a
+	 * full magazine, no reserve, already reloading). A reload that starts queues
+	 * a `reload` event for the other players: `takeEvents` returns it at once,
+	 * the next `update` otherwise. Its `ms` is the time on the player's own
+	 * screen: the server's shorter tolerance is for jitter only.
+	 */
 	reload(id: number, now: number): boolean {
 		const p = this.players.get(id);
 		if (!p || !p.alive) return false;
-		return p.ws.startReload(now, this.hasPerk(p, 'sleight') ? INF_SLEIGHT_RELOAD_FACTOR : 1);
+		const factor = this.hasPerk(p, 'sleight') ? INF_SLEIGHT_RELOAD_FACTOR : 1;
+		if (!p.ws.startReload(now, factor)) return false;
+		this.pending.push({ e: 'reload', id, weapon: p.ws.weapon, ms: Math.round(p.ws.def.reloadMs * factor) });
+		return true;
+	}
+
+	/** The events queued by calls that return none themselves (`reload`, `syncPlayers`), without waiting for the next `update`. */
+	takeEvents(): InfEvent[] {
+		return this.flush();
 	}
 
 	/** Call the earned M.O.A.B. (survivor with `moabReady`, while playing, none inbound). */
@@ -890,7 +1050,10 @@ export class InfectedGame {
 		const cadence = this.hasPerk(p, 'specialist') ? INF_SPECIALIST_CADENCE_FACTOR : 1;
 		if (!p.ws.fire(now, cadence)) return reject(p.ws.reloading(now) ? 'reloading' : p.ws.mag <= 0 ? 'empty' : 'too fast');
 		const tick = Number.isFinite(shot.tick) ? shot.tick : this.tick;
-		this.resolveShot(p, shot.origin, aim, tick);
+		const rewind = shot.rewindMs;
+		const at = typeof rewind === 'number' && Number.isFinite(rewind) ? now - Math.max(0, Math.min(INF_HISTORY_MS, rewind)) : null;
+		// A copy: the event carries the origin on to the other clients.
+		this.resolveShot(p, { x: shot.origin.x, y: shot.origin.y, z: shot.origin.z }, aim, tick, at, now);
 		return { ok: true, events: this.flush() };
 	}
 
@@ -906,7 +1069,7 @@ export class InfectedGame {
 		if (typeof aim === 'string') return { ok: false, reason: aim, events: [] };
 		// The knife hull spawns KNIFE_SPAWN_DIST ahead (traced). An origin hugging a
 		// surface (hull in solid) falls back to the server-known eye.
-		let start = origin;
+		let start: Vec3 = { x: origin.x, y: origin.y, z: origin.z };
 		let tr = this.world.trace(start, this.ahead(start, aim, KNIFE_SPAWN_DIST), INF_KNIFE_MIN, INF_KNIFE_MAX);
 		if (tr.startsolid && p.pos) {
 			start = this.eyeOf(p.pos);
@@ -934,7 +1097,7 @@ export class InfectedGame {
 		const victim = this.knifeVictim(start, aim, tr.fraction * KNIFE_SPAWN_DIST);
 		if (victim) {
 			this.removeKnife(k);
-			this.infect(victim, p, 'knife');
+			this.infect(victim, p, 'knife', aim);
 		}
 		return { ok: true, events: this.flush() };
 	}
@@ -1035,16 +1198,40 @@ export class InfectedGame {
 		return out;
 	}
 
-	/** Living players of the other team with their pose at `tick` (history; current pose when missing). */
-	private targets(p: InfPlayer, tick: number): Array<{ t: InfPlayer; pose: HitboxPose }> {
+	/**
+	 * Current hitbox pose of a player, written into `out`. The arms are posed
+	 * on the held weapon (claws for every infected), as the clients draw them.
+	 * The throwing knife in the claw and the item itself are not part of the body.
+	 */
+	private poseOf(p: InfPlayer, pos: InfPlayerPos, out: PlayerPose): PlayerPose {
+		out.x = pos.x;
+		out.y = pos.y;
+		out.z = pos.z;
+		out.yaw = pos.yaw ?? 0;
+		out.ducked = pos.ducked;
+		out.hunched = p.team === 'infected';
+		out.held = p.ws.weapon;
+		out.pitch = pos.pitch ?? 0;
+		copyMotion(p.body.motion, (out.motion ??= restMotion()));
+		return out;
+	}
+
+	/**
+	 * Living players of the other team with the pose the shooter saw: the pose
+	 * at time `at` (ms, live clients), else the one of sim tick `tick` (the
+	 * current pose for the current tick or a later one). Both are clamped to
+	 * the history, which starts again at a target's (re)spawn.
+	 */
+	private targets(p: InfPlayer, tick: number, at: number | null, now: number): Array<{ t: InfPlayer; pose: PlayerPose }> {
 		const want: InfTeam = p.team === 'survivor' ? 'infected' : 'survivor';
 		const t = Math.round(Math.max(this.tick - HISTORY_TICKS, Math.min(this.tick, tick)));
-		const frame = t >= this.tick ? undefined : this.history.find((h) => h.tick === t);
-		const out: Array<{ t: InfPlayer; pose: HitboxPose }> = [];
+		const out: Array<{ t: InfPlayer; pose: PlayerPose }> = [];
 		for (const q of this.players.values()) {
 			if (q === p || q.team !== want || !q.alive || !q.pos) continue;
-			const old = t >= q.spawnTick ? frame?.poses.get(q.id) : undefined;
-			out.push({ t: q, pose: old ?? { x: q.pos.x, y: q.pos.y, z: q.pos.z, yaw: q.pos.yaw ?? 0 } });
+			const pose = this.poseOf(q, q.pos, { x: 0, y: 0, z: 0, yaw: 0, ducked: false, hunched: false });
+			if (at !== null) q.hist.poseAt(at, now, this.poseOf(q, q.pos, this.scratch), pose);
+			else if (t < this.tick) q.hist.poseAtTick(t, this.poseOf(q, q.pos, this.scratch), pose);
+			out.push({ t: q, pose });
 		}
 		return out;
 	}
@@ -1053,42 +1240,43 @@ export class InfectedGame {
 	 * One trigger pull: one ray, or `def.pellets` rays for a shotgun (pellet 0
 	 * dead-centre, the rest scattered within `pelletSpread` using the game rng).
 	 * Damage and knockback add up per target over all pellets: one `shot`
-	 * event, at most one `hit` (and `kill`/`hurt`) per target.
+	 * event (with the other pellets in `pellets`), at most one `hit` (and
+	 * `kill`/`hurt`) per target. `tick`/`at`: see `targets`.
 	 */
-	private resolveShot(p: InfPlayer, o: Vec3, d: Vec3, tick: number): void {
+	private resolveShot(p: InfPlayer, o: Vec3, d: Vec3, tick: number, at: number | null, now: number): void {
 		const def = WEAPONS[p.ws.weapon];
 		const melee = def.magazine === 0;
 		const live = this.phase === 'grace' || this.phase === 'playing';
-		const targets = live ? this.targets(p, tick) : [];
+		const targets = live ? this.targets(p, tick, at, now) : [];
 		const pellets = melee ? 1 : Math.max(1, Math.floor(def.pellets ?? 1));
 		const spread = (def.pelletSpread ?? 0) * (this.hasPerk(p, 'steady') ? INF_STEADY_SPREAD_FACTOR : 1);
 		const dirs = pellets > 1 ? this.pelletDirs(d, pellets, spread) : [d];
 		const targetHp = p.team === 'survivor' ? INF_INFECTED_HP : INF_SURVIVOR_HP;
-		const agg = new Map<InfPlayer, { pose: HitboxPose; dmg: number; kb: number; head: boolean }>();
+		const agg = new Map<InfPlayer, { pose: PlayerPose; dmg: number; kb: number; head: boolean }>();
+		const pelletData: number[] = [];
 		let len = 0;
-		for (let i = 0; i < dirs.length; i++) {
-			const dir = dirs[i]!;
+		const rays = dirs.map((dir) => {
 			const end = { x: o.x + dir.x * def.range, y: o.y + dir.y * def.range, z: o.z + dir.z * def.range };
-			const worldT = this.world.trace(o, end, ZERO, ZERO).fraction * def.range;
-			const hits: Array<{ t: InfPlayer; pose: HitboxPose; d: number; head: boolean }> = [];
-			for (const tg of targets) {
-				if (melee) {
-					const h = meleeZombie(o, dir, tg.pose, def.range, def.coneDeg);
-					if (!h) continue;
-					const los = this.world.trace(o, { x: tg.pose.x, y: tg.pose.y, z: tg.pose.z + 40 }, ZERO, ZERO);
-					if (los.fraction < 1) continue;
-					hits.push({ ...tg, d: h.t, head: h.head });
-				} else {
-					const h = rayZombie(o, dir, tg.pose, worldT);
-					if (h) hits.push({ ...tg, d: h.t, head: h.head });
-				}
+			const hits: Array<{ t: InfPlayer; pose: PlayerPose; d: number; head: boolean }> = [];
+			return { dir, worldT: this.world.trace(o, end, ZERO, ZERO).fraction * def.range, hits };
+		});
+		// Target by target, so a shotgun poses each hit body once.
+		for (const tg of targets) {
+			for (const { dir, worldT, hits } of rays) {
+				const h = melee ? meleePlayer(o, dir, tg.pose, def.range, def.coneDeg) : rayPlayer(o, dir, tg.pose, worldT, true);
+				if (!h) continue;
+				if (melee && this.world.trace(o, playerUp(tg.pose, INF_MELEE_LOS_HEIGHT), ZERO, ZERO).fraction < 1) continue;
+				hits.push({ ...tg, d: h.t, head: h.head });
 			}
+		}
+		for (let i = 0; i < rays.length; i++) {
+			const { dir, worldT, hits } = rays[i]!;
 			hits.sort((a, b) => a.d - b.d);
 			const taken = hits.slice(0, def.pierce);
-			if (i === 0) {
-				const last = taken.length > 0 && taken.length >= def.pierce ? taken[taken.length - 1]!.d : worldT;
-				len = melee ? 0 : Math.min(last, worldT);
-			}
+			const last = taken.length > 0 && taken.length >= def.pierce ? taken[taken.length - 1]!.d : worldT;
+			const pelletLen = melee ? 0 : Math.min(last, worldT);
+			if (i === 0) len = pelletLen;
+			else pelletData.push(round3(dir.x), round3(dir.y), round3(dir.z), round3(pelletLen));
 			this.hitBeacons(p, o, dir, melee, def.range, def.coneDeg, worldT);
 			for (const h of taken) {
 				const a = agg.get(h.t) ?? { pose: h.pose, dmg: 0, kb: 0, head: false };
@@ -1098,7 +1286,18 @@ export class InfectedGame {
 				agg.set(h.t, a);
 			}
 		}
-		this.pending.push({ e: 'shot', by: p.id, weapon: def.id, o: { ...o }, d: { ...d }, len });
+		const shot: Extract<InfEvent, { e: 'shot' }> = { e: 'shot', by: p.id, weapon: def.id, o: { ...o }, d: { ...d }, len };
+		if (pelletData.length > 0) shot.pellets = pelletData;
+		this.pending.push(shot);
+		if (!melee && this.phase === 'playing') {
+			p.stats.shots++;
+			if (agg.size > 0) p.stats.hits++;
+			for (const a of agg.values()) {
+				if (!a.head) continue;
+				p.stats.headshots++;
+				break;
+			}
+		}
 		const kbFactor = this.hasPerk(p, 'specialist') ? INF_SPECIALIST_KNOCKBACK_FACTOR : 1;
 		for (const [t, a] of agg) {
 			if (p.team === 'survivor') this.damageInfected(t, p, def.id, a.head, a.pose, d, a.dmg, a.kb * kbFactor);
@@ -1134,25 +1333,49 @@ export class InfectedGame {
 		return this.simTime < until ? Math.min(ZM_SLOW_FACTORS.length - 1, stacks + 1) : 1;
 	}
 
-	private slowAndPush(t: InfPlayer, kb: number, d: Vec3): void {
+	private slowAndPush(t: InfPlayer, by: InfPlayer, kb: number, d: Vec3): void {
 		t.slowStacks = this.slowStack(t.slowUntil, t.slowStacks);
 		t.slowUntil = this.simTime + ZM_SLOW_MS;
 		const h = Math.hypot(d.x, d.y) || 1;
-		this.pending.push({ e: 'hurt', id: t.id, hp: t.hp, stacks: t.slowStacks, kx: (d.x / h) * kb, ky: (d.y / h) * kb });
+		const ev: Extract<InfEvent, { e: 'hurt' }> = { e: 'hurt', id: t.id, hp: t.hp, stacks: t.slowStacks, kx: (d.x / h) * kb, ky: (d.y / h) * kb };
+		this.hitDir(ev, d, by, t);
+		this.pending.push(ev);
 	}
 
-	private damageInfected(t: InfPlayer, by: InfPlayer, weapon: WeaponId, head: boolean, pose: HitboxPose, d: Vec3, dmg: number, kb: number): void {
+	/**
+	 * Unit horizontal direction of a hit into `ev.dx`, `ev.dy`: along `d`, the
+	 * way the shot or the knife travelled; attacker towards victim when it
+	 * came straight down or up. Left unset when neither gives a direction.
+	 */
+	private hitDir(ev: { dx?: number; dy?: number }, d: Vec3, by: InfPlayer | null, t: InfPlayer): void {
+		let dx = d.x;
+		let dy = d.y;
+		let dh = Math.hypot(dx, dy);
+		if (dh < 1e-3 && by?.pos && t.pos) {
+			dx = t.pos.x - by.pos.x;
+			dy = t.pos.y - by.pos.y;
+			dh = Math.hypot(dx, dy);
+		}
+		if (dh >= 1e-3) {
+			// `|| 0`: never -0 on the wire.
+			ev.dx = round3(dx / dh) || 0;
+			ev.dy = round3(dy / dh) || 0;
+		}
+	}
+
+	private damageInfected(t: InfPlayer, by: InfPlayer, weapon: WeaponId, head: boolean, pose: PlayerPose, d: Vec3, dmg: number, kb: number): void {
 		t.hp = Math.max(0, t.hp - dmg);
 		const kill = t.hp <= 0;
 		this.pending.push({ e: 'hit', by: by.id, targetId: t.id, head, kill });
 		if (!kill) {
-			this.slowAndPush(t, kb, d);
+			this.slowAndPush(t, by, kb, d);
 			return;
 		}
 		t.alive = false;
 		t.respawnAt = this.simTime + this.respawnMs;
 		t.deaths++;
 		by.kills++;
+		by.stats.kills++;
 		by.score += INF_SCORE_KILL;
 		this.pending.push({ e: 'kill', by: by.id, targetId: t.id, weapon, head, x: pose.x, y: pose.y, z: pose.z, yaw: pose.yaw });
 		this.streakKill(by);
@@ -1166,6 +1389,7 @@ export class InfectedGame {
 		if (by.team !== 'survivor') return;
 		const prev = by.streak;
 		by.streak++;
+		if (by.streak > by.stats.bestStreak) by.stats.bestStreak = by.streak;
 		for (const perk of PERK_ORDER) {
 			const at = INF_PERK_KILLS[perk];
 			if (at === 0 || prev >= at || by.streak < at) continue;
@@ -1203,22 +1427,31 @@ export class InfectedGame {
 		this.infect(t, by, 'claws');
 	}
 
-	/** Turn a survivor into an infected (in place). `by` may be gone (null) or dead (post-mortem knife). */
-	private infect(t: InfPlayer, by: InfPlayer | null, method: InfMethod): void {
+	/**
+	 * Turn a survivor into an infected (in place). `by` may be gone (null) or
+	 * dead (post-mortem knife). `dir`: the way a thrown knife travelled when it
+	 * hit (after the bounce for a bank shot); the event carries its horizontal
+	 * direction for the victim's hit-direction cue.
+	 */
+	private infect(t: InfPlayer, by: InfPlayer | null, method: InfMethod, dir?: Vec3): void {
 		if (t.team !== 'survivor' || !t.alive) return;
 		const first = this.infections === 0;
+		this.stopSurviving(t);
 		this.makeInfected(t, false);
 		t.deaths++;
 		this.infections++;
 		this.endsAt += INF_INFECTION_BONUS_SECS * 1000;
 		if (by) {
 			by.kills++;
+			by.stats.infections++;
 			by.score += INF_SCORE_INFECT;
 			if (method === 'knife' || method === 'bank') by.score += INF_SCORE_KNIFE_BONUS;
 			if (method === 'bank') by.score += INF_SCORE_BANK_BONUS;
 		}
 		for (const s of this.livingSurvivors()) s.score += INF_SCORE_SURVIVE_TICK;
-		this.pending.push({ e: 'infect', id: t.id, by: by?.id ?? null, method, timeAdded: INF_INFECTION_BONUS_SECS });
+		const ev: Extract<InfEvent, { e: 'infect' }> = { e: 'infect', id: t.id, by: by?.id ?? null, method, timeAdded: INF_INFECTION_BONUS_SECS };
+		if (dir) this.hitDir(ev, dir, by, t);
+		this.pending.push(ev);
 		this.ammoEvent(t);
 		if (first) {
 			// Patient Zero is one of many from now on (even while waiting to respawn).
@@ -1228,6 +1461,11 @@ export class InfectedGame {
 				this.ammoEvent(p);
 			}
 		}
+	}
+
+	/** A survivor stops being one (turned, or gone): the time they survived this round is final. */
+	private stopSurviving(p: InfPlayer): void {
+		if (this.phase === 'playing' && p.team === 'survivor') p.stats.survivedMs = Math.max(0, this.simTime - this.startedAt);
 	}
 
 	// ---------------------------------------------------------------------
@@ -1245,6 +1483,8 @@ export class InfectedGame {
 
 		// Sim catch-up (at most 8 steps per call; a long stall skips time).
 		if (now - this.simTime > INF_STEP_MS * 8) this.simTime = now - INF_STEP_MS * 8;
+		// The bodies first, all the way: every step of this update records them at the same time.
+		this.moveBodies(Math.floor((now - this.simTime) / INF_STEP_MS));
 		while (this.simTime + INF_STEP_MS <= now) {
 			this.simTime += INF_STEP_MS;
 			this.step(now);
@@ -1277,6 +1517,7 @@ export class InfectedGame {
 		const caller = this.players.get(m.callerId);
 		if (caller) {
 			caller.kills += wiped;
+			caller.stats.kills += wiped;
 			caller.score += INF_SCORE_MOAB;
 		}
 		this.pending.push({ e: 'moabDetonate', by: m.callerId, kills: wiped });
@@ -1296,7 +1537,6 @@ export class InfectedGame {
 		this.nextUavAt = 0;
 		this.clearKnives();
 		this.clearBeacons();
-		this.history = [];
 		this.roundLoadout = infLoadout(this.round + 1);
 		this.pending.push({ e: 'phase', phase: 'waiting', round: this.round, loadout: this.roundLoadout });
 		for (const p of this.players.values()) {
@@ -1330,6 +1570,7 @@ export class InfectedGame {
 			p.score = 0;
 			p.kills = 0;
 			p.deaths = 0;
+			p.stats = newInfTally();
 			this.makeSurvivor(p);
 			this.spawnEvent(p, order[i++ % order.length]!, now, 'round');
 		}
@@ -1345,6 +1586,7 @@ export class InfectedGame {
 		const id = ids[Math.min(ids.length - 1, Math.floor(this.rng() * ids.length))]!;
 		const p = this.players.get(id)!;
 		this.makeInfected(p, true);
+		p.stats.alpha = true;
 		this.alphaId = id;
 		this.pending.push({ e: 'alpha', id });
 		this.ammoEvent(p);
@@ -1359,14 +1601,21 @@ export class InfectedGame {
 		this.clearBeacons();
 		let top: InfPlayer | null = null;
 		for (const p of this.players.values()) if (!top || p.score > top.score) top = p;
+		const secs = Math.round((now - this.startedAt) / 100) / 10;
+		// One row per player present, in scoreboard order.
+		const stats: InfRoundStat[] = [];
+		for (const p of this.players.values()) stats.push(infRoundStat(p, p.stats, secs));
+		stats.sort((a, b) => b.score - a.score || a.id - b.id);
 		this.pending.push({
 			e: 'end',
 			winner,
 			round: this.round,
-			secs: Math.round((now - this.startedAt) / 100) / 10,
+			secs,
 			survivorsLeft,
 			topId: top && top.score > 0 ? top.id : null,
-			topScore: top?.score ?? 0
+			topScore: top?.score ?? 0,
+			stats,
+			nextLoadout: infLoadout(this.round + 1)
 		});
 		this.pending.push({ e: 'phase', phase: 'ended', round: this.round, loadout: this.roundLoadout });
 	}
@@ -1395,7 +1644,23 @@ export class InfectedGame {
 			}
 			this.stepKnives();
 		}
-		this.recordHistory();
+		this.recordHistory(now);
+	}
+
+	/** Every body towards what its player's last state says. */
+	private moveBodies(steps: number): void {
+		const s = this.bodyInput;
+		for (const p of this.players.values()) {
+			if (!p.alive || !p.pos) continue;
+			s.vx = p.pos.vx ?? 0;
+			s.vy = p.pos.vy ?? 0;
+			s.vz = p.pos.vz ?? 0;
+			s.yaw = p.pos.yaw ?? 0;
+			s.pitch = p.pos.pitch ?? 0;
+			s.onGround = p.pos.onGround !== false;
+			s.ducked = p.pos.ducked;
+			p.body.follow(steps, INF_STEP_MS / 1000, s);
+		}
 	}
 
 	private respawnInfected(p: InfPlayer, now: number): void {
@@ -1480,21 +1745,21 @@ export class InfectedGame {
 		this.pending.push({ e: 'knifePickup', id: k.id, ownerId: k.ownerId });
 	}
 
-	/** Closest living survivor the knife's segment (unit `u`, length `maxDist`) passes through. */
+	/**
+	 * Closest living survivor the knife's segment (unit `u`, length `maxDist`)
+	 * passes through: the player hitboxes grown by INF_KNIFE_HIT_RADIUS. No
+	 * rewind: the knife is a projectile simulated here, so it meets the
+	 * survivors where the server has them now, as every client sees it fly.
+	 */
 	private knifeVictim(from: Vec3, u: Vec3, maxDist: number): InfPlayer | null {
 		let best: InfPlayer | null = null;
 		let bestT = Infinity;
 		for (const s of this.livingSurvivors()) {
 			if (!s.pos) continue;
-			const pose = { x: s.pos.x, y: s.pos.y, z: s.pos.z, yaw: s.pos.yaw ?? 0 };
-			const h = headCentre(pose);
-			const th = raySphere(from, u, h.x, h.y, h.z, ZOMBIE_HEAD.radius + INF_KNIFE_HIT_RADIUS);
-			const tb = rayCylinder(from, u, pose.x, pose.y, pose.z + ZOMBIE_BODY.z0, pose.z + ZOMBIE_BODY.z1, ZOMBIE_BODY.radius + INF_KNIFE_HIT_RADIUS);
-			for (const t of [th, tb]) {
-				if (t >= 0 && t <= maxDist && t < bestT) {
-					bestT = t;
-					best = s;
-				}
+			const t = sweepPlayer(from, u, this.poseOf(s, s.pos, this.scratch), maxDist, INF_KNIFE_HIT_RADIUS);
+			if (t >= 0 && t < bestT) {
+				bestT = t;
+				best = s;
 			}
 		}
 		return best;
@@ -1513,7 +1778,7 @@ export class InfectedGame {
 			const victim = this.knifeVictim(from, u, tr.fraction * segLen);
 			if (victim) {
 				this.removeKnife(k);
-				this.infect(victim, this.players.get(k.ownerId) ?? null, k.bounces > 0 ? 'bank' : 'knife');
+				this.infect(victim, this.players.get(k.ownerId) ?? null, k.bounces > 0 ? 'bank' : 'knife', u);
 				return;
 			}
 		}
@@ -1589,13 +1854,11 @@ export class InfectedGame {
 		for (const k of [...this.knives.values()]) this.removeKnife(k);
 	}
 
-	private recordHistory(): void {
-		const poses = new Map<number, HitboxPose>();
+	/** One pose sample per living player, stamped with the time of this update (lagcomp.ts). */
+	private recordHistory(now: number): void {
 		for (const p of this.players.values()) {
-			if (p.alive && p.pos) poses.set(p.id, { x: p.pos.x, y: p.pos.y, z: p.pos.z, yaw: p.pos.yaw ?? 0 });
+			if (p.alive && p.pos) p.hist.record(now, this.tick, this.poseOf(p, p.pos, this.scratch));
 		}
-		this.history.push({ tick: this.tick, poses });
-		while (this.history.length > HISTORY_FRAMES) this.history.shift();
 	}
 
 	// ---------------------------------------------------------------------
