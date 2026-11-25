@@ -194,7 +194,7 @@ export interface SettingsSection {
 }
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
-	{ id: 'mouse', label: 'Mouse', cvars: ['sensitivity', 'm_yaw', 'm_pitch'] },
+	{ id: 'mouse', label: 'Mouse', cvars: ['sensitivity', 'zoom_sensitivity_ratio', 'm_yaw', 'm_pitch', 'cl_aimtoggle'] },
 	{ id: 'video', label: 'Video', cvars: ['fov', 'cl_fullscreen', 'cl_showfps', 'cl_showpos'] },
 	{
 		id: 'hud',

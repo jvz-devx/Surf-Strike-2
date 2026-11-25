@@ -1,12 +1,25 @@
 <script lang="ts">
+	import { innerHeight } from 'svelte/reactivity/window';
+	import { spreadGapPx } from '#lib/game/gunfeel.js';
 	import { crosshairRects, cvarNum } from '#lib/ui/format.js';
 
-	let { cvars }: { cvars: Record<string, number | string> } = $props();
+	let {
+		cvars,
+		spreadDeg,
+		opacity = 1
+	}: {
+		cvars: Record<string, number | string>;
+		/** Current aim spread half-angle (degrees): the lines open to its edge. Absent or 0: the cvar gap only. */
+		spreadDeg?: number;
+		/** Fades out while the sights come up (infected aim down sights). */
+		opacity?: number;
+	} = $props();
 
+	const spreadPx = $derived(spreadDeg ? spreadGapPx(spreadDeg, cvarNum(cvars, 'fov', 90), innerHeight.current ?? 0) : 0);
 	const rects = $derived(
 		crosshairRects(
 			cvarNum(cvars, 'cl_crosshairsize', 5),
-			cvarNum(cvars, 'cl_crosshairgap', 1),
+			cvarNum(cvars, 'cl_crosshairgap', 1) + spreadPx,
 			cvarNum(cvars, 'cl_crosshairthickness', 1),
 			cvarNum(cvars, 'cl_crosshairdot', 0) !== 0
 		)
@@ -16,7 +29,7 @@
 	);
 </script>
 
-<div class="crosshair" aria-hidden="true">
+<div class="crosshair" aria-hidden="true" style:opacity={opacity < 1 ? opacity : undefined}>
 	{#each rects as r, i (i)}
 		<i
 			style:left="{r.x}px"

@@ -10,6 +10,7 @@ import {
 	DUCK_VIEW_HEIGHT,
 	encodeState,
 	eyeHeight,
+	clampInfVelocity,
 	FLAG_DUCKED,
 	FLAG_ON_GROUND,
 	FINISH_RESET_DELAY,
@@ -47,6 +48,7 @@ import {
 	Status,
 	SURF_CVARS,
 	SV_BOOL_CVARS,
+	tagSpawns,
 	TICK_INTERVAL,
 	TICK_RATE,
 	VIEW_HEIGHT,
@@ -111,6 +113,7 @@ import {
 import { FixedStep } from './loop.js';
 import { chooseGhost, ghostLabel, GhostPlayback, type GhostSource } from './ghost.js';
 import { browserGhostStore, type GhostStore } from './ghost-store.js';
+import { addKnockback, kickedPitch, zoomFov, zoomSensitivity } from './gunfeel.js';
 import { loadSoloPb, mergeRecordsPush, recordFields, saveSoloPb, splitDelta, type LocalPb } from './records.js';
 import { cycleTarget, findTargetByName, specTargets } from './spectate.js';
 import { browserStore, STORAGE_KEYS, type KeyValueStore } from './storage.js';
@@ -118,6 +121,7 @@ import { mapLabel, routeVoteKey, voteLabel } from './vote.js';
 import { HnsClient, type HnsHost } from './hns.js';
 import { hnsTagVisible } from './hns-view.js';
 import { InfectedClient, type InfHost } from './infected.js';
+import { soundListener, soundSource } from './infected-listener.js';
 import { ZombiesClient, type ZmHost } from './zombies.js';
 
 const FREEFLY_SPEED = 1000;
@@ -343,6 +347,13 @@ export class Game implements CommandContext {
 		try {
 			this.renderer = new GameRenderer(canvas);
 			this.renderer.setFov(this.cvars.num('fov'));
+			// A case that falls is heard where it lands.
+			this.renderer.zombies.casings.onLand = (kind, at) => {
+				const name = kind === 'shell' ? 'shell' : 'casing';
+				const ears = soundListener(this.spec, this.currEye);
+				if (this.inf) this.audio.infected(name, at, ears, this.yaw);
+				else if (this.zm) this.audio.zombies(name, at, ears, this.yaw);
+			};
 			this.renderer.players.setHidden(this.cvars.num('cl_hideplayers') !== 0);
 		} catch (e) {
 			this.renderer = null;
@@ -787,6 +798,8 @@ export class Game implements CommandContext {
 	private releaseAll(): void {
 		for (const a of HOLD_ACTIONS) this.held[a] = 0;
 		this.pressedKeys.clear();
+		// A held aim lets go with the button (pointer lock lost); a toggled one stays.
+		this.inf?.press('attack2', false, performance.now());
 		this.sampler.releaseAll(performance.now());
 		this.hud.scoreboardOpen = false;
 	}
@@ -1164,7 +1177,8 @@ export class Game implements CommandContext {
 				this.afterTeleport();
 			},
 			voteOpen: () => !!this.hud.vote && !this.hud.vote.result,
-			sound: (name, at) => this.audio.zombies(name, at, this.currEye, this.yaw),
+			// Heard from the camera: the spectator camera while spectating (infected-listener.ts).
+			sound: (name, at) => this.audio.zombies(name, soundSource(at, this.spec, this.remotes), soundListener(this.spec, this.currEye), this.yaw),
 			setZoom: (fov) => this.renderer?.setFov(fov ?? this.cvars.num('fov')),
 			push: (vx, vy) => {
 				this.player.velocity.x = vx;
@@ -1191,6 +1205,7 @@ export class Game implements CommandContext {
 			send: (msg) => this.send(msg),
 			zombieRenderer: () => this.renderer?.zombies ?? null,
 			infectedRenderer: () => this.renderer?.infected ?? null,
+			remotePlayers: () => this.renderer?.players ?? null,
 			name: (id) => this.remoteName(id),
 			notice: (text) => this.notice(text),
 			teleport: (x, y, z, yaw) => {
@@ -1198,12 +1213,23 @@ export class Game implements CommandContext {
 				this.afterTeleport();
 			},
 			voteOpen: () => !!this.hud.vote && !this.hud.vote.result,
-			sound: (name, at) => this.audio.infected(name, at, this.currEye, this.yaw),
-			setZoom: (fov) => this.renderer?.setFov(fov ?? this.cvars.num('fov')),
-			push: (vx, vy) => {
-				this.player.velocity.x = vx;
-				this.player.velocity.y = vy;
-			}
+			// Heard from the camera: the spectator camera while spectating (infected-listener.ts).
+			sound: (name, at) => this.audio.infected(name, soundSource(at, this.spec, this.remotes), soundListener(this.spec, this.currEye), this.yaw),
+			// The zoom eases: the camera follows `zoomProgress` every frame instead of snapping here.
+			setZoom: () => {},
+			// Knockback is an impulse on top of the player's velocity, capped along the hit (gunfeel.ts).
+			push: (vx, vy) => addKnockback(this.player.velocity, vx, vy),
+			zoomProgress: (fov, t) => {
+				this.zoomFov = fov;
+				this.zoomT = t;
+				this.renderer?.setFov(zoomFov(this.cvars.num('fov'), fov, t));
+			},
+			setViewKick: (pitch, yaw, roll) => {
+				this.kickPitch = pitch;
+				this.kickYaw = yaw;
+				this.kickRoll = roll;
+			},
+			spawns: () => tagSpawns(this.map)
 		};
 		this.inf = new InfectedClient(host, performance.now(), this.world);
 		this.hud.infected = this.inf.frame(performance.now(), false, 0);
@@ -1551,7 +1577,7 @@ export class Game implements CommandContext {
 				this.recordGhostSample();
 			} else if (zm) zm.tick(end, p.origin, p.origin.z + eyeHeight(p), this.pitch, this.yaw, p.ducked);
 			else if (inf) {
-				inf.tick(end, p.origin, p.origin.z + eyeHeight(p), this.pitch, this.yaw, p.ducked);
+				inf.tick(end, p.origin, p.origin.z + eyeHeight(p), this.pitch, this.yaw, p.ducked, p.velocity, p.onGround);
 				// No server round (solo / waiting): fall-outs respawn locally.
 				if (inf.localFallouts) this.modeTick();
 			} else this.modeTick();
@@ -1620,11 +1646,27 @@ export class Game implements CommandContext {
 		this.teleported = false;
 	}
 
+	/** Infected scope (gunfeel.ts): the scope's FOV and its eased 0..1 progress, reported by the mode every frame. */
+	private zoomFov = 0;
+	private zoomT = 0;
+	/** Infected view recoil: camera offset on top of the view angles (degrees). The aim angles themselves never move. */
+	private kickPitch = 0;
+	private kickYaw = 0;
+	/** Camera roll of the view kick (degrees, + = counter-clockwise). */
+	private kickRoll = 0;
+
+	/** Mouse sensitivity factor of the current zoom (`zoom_sensitivity_ratio`); 1 when not zoomed. */
+	private zoomSens(): number {
+		if (!this.inf || this.zoomT <= 0) return 1;
+		const fov = this.cvars.num('fov');
+		return zoomSensitivity(fov, zoomFov(fov, this.zoomFov, this.zoomT), this.cvars.num('zoom_sensitivity_ratio'), this.zoomT);
+	}
+
 	private applyMouse(dtSec: number): void {
 		this.input.consumeMouse(this.mouse);
 		if (this.overlayOpen() || !this.input.locked) return;
 		if (this.spec && !this.spec.freeFly) return;
-		const sens = this.cvars.num('sensitivity');
+		const sens = this.cvars.num('sensitivity') * this.zoomSens();
 		this.yaw -= this.mouse.dx * sens * this.cvars.num('m_yaw');
 		this.pitch += this.mouse.dy * sens * this.cvars.num('m_pitch');
 		if (this.pitch > 89) this.pitch = 89;
@@ -1681,6 +1723,10 @@ export class Game implements CommandContext {
 		if (this.inf) {
 			// Spectating: the HUD shows the target (tagViewId), local viewmodel and input are off.
 			this.inf.setSpectate(!!this.spec, this.spec && !this.spec.freeFly ? this.tagViewId() : null);
+			this.inf.viewYaw = this.yaw;
+			// Aim down sights: the FOV it magnifies and whether Mouse2 holds or toggles it.
+			this.inf.fov = this.cvars.num('fov');
+			this.inf.aimToggle = this.cvars.num('cl_aimtoggle') !== 0;
 			const v = this.inf.frame(now, !this.spec, Math.hypot(this.player.velocity.x, this.player.velocity.y));
 			if (this.hud.infected !== v) this.hud.infected = v;
 		}
@@ -1697,12 +1743,18 @@ export class Game implements CommandContext {
 			ducked: this.player.ducked,
 			active: !this.spec
 		});
+		if (this.renderer) this.renderer.zombies.casings.collision = this.world;
 		this.renderer?.render(now / 1000);
 	};
 
 	/** Positions the camera; returns the sample shown on the HUD (spectated target) or null. */
 	private updateCamera(now: number): Sample | null {
 		const r = this.renderer;
+		if (!this.inf && (this.zoomT !== 0 || this.kickPitch !== 0 || this.kickYaw !== 0 || this.kickRoll !== 0)) {
+			// The infected client is gone (map or mode change): drop its zoom and kick.
+			this.zoomT = this.kickPitch = this.kickYaw = this.kickRoll = 0;
+			r?.setFov(this.cvars.num('fov'));
+		}
 		if (this.spec) {
 			const s = this.spec;
 			const target = s.targetId !== null ? this.remotes.get(s.targetId) : undefined;
@@ -1721,7 +1773,8 @@ export class Game implements CommandContext {
 			return s.freeFly ? null : (target?.sample ?? null);
 		}
 		const e = vlerp(this.prevEye, this.currEye, this.step.alpha, this.renderEye);
-		r?.setView(e.x, e.y, e.z, this.pitch, this.yaw);
+		// View recoil moves the camera only; shots follow it (infected.ts `shoot`).
+		r?.setView(e.x, e.y, e.z, kickedPitch(this.pitch, this.kickPitch), this.yaw + this.kickYaw, this.kickRoll);
 		return null;
 	}
 
@@ -1763,16 +1816,19 @@ export class Game implements CommandContext {
 			pose.vx = s.vx;
 			pose.vy = s.vy;
 			pose.vz = s.vz;
+			// As the server poses the hit body (a false claim moves both no further than the mode allows).
+			if (this.inf) clampInfVelocity(pose);
 			pose.yaw = s.yaw;
 			pose.pitch = s.pitch;
 			pose.ducked = (s.flags & FLAG_DUCKED) !== 0;
 			pose.onGround = (s.flags & FLAG_ON_GROUND) !== 0;
 			pose.ramp = visible && !pose.onGround ? this.rampUnder(s) : null;
 			players.setPose(rm.id, pose, visible);
-			players.setHeld(rm.id, this.zm?.heldOf(rm.id) ?? this.inf?.heldOf(rm.id) ?? (this.hns?.roleOf(rm.id) === 'seeker' ? 'knife' : null));
+			// Infected sets what its players hold itself (infected-feedback.ts syncHeld).
+			if (!this.inf) players.setHeld(rm.id, this.zm?.heldOf(rm.id) ?? (this.hns?.roleOf(rm.id) === 'seeker' ? 'knife' : null));
 			players.setIt(rm.id, it?.includes(rm.id) ?? false);
 			players.setZombie(rm.id, this.zm?.isZombiePlayer(rm.id) ?? false);
-			players.setInfected(rm.id, this.inf?.roleOf(rm.id) ?? 'none');
+			players.setInfected(rm.id, this.inf?.roleOf(rm.id) ?? 'none', now);
 			if (this.hns && visible) {
 				// Hide and seek: seekers are marked; tags only up close, in sight, never hider tags to seekers.
 				const role = this.hns.roleOf(rm.id);
@@ -2379,8 +2435,7 @@ export class Game implements CommandContext {
 				if (m.ev.e === 'shot') this.avatarShot(m.ev.by, m.ev.weapon);
 				break;
 			case 'inf':
-				this.inf?.onEvent(m.ev, now);
-				if (m.ev.e === 'shot') this.avatarShot(m.ev.by, m.ev.weapon);
+				this.inf?.onEvent(m.ev, now); // shots move the avatars too (infected-feedback.ts shotFeedback)
 				break;
 			case 'hns':
 				this.hns?.onEvent(m.ev, now);

@@ -3,7 +3,9 @@
  * weapons (fire rate, ammo, reload), sends `fire`/`reload`/`loadout`/
  * `throwKnife`, steps throwing knives smoothly between server events and
  * shows the server's events. Offline there is no round (infected needs a
- * server and 2+ players): free roam with a waiting banner.
+ * server and 2+ players): free roam with a waiting banner. Without a round,
+ * offline or while the server waits for a second player, the practice range
+ * (./infected-practice.ts) lets the local player shoot at target dummies.
  * game.ts owns the player, camera and input; this module owns everything
  * infected-specific behind a small host interface.
  *
@@ -16,7 +18,7 @@
  * - Survivors carry three slots: [1] the round preset, [2] the pistol
  *   (INF_SECONDARY, its own INF_AMMO), [3] the knife. `spawn` only carries the
  *   held gun, so the pistol starts from INF_AMMO wherever the server hands out
- *   fresh guns (round and join spawns as a survivor, becoming the Alpha).
+ *   fresh guns (round and join spawns as a survivor).
  * - Kill streak perks (INF_PERK_KILLS) come from `perk` events and the state;
  *   the client mirrors their prediction factors (reload, cadence, spread,
  *   speed). A M.O.A.B. is earned with `moabReady`, called with `callMoab`,
@@ -57,13 +59,50 @@ import {
 	type InfPerkId,
 	type InfStateView,
 	type InfTeam,
+	type Spawn,
 	type Vec3,
 	type WeaponId
 } from '@surf/shared';
 import type { BeaconRenderPose, InfectedRenderer, KnifeRenderPose } from '../render/infected.js';
+import type { RemotePlayers } from '../render/players.js';
+import { hitFeedback, killFeedback, localImpact, moabFeedback, reloadFeedback, shotFeedback, syncHeld, syncReloads, turnFeedback } from './infected-feedback.js';
+import { BOLT_MS, FP_BOLTS, FP_RELOADS, MAG_IN_LEAD_MS, type Clip, type CueSound } from '../render/fp-clips.js';
 import type { ZombieRenderer } from '../render/zombies.js';
 import type { InfectedView, InfSpecView, KillFeedLine } from './contract.js';
+import { InfFeedback } from './infected-hud-events.js';
+import { pickFeedback } from './infected-pick.js';
+import { InfPractice, nextPrimary, practiceRefill, type PracticeTarget } from './infected-practice.js';
 import { FIRE_BUFFER_MS, forwardDir, liveKillFeed, pushKillFeed, spreadDir } from './zombies-view.js';
+import {
+	AIM,
+	aimFov,
+	aimMoveFactor,
+	aimSpread,
+	aimStep,
+	AIM_GUN_KICK,
+	Bloom,
+	ease,
+	hipSpread,
+	kickedPitch,
+	MAX_PENDING_SWAPS,
+	RECOIL_REF_FOV,
+	restVmFeel,
+	GunKick,
+	SWAP_ACK_MS,
+	ViewKick,
+	VM_DRY_MS,
+	VM_LAND_MIN_SPEED,
+	VM_LAND_MS,
+	VM_LAND_SPEED,
+	vmBump,
+	vmDraw,
+	VmSway,
+	ZOOM_MS,
+	zoomFov,
+	zoomStep,
+	type AimInput,
+	type VmFeel
+} from './gunfeel.js';
 
 const ZERO: Vec3 = { x: 0, y: 0, z: 0 };
 /**
@@ -105,7 +144,39 @@ export type InfSound =
 	| 'perk'
 	| 'moabReady'
 	| 'moab'
-	| 'moabDetonate';
+	| 'moabDetonate'
+	/** Trigger pulled with an empty magazine and no reserve. */
+	| 'dryfire'
+	/** Weapon swap (the new weapon comes up). */
+	| 'draw'
+	/** Scope raised or lowered. */
+	| 'scope'
+	/** The bolt, slide or feed cover of a reload closes. */
+	| 'reloadDone'
+	/** My reload: the gun taken up, its magazine out and in. */
+	| 'handle'
+	| 'magOut'
+	| 'magIn'
+	/** The sniper's bolt after a shot. */
+	| 'bolt'
+	/** A case (brass, shotgun shell) falls. */
+	| 'casing'
+	| 'shell'
+	/** A bullet hit world geometry (positional). */
+	| 'impact'
+	/** My shot hit a head / killed (variants of 'hit'). */
+	| 'hitHead'
+	| 'hitKill'
+	/** An infected died (positional). */
+	| 'death'
+	/** A survivor turned infected (positional; mine without a position). */
+	| 'infect'
+	| 'knifeBounce'
+	| 'knifeStick'
+	| 'knifePickup'
+	/** A survivor smashed a respawn beacon / an infected respawned on one (positional). */
+	| 'beaconSmash'
+	| 'beaconUse';
 
 /** Kill streak perk names and their unlock toast (hardline is the base perk). */
 export const INF_PERK_INFO: Readonly<Record<InfPerkId, { name: string; toast: string }>> = Object.freeze({
@@ -151,6 +222,8 @@ export interface InfHost {
 	zombieRenderer(): ZombieRenderer | null;
 	/** Throwing knives and UAV pulses. */
 	infectedRenderer(): InfectedRenderer | null;
+	/** Remote avatars: hit flash, turn ease, held weapons, muzzle flashes. Optional: hosts without avatars leave it out. */
+	remotePlayers?(): RemotePlayers | null;
 	name(id: number): string;
 	notice(text: string): void;
 	/** Teleport the local player (spawn, fall-out). */
@@ -159,8 +232,18 @@ export interface InfHost {
 	sound(name: InfSound, at?: Vec3): void;
 	/** Zoom: horizontal FOV at 4:3, or null for the cvar FOV. */
 	setZoom(fov: number | null): void;
+	/**
+	 * Eased zoom, every frame while the scope moves or is up: the scope's FOV
+	 * (horizontal at 4:3) and its eased 0..1 progress. A host with this member
+	 * eases the camera from it instead of snapping on `setZoom`.
+	 */
+	zoomProgress?(fov: number, t: number): void;
+	/** Camera recoil offset on top of the view angles, every frame (degrees; pitch + = down, yaw + = left, roll + = counter-clockwise). */
+	setViewKick?(pitch: number, yaw: number, roll: number): void;
 	/** Knockback on the local player (hit by a bullet). */
 	push(vx: number, vy: number): void;
+	/** Map spawn points: where the practice range puts its targets. Optional: a host without them has no targets. */
+	spawns?(): readonly Spawn[];
 }
 
 interface LocalKnife extends KnifeRenderPose {
@@ -168,7 +251,7 @@ interface LocalKnife extends KnifeRenderPose {
 	at: number;
 }
 
-/** Remote role from a player view (the Alpha only while it still holds the gun). */
+/** Remote role from a player view (the Alpha until the first infection). */
 export function infRole(p: { team: InfTeam; alpha: boolean } | undefined): InfRole {
 	if (!p || p.team !== 'infected') return 'none';
 	return p.alpha ? 'alpha' : 'infected';
@@ -189,6 +272,11 @@ export function stepKnife(k: { x: number; y: number; z: number; vx: number; vy: 
 	k.vz -= INF_KNIFE_GRAVITY * dt;
 }
 
+/** Share of a rifle's aim (linear) after which its scope overlay comes in. */
+const SCOPE_OVERLAY_FROM = 0.6;
+/** My tracers start this far ahead of the eye (units). */
+const TRACER_AHEAD = 18;
+
 export class InfectedClient {
 	private readonly solo: boolean;
 	private state: InfStateView | null = null;
@@ -198,11 +286,11 @@ export class InfectedClient {
 	private phase: InfectedView['phase'];
 	private round = 0;
 	private loadout: WeaponId = INF_PRESETS[0]!;
-	/** Round preset gun (survivors and the Alpha); ammo only from server events. */
+	/** Round preset gun (survivors; the Alpha of an older server); ammo only from server events. */
 	private primaryWs: WeaponState;
 	/** Pistol (slot 2): its own magazine and reserve. */
 	private secondaryWs = new WeaponState(INF_SECONDARY);
-	/** Knife (survivors, Alpha) or claws (infected). */
+	/** Knife (survivors) or claws (infected). */
 	private meleeWs = new WeaponState('knife');
 	private ws: WeaponState;
 	private team: InfTeam = 'survivor';
@@ -228,6 +316,18 @@ export class InfectedClient {
 	private hurtAt = 0;
 	private uavAt = 0;
 	private summary: InfectedView['summary'] = null;
+	/** Score popups, hit direction arcs and round summary rows (infected-hud-events.ts). */
+	private readonly fb = new InfFeedback({
+		me: () => this.me,
+		team: () => this.team,
+		alive: () => this.alive,
+		spectating: () => this.spectating,
+		specId: () => this.specId,
+		players: () => this.state?.players,
+		name: (id) => this.host.name(id)
+	});
+	/** View yaw in degrees, set by game.ts every frame (hit direction arcs). */
+	viewYaw = 0;
 	/** Distance from me to the latest UAV ping (infected), null when unknown. */
 	private uavDist: number | null = null;
 	/** Last eye position from `tick` (UAV distance). */
@@ -258,6 +358,8 @@ export class InfectedClient {
 	private lastFrame = 0;
 	private viewKey = '';
 	private view: InfectedView | null = null;
+	/** Practice range (./infected-practice.ts): target dummies to shoot while there is no round. */
+	private readonly practice: InfPractice;
 
 	constructor(
 		private readonly host: InfHost,
@@ -266,6 +368,7 @@ export class InfectedClient {
 		private readonly world: Pick<CollisionWorld, 'trace'> | null = null
 	) {
 		this.solo = !host.online();
+		this.practice = new InfPractice(host, world);
 		this.phase = this.solo ? 'solo' : 'waiting';
 		this.primaryWs = new WeaponState(this.loadout);
 		limitAmmo(this.primaryWs);
@@ -347,7 +450,9 @@ export class InfectedClient {
 		this.spectating = spectating;
 		this.specId = id;
 		if (spectating) {
-			this.setScoped(false);
+			this.endPractice();
+			this.leaveAim(true);
+			this.aimT = 0;
 			this.fireHeld = false;
 			this.firePressAt = -Infinity;
 			this.throwPending = false;
@@ -369,17 +474,14 @@ export class InfectedClient {
 		const slow = zmSlowFactor(now < this.slowUntil ? this.slowStacks : 0);
 		if (this.ws.weapon === 'claws' || (this.team === 'infected' && !this.alpha)) return INF_INFECTED_SPEED * slow;
 		const steady = this.has('steady') ? INF_STEADY_SPEED_FACTOR : 1;
-		return WEAPONS[this.ws.weapon].moveSpeed * steady * slow;
+		// Aiming down sights slows by the gun's aimed move factor, eased in with the aim.
+		const aim = aimMoveFactor(this.ws.weapon, ease(this.aimT));
+		return WEAPONS[this.ws.weapon].moveSpeed * steady * aim * slow;
 	}
 
 	/** Remote player role (look and name tag). */
 	roleOf(id: number): InfRole {
 		return infRole(this.state?.players.find((p) => p.id === id));
-	}
-
-	/** Weapon (or claws) a remote player holds, third person. */
-	heldOf(id: number): WeaponId | null {
-		return this.state?.players.find((p) => p.id === id)?.weapon ?? null;
 	}
 
 	/** Remote players not in play (respawning) are hidden. */
@@ -391,7 +493,7 @@ export class InfectedClient {
 		return this.phase === 'playing';
 	}
 
-	/** Survivors and the Alpha swap guns; infected only have claws. */
+	/** Survivors swap weapons (the Alpha of an older server too); infected only have claws. */
 	private get armed(): boolean {
 		return this.team === 'survivor' || this.alpha;
 	}
@@ -399,26 +501,112 @@ export class InfectedClient {
 	// ---------------------------------------------------------------------
 	// Input
 
+	// Gun feel (./gunfeel.ts): view kick, bloom, scope ease and viewmodel motion.
+	private readonly viewKick = new ViewKick();
+	/** Gun kick of the held gun: shown on the viewmodel, and aimed through iron sights it turns the shots (AIM_GUN_KICK). */
+	private readonly gunKick = new GunKick();
+	private readonly gunShown = { pitch: 0, yaw: 0 };
+	/** Shots of the current trigger pull (the reduced first shots of a view-kick set). */
+	private pullShots = 0;
+	private readonly bloom = new Bloom();
+	private readonly sway = new VmSway();
+	/** Viewmodel extras of this frame and the aim input, reused every frame. */
+	private readonly vmFeel: VmFeel = restVmFeel();
+	private readonly aimIn: AimInput = { bloom: 0, aim: 0, speed: 0, onGround: true, ducked: false, factor: 1 };
+	/** Clock of the feel state: the latest `tick`/`frame` time (ms). */
+	private feelAt = -Infinity;
+	/**
+	 * Aim down sights (Mouse2): the button is held (hold mode) or the aim is
+	 * toggled on (toggle mode, `aimToggle`).
+	 */
+	private aimHeld = false;
+	/** Aiming now: `aimHeld` and a gun that can aim (alive, in play, not reloading). */
+	private aiming = false;
+	/** Aim progress 0..1 (linear; eased for the camera, spread, recoil, speed, viewmodel and HUD). */
+	private aimT = 0;
+	/** Set by game.ts every frame: Mouse2 toggles the aim instead of holding it (`cl_aimtoggle`). */
+	aimToggle = false;
+	/** Set by game.ts every frame: the player's FOV (horizontal at 4:3), which the aimed FOV magnifies. */
+	fov = RECOIL_REF_FOV;
+	/**
+	 * The host still shows a zoom: one more report brings it back to 0. True at
+	 * the start, so a new client clears what a replaced one left behind.
+	 */
+	private zoomUp = true;
+	/** Draw of the held weapon: start and end (ms). */
+	private drawAt = -Infinity;
+	private drawEndsAt = -Infinity;
+	/** The current trigger press may still click on an empty gun; time of the last click. */
+	private dryArmed = false;
+	private dryAt = -Infinity;
+	/** Sounds still to come of the held weapon's running reload, or of its bolt, and the end of that reload (0: a bolt). */
+	private cues: { at: number; sound: CueSound }[] = [];
+	private cuesOf = 0;
+	/** Swaps sent and not acknowledged yet, oldest first. */
+	private swaps: Array<{ weapon: WeaponId; at: number }> = [];
+	/** Movement at the last tick: speed and stance (spread), turn rates and strafe (sway), landing (dip). */
+	private moveSpeed = 0;
+	private grounded = true;
+	private crouched = false;
+	private strafe = 0;
+	private climb = 0;
+	private turnYaw = 0;
+	private turnPitch = 0;
+	private lastPitch = 0;
+	private lastYaw = 0;
+	private lastTickAt = -Infinity;
+	private fallSpeed = 0;
+	private landAt = -Infinity;
+	private landAmp = 0;
+
 	press(action: 'attack' | 'attack2', down: boolean, now: number): void {
 		if (this.spectating) return;
 		if (action === 'attack') {
 			this.fireHeld = down;
-			if (down) this.firePressAt = now;
+			if (down) {
+				this.firePressAt = now;
+				this.dryArmed = true;
+				this.pullShots = 0;
+			}
 			return;
 		}
-		if (!down || !this.alive) return;
-		if (this.team === 'infected' && this.hasKnife && this.playing) {
+		// Infected with the throwing knife (the Alpha too while it holds one): Mouse2 throws.
+		if (down && this.alive && this.team === 'infected' && this.hasKnife && this.playing) {
 			this.throwPending = true;
 			return;
 		}
-		const zoom = WEAPONS[this.ws.weapon].zoomFov;
-		this.setScoped(zoom !== null && !this.scoped);
+		// Aim down sights: held by default, a toggle with `aimToggle`. Only a gun aims.
+		if (this.aimToggle) {
+			if (down && this.alive && AIM[this.ws.weapon]) this.aimHeld = !this.aimHeld;
+		} else this.aimHeld = down && this.alive;
+		this.advanceFeel(now, false);
+		this.updateAim(now, true);
 	}
 
-	private setScoped(on: boolean): void {
-		if (on === this.scoped) return;
-		this.scoped = on;
-		this.host.setZoom(on ? WEAPONS[this.ws.weapon].zoomFov : null);
+	/**
+	 * Aim from the button and what may block it: a gun that can aim, alive, in
+	 * play, not reloading (a held aim comes back when the reload ends). The two
+	 * rifles are `scoped` while aiming; `input` (Mouse2) plays the scope sound
+	 * when their scope goes up or down, every other change is silent.
+	 */
+	private updateAim(now: number, input = false): void {
+		const def = WEAPONS[this.ws.weapon];
+		this.aiming = this.aimHeld && this.alive && !this.spectating && AIM[def.id] !== undefined && !this.ws.reloading(now);
+		const scoped = this.aiming && def.zoomFov !== null;
+		if (scoped === this.scoped) return;
+		this.scoped = scoped;
+		this.host.setZoom(scoped ? def.zoomFov : null);
+		if (input) this.host.sound('scope');
+	}
+
+	/**
+	 * Leave the aim. Reload, swap and throw switch a toggled aim off; a held
+	 * one stays held and aims again once nothing blocks it. `hard` (death,
+	 * spectating, spawn, round end) lets go of the button too.
+	 */
+	private leaveAim(hard = false, now = this.lastFrame): void {
+		if (hard || this.aimToggle) this.aimHeld = false;
+		this.updateAim(now);
 	}
 
 	/**
@@ -427,6 +615,8 @@ export class InfectedClient {
 	 */
 	slot(n: number, now: number): boolean {
 		if (this.host.voteOpen() || this.spectating) return false;
+		// Practice range: 4 tries the next primary (no M.O.A.B. without a round).
+		if (n === 4 && this.practice.active) return this.cyclePrimary(now);
 		if (n === 4) {
 			if (this.moabReady) this.callMoab(now);
 			return true;
@@ -434,31 +624,210 @@ export class InfectedClient {
 		if (!this.alive || !this.armed || this.meleeWs.weapon !== 'knife') return true;
 		const want = n === 1 ? this.primaryWs : n === 2 ? this.secondaryWs : n === 3 ? this.meleeWs : null;
 		if (!want || want === this.ws) return true;
-		this.hold(want);
-		if (!this.solo) this.host.send({ type: 'loadout', weapon: want.weapon });
+		this.hold(want, now);
+		if (!this.solo && !this.practice.active) {
+			// The server acks every swap with an `ammo` event (kept for SWAP_ACK_MS: a refused swap gets none).
+			if (this.swaps.length >= MAX_PENDING_SWAPS) this.swaps.shift();
+			this.swaps.push({ weapon: want.weapon, at: now });
+			this.host.send({ type: 'loadout', weapon: want.weapon });
+		}
 		return true;
 	}
 
-	/** Swap the held weapon (a swap cancels a reload, like the server). */
-	private hold(next: WeaponState): void {
-		if (next === this.ws) return;
+	/**
+	 * Swap the held weapon (a swap cancels a reload, like the server). With `now`
+	 * (a key press, an `ammo` resync) the weapon is drawn: it cannot fire for its
+	 * `deployMs`, as on the server. Without it the server put the weapon in my
+	 * hands (spawn, role change, claws): no draw, and swap acks still on their
+	 * way are void. `again`: the held slot itself changed (the practice range
+	 * swapped its gun, or hands the round guns back).
+	 */
+	private hold(next: WeaponState, now?: number, again = false): void {
+		if (next === this.ws && !again) return;
 		this.ws.reloadEndsAt = 0;
+		this.cues.length = 0;
 		this.ws = next;
-		this.setScoped(false);
+		this.gunKick.reset();
+		// A swap leaves the aim at once: the new weapon comes up at the hip (a held aim then aims it, even during the draw).
+		this.aimT = 0;
+		this.leaveAim(false, now);
+		this.bloom.reset();
+		if (now === undefined) {
+			this.swaps.length = 0;
+			this.drawAt = this.drawEndsAt = -Infinity;
+		} else {
+			next.deploy(now);
+			this.drawAt = now;
+			this.drawEndsAt = now + (next.def.deployMs ?? 0);
+			if (next.weapon !== 'claws') this.host.sound('draw');
+		}
 		this.host.zombieRenderer()?.setWeapon(next.weapon);
+	}
+
+	/**
+	 * An `ammo` event naming `weapon` arrived: should the client hold it? Not
+	 * while acks of newer swaps are on their way: after 1, 2, 1 inside one round
+	 * trip the first ack names the pistol, and holding it would flip the weapon
+	 * and cancel a reload started since.
+	 */
+	private swapSettled(weapon: WeaponId, now: number): boolean {
+		const q = this.swaps;
+		while (q.length > 0 && now - q[0]!.at > SWAP_ACK_MS) q.shift();
+		if (q.length > 0 && q[0]!.weapon === weapon) q.shift();
+		return q.length === 0;
 	}
 
 	reload(now: number): void {
 		if (this.spectating || !this.alive) return;
 		if (this.ws !== this.primaryWs && this.ws !== this.secondaryWs) return;
+		const empty = this.ws.mag === 0;
 		if (!this.ws.startReload(now, this.reloadFactor)) return;
-		this.setScoped(false);
-		this.host.sound('reload');
-		if (!this.solo) this.host.send({ type: 'reload' });
+		// Each move of the reload sounds when it is seen (render/fp-clips.ts).
+		const w = this.ws.weapon;
+		if (w !== 'knife' && w !== 'claws') this.cue(FP_RELOADS[w][empty ? 'empty' : 'loaded'], now, this.ws.reloadDurationMs, this.ws.reloadEndsAt);
+		this.leaveAim(false, now);
+		if (!this.solo && !this.practice.active) this.host.send({ type: 'reload' });
+	}
+
+	/** The sounds of a clip that starts now and lasts `ms`. */
+	private cue(clip: Clip, now: number, ms: number, of: number): void {
+		this.cuesOf = of;
+		this.cues = clip.cues.map((c) => ({ at: now + c.t * ms - (c.sound === 'magIn' ? MAG_IN_LEAD_MS : 0), sound: c.sound }));
+		this.playCues(now);
+	}
+
+	private playCues(now: number): void {
+		const q = this.cues;
+		if (q.length === 0) return;
+		// Cancelled: the rest is not heard. A reload that ended has had its end moved to 0.
+		if (!this.alive || (this.cuesOf > 0 && this.ws.reloadEndsAt !== this.cuesOf && now < this.cuesOf)) {
+			q.length = 0;
+			return;
+		}
+		while (q.length > 0 && q[0]!.at <= now) this.host.sound(q.shift()!.sound);
 	}
 
 	/**
-	 * E: plant a respawn beacon at my feet (living infected, round playing).
+	 * Total aim spread half-angle now (degrees): base, bloom and movement
+	 * (halved by Steady Aim).
+	 */
+	private spreadNow(): number {
+		const w = this.ws.weapon;
+		if (WEAPONS[w].magazine === 0) return 0;
+		const a = this.aimIn;
+		a.bloom = this.bloom.value;
+		// The hip cone shrinks with the aim progress: nothing left fully aimed.
+		a.aim = ease(this.aimT);
+		a.speed = this.moveSpeed;
+		a.onGround = this.grounded;
+		a.ducked = this.crouched;
+		a.factor = this.spreadFactor;
+		return aimSpread(w, a);
+	}
+
+	/** View values in steps of 0.05, so the HUD view is rebuilt per visible step and not every frame. */
+	private aimView(): number {
+		return this.alive && !this.spectating ? Math.round(ease(this.aimT) * 20) / 20 : 0;
+	}
+
+	/** Scope overlay progress of the two rifles: the rifle comes up first, the scope picture takes over in the last part of the aim. */
+	private scopeView(): number {
+		if (WEAPONS[this.ws.weapon].zoomFov === null || !this.alive || this.spectating) return 0;
+		return Math.round(ease((this.aimT - SCOPE_OVERLAY_FROM) / (1 - SCOPE_OVERLAY_FROM)) * 20) / 20;
+	}
+
+	/** The crosshair gap: the hip cone, whatever the aim (the crosshair fades out as the sights come up). */
+	private spreadView(): number {
+		if (!this.alive || this.spectating) return 0;
+		this.spreadNow();
+		return Math.round(hipSpread(this.ws.weapon, this.aimIn) * 20) / 20;
+	}
+
+	/**
+	 * Advance the aim, view kick and bloom to `now` (ticks and frames share one
+	 * clock). `aim`: then take up what may have changed the aim (a reload that
+	 * ended, a weapon that cannot aim); Mouse2 does that itself, with sound.
+	 */
+	private advanceFeel(now: number, aim = true): void {
+		if (this.feelAt === -Infinity) this.feelAt = Math.min(now, this.lastFrame);
+		if (aim) this.updateAim(now);
+		const dt = now - this.feelAt;
+		if (!(dt > 0)) return;
+		this.feelAt = now;
+		this.aimT = aimStep(this.aimT, this.aiming, dt, AIM[this.ws.weapon]?.aimMs ?? 1);
+		this.viewKick.update(now);
+		this.bloom.update(now);
+	}
+
+	/** Per tick: the feel clock, the sounds of a reload, and the movement that drives spread and sway. */
+	private feelTick(now: number, pitch: number, yaw: number, ducked: boolean, velocity: Vec3, onGround: boolean): void {
+		this.advanceFeel(now);
+		this.playCues(now);
+		const dt = now - this.lastTickAt;
+		if (dt > 0 && dt < 100) {
+			// Shortest way round, so crossing ±180° is not a spin.
+			this.turnYaw = (((((yaw - this.lastYaw) % 360) + 540) % 360) - 180) * (1000 / dt);
+			this.turnPitch = (pitch - this.lastPitch) * (1000 / dt);
+		} else this.turnYaw = this.turnPitch = 0;
+		this.lastTickAt = now;
+		this.lastPitch = pitch;
+		this.lastYaw = yaw;
+		const yr = (yaw * Math.PI) / 180;
+		this.moveSpeed = Math.hypot(velocity.x, velocity.y);
+		this.strafe = velocity.x * Math.sin(yr) - velocity.y * Math.cos(yr);
+		this.climb = onGround ? 0 : velocity.z;
+		if (onGround && !this.grounded && this.fallSpeed > VM_LAND_MIN_SPEED) {
+			this.landAt = now;
+			this.landAmp = Math.min(1, this.fallSpeed / VM_LAND_SPEED);
+		}
+		if (!onGround) this.fallSpeed = Math.max(0, -velocity.z);
+		this.grounded = onGround;
+		this.crouched = ducked;
+	}
+
+	/** Per frame: advance the feel, report the camera kick and zoom to the host, pose the viewmodel extras. */
+	private feelFrame(now: number, dt: number): void {
+		const live = this.alive && !this.spectating;
+		if (!live) {
+			this.viewKick.reset();
+			this.gunKick.reset();
+			this.bloom.reset();
+			this.aimT = 0;
+		}
+		this.advanceFeel(now);
+		this.host.setViewKick?.(this.viewKick.pitch, this.viewKick.yaw, this.viewKick.roll);
+		// Aimed FOV of the held gun (a swap starts the aim over, so it is always this gun's), over the end of the aim.
+		const aim = ease(this.aimT);
+		const zoom = ease(zoomStep(this.aimT, AIM[this.ws.weapon]?.aimMs ?? ZOOM_MS));
+		if (zoom > 0 || this.zoomUp) {
+			this.host.zoomProgress?.(aimFov(this.fov, this.ws.weapon), zoom);
+			this.zoomUp = zoom > 0;
+		}
+		const f = this.vmFeel;
+		const s = this.sway;
+		if (live) s.update(dt * 1000, this.turnYaw, this.turnPitch, this.strafe, this.climb);
+		else s.reset();
+		f.x = s.x;
+		f.y = s.y;
+		f.roll = s.roll;
+		f.yaw = s.yaw;
+		f.pitch = s.pitch;
+		f.land = this.landAmp * vmBump((now - this.landAt) / VM_LAND_MS);
+		f.dry = vmBump((now - this.dryAt) / VM_DRY_MS);
+		// Lowered by the draw (it lasts the weapon's deploy time); raised to the sights by the aim.
+		const drawMs = this.drawEndsAt - this.drawAt;
+		f.lower = drawMs > 0 ? vmDraw((now - this.drawAt) / drawMs) : 0;
+		f.aim = aim;
+		// The gun kick shrinks to the share that turns the shots while aimed through iron sights.
+		this.gunKick.update(now);
+		const shown = 1 - (1 - AIM_GUN_KICK) * (aim > 0 && WEAPONS[this.ws.weapon].zoomFov === null ? aim : 0);
+		this.gunShown.pitch = this.gunKick.pitch * shown;
+		this.gunShown.yaw = this.gunKick.yaw * shown;
+		f.gun = this.gunShown;
+	}
+
+	/**
+	 * E: plant a respawn beacon on the ground below me, also in a jump (living infected, round playing).
 	 * The server checks ground and cooldown and answers with `beaconPlace`.
 	 * Returns whether a request was sent.
 	 */
@@ -484,9 +853,73 @@ export class InfectedClient {
 	}
 
 	// ---------------------------------------------------------------------
+	// Practice range (./infected-practice.ts)
+
+	/** The practice range is open: shots are resolved here and nothing weapon-related is sent. */
+	get practicing(): boolean {
+		return this.practice.active;
+	}
+
+	/** The practice targets (tests and debugging). */
+	practiceTargets(): readonly PracticeTarget[] {
+		return this.practice.targets();
+	}
+
+	/**
+	 * No round and I am in play: offline, or online once the server said it
+	 * waits for players (the phase a new client starts in is only a guess).
+	 */
+	private get practiceOn(): boolean {
+		return !this.spectating && this.alive && (this.solo || (this.phase === 'waiting' && this.state !== null));
+	}
+
+	/** Per tick without a round: runs the practice range. False when there is none (no firing). */
+	private practiceTick(now: number): boolean {
+		if (!this.practiceOn) return false;
+		const p = this.practice;
+		if (!p.active) p.start(now, this.feet, this.eye);
+		p.tick(now, this.feet, this.eye);
+		// A spent reserve refills (shown like a scavenger refill).
+		const a = practiceRefill(this.primaryWs);
+		const b = practiceRefill(this.secondaryWs);
+		if (a || b) this.scavengerAt = now;
+		return true;
+	}
+
+	/** Practice key 4: the primary becomes the next preset with fresh ammo, drawn like any swap. */
+	private cyclePrimary(now: number): boolean {
+		if (!this.alive || this.meleeWs.weapon !== 'knife') return true;
+		this.primaryWs.equip(nextPrimary(this.primaryWs.weapon));
+		limitAmmo(this.primaryWs);
+		this.hold(this.primaryWs, now, true);
+		return true;
+	}
+
+	/**
+	 * The practice range closes (a round starts, or I spectate): the targets go
+	 * and the guns are the fresh round guns the server holds for me, the primary
+	 * in hand and nothing of the practice left on them. The server's `spawn`
+	 * and `ammo` events that follow set the real state.
+	 */
+	private endPractice(): void {
+		if (!this.practice.active) return;
+		this.practice.stop();
+		this.primaryWs.equip(this.loadout);
+		limitAmmo(this.primaryWs);
+		this.freshSecondary();
+		this.hold(this.primaryWs, undefined, true);
+		this.viewKick.reset();
+		this.bloom.reset();
+		this.hitMarker = null;
+		this.scavengerAt = 0;
+	}
+
+	// ---------------------------------------------------------------------
 	// Simulation tick (64 Hz, after the local player moved)
 
-	tick(now: number, origin: Vec3, eyeZ: number, pitch: number, yaw: number, _ducked: boolean): void {
+	/** `velocity` and `onGround`: the player's movement after this tick (spread, viewmodel sway). */
+	tick(now: number, origin: Vec3, eyeZ: number, pitch: number, yaw: number, ducked: boolean, velocity: Vec3 = ZERO, onGround = true): void {
+		this.feelTick(now, pitch, yaw, ducked, velocity, onGround);
 		this.primaryWs.update(now);
 		this.secondaryWs.update(now);
 		this.eye = { x: origin.x, y: origin.y, z: eyeZ };
@@ -501,26 +934,36 @@ export class InfectedClient {
 			this.throwPending = false;
 			if (this.team === 'infected' && this.hasKnife && this.playing) this.throwKnife(now, eye, pitch, yaw);
 		}
-		if (this.solo || this.phase === 'waiting') return;
+		// No round: only the practice range fires.
+		if ((this.solo || this.phase === 'waiting') && !this.practiceTick(now)) return;
 		const def = WEAPONS[this.ws.weapon];
-		const want = (this.fireHeld && def.automatic) || now - this.firePressAt < FIRE_BUFFER_MS;
+		// A trigger pulled during the draw and still held fires when the draw ends; a tap is kept for FIRE_BUFFER_MS only.
+		const drawn = this.fireHeld && this.firePressAt >= this.drawAt && this.firePressAt < this.drawEndsAt;
+		const want = (this.fireHeld && def.automatic) || now - this.firePressAt < FIRE_BUFFER_MS || drawn;
 		if (!want) return;
 		if (!this.ws.melee && this.ws.mag <= 0) {
 			this.firePressAt = -Infinity;
-			if (!this.ws.reloading(now)) this.reload(now);
+			if (this.ws.reloading(now)) return;
+			if (this.ws.reserve > 0) this.reload(now);
+			else if (this.dryArmed && now >= this.drawEndsAt) {
+				// Nothing left to load: one click per trigger press.
+				this.dryArmed = false;
+				this.dryAt = now;
+				this.host.sound('dryfire');
+			}
 			return;
 		}
+		// The draw (nextFireAt from `deploy`) and the fire rate both hold the shot back here, never the server.
 		if (!this.ws.fire(now, this.cadenceFactor)) return;
 		this.firePressAt = -Infinity;
+		// Both rifles stay aimed after a shot, the bolt action too while its bolt cycles (held or toggled aim).
 		this.shoot(now, eye, pitch, yaw);
-		// Bolt action: unscope after the shot. The semi-auto Barrett stays scoped (Mouse2 toggles).
-		if (this.ws.weapon === 'sniper') this.setScoped(false);
 	}
 
 	private throwKnife(now: number, eye: Vec3, pitch: number, yaw: number): void {
 		this.hasKnife = false;
 		this.knifeAt = now;
-		this.setScoped(false);
+		this.leaveAim(false, now);
 		this.host.zombieRenderer()?.thrown(now);
 		this.host.sound('throw');
 		this.host.send({ type: 'throwKnife', origin: eye, dir: forwardDir(pitch, yaw) });
@@ -528,17 +971,22 @@ export class InfectedClient {
 
 	private shoot(now: number, eye: Vec3, pitch: number, yaw: number): void {
 		const def = WEAPONS[this.ws.weapon];
-		const fwd = forwardDir(pitch, yaw);
+		// The shot follows the kicked view (the camera always shows the whole view kick; its roll turns
+		// the picture about the aim line). The kick of this shot comes after it, so a first shot from
+		// rest goes to the aim point.
+		// Aimed through iron sights the gun kick turns the shot too, as far as the sights show it (muzzle up = pitch down).
+		this.gunKick.update(now);
+		const g = def.zoomFov === null ? AIM_GUN_KICK * ease(this.aimT) : 0;
+		const fwd = g > 0 ? forwardDir(kickedPitch(pitch, this.viewKick.pitch - g * this.gunKick.pitch), yaw + this.viewKick.yaw + g * this.gunKick.yaw) : forwardDir(kickedPitch(pitch, this.viewKick.pitch), yaw + this.viewKick.yaw);
 		const spread = this.spreadFactor;
-		const dir = spreadDir(fwd, (this.scoped ? def.scopedSpread : def.spread) * spread);
+		const dir = spreadDir(fwd, this.spreadNow());
 		const r = this.host.zombieRenderer();
 		r?.fired(now);
 		this.host.sound(def.id === 'knife' || def.id === 'claws' ? def.id : (`shot-${def.id}` as InfSound));
 		if (def.magazine > 0 && r) {
 			// Cosmetic tracers from the muzzle to the first wall (players are resolved by the server).
 			// Shotguns: the centre pellet plus a scatter within the (steady-aim tightened) pellet cone.
-			const yr = (yaw * Math.PI) / 180;
-			const muzzle = { x: eye.x + fwd.x * 18 + Math.sin(yr) * 7, y: eye.y + fwd.y * 18 - Math.cos(yr) * 7, z: eye.z + fwd.z * 18 - 6 };
+			const muzzle = this.tracerStart(r, eye, fwd, pitch, yaw);
 			const n = pelletTracers(def.id);
 			const cone = (def.pelletSpread ?? 0) * spread;
 			for (let i = 0; i < n; i++) {
@@ -546,10 +994,55 @@ export class InfectedClient {
 				const end = { x: eye.x + d.x * def.range, y: eye.y + d.y * def.range, z: eye.z + d.z * def.range };
 				const t = (this.world?.trace(eye, end, ZERO, ZERO).fraction ?? 1) * def.range;
 				r.tracer(muzzle, { x: eye.x + d.x * t, y: eye.y + d.y * t, z: eye.z + d.z * t }, now);
+				localImpact(this.host, this.world, eye, d, t, def.range, now, i === 0);
 			}
 		}
-		this.host.send({ type: 'fire', weapon: def.id, origin: eye, dir, tick: INF_FIRE_TICK_NOW });
+		if (this.practice.active) {
+			// Practice range: resolved here against the targets, never sent.
+			const hit = this.practice.shot(now, eye, dir, def.id, (def.pelletSpread ?? 0) * spread, this.me);
+			if (hit) this.hitMarker = { at: now, head: hit.head, kill: hit.kill };
+		} else this.host.send({ type: 'fire', weapon: def.id, origin: eye, dir, tick: INF_FIRE_TICK_NOW });
+		const bolt = FP_BOLTS[def.id as keyof typeof FP_BOLTS];
+		if (bolt) this.cue(bolt, now, BOLT_MS, 0);
+		if (def.magazine > 0) {
+			// Hip and aimed recoil blend with the aim progress (gunfeel.ts aimKickSet).
+			this.viewKick.kick(def.id, now, ease(this.aimT), this.pullShots++);
+			this.gunKick.kick(def.id, now);
+			this.bloom.add(def.id, now);
+		}
 	}
+
+	/** Start of my tracers: beside and below the aim from the hip, at the muzzle as drawn when aimed (below the centre behind a scope). */
+	private tracerStart(r: ZombieRenderer, eye: Vec3, fwd: Vec3, pitch: number, yaw: number): Vec3 {
+		const yr = (yaw * Math.PI) / 180;
+		const start = { x: eye.x + fwd.x * TRACER_AHEAD + Math.sin(yr) * 7, y: eye.y + fwd.y * TRACER_AHEAD - Math.cos(yr) * 7, z: eye.z + fwd.z * TRACER_AHEAD - 6 };
+		const aim = ease(this.aimT);
+		if (aim <= 0) return start;
+		const w = this.ws.weapon;
+		const at = this.muzzleAt;
+		const drawn = r.muzzleScreen?.(at) ?? false;
+		// The vertical half angle is 3/4 of the horizontal one at 4:3 (render/fov.ts).
+		const fov = zoomFov(this.fov, aimFov(this.fov, w), ease(zoomStep(this.aimT, AIM[w]?.aimMs ?? ZOOM_MS)));
+		const k = TRACER_AHEAD * Math.tan((fov * Math.PI) / 360) * 0.75;
+		const right = drawn ? at.right * k : 0;
+		const down = drawn ? at.down * k : 6;
+		// The camera as it looks now: its forward, right and up.
+		const cp = (kickedPitch(pitch, this.viewKick.pitch) * Math.PI) / 180;
+		const cy = ((yaw + this.viewKick.yaw) * Math.PI) / 180;
+		const sinP = Math.sin(cp);
+		const cosP = Math.cos(cp);
+		const sinY = Math.sin(cy);
+		const cosY = Math.cos(cy);
+		const x = eye.x + cosP * cosY * TRACER_AHEAD + sinY * right - cosY * sinP * down;
+		const y = eye.y + cosP * sinY * TRACER_AHEAD - cosY * right - sinY * sinP * down;
+		const z = eye.z - sinP * TRACER_AHEAD - cosP * down;
+		start.x += (x - start.x) * aim;
+		start.y += (y - start.y) * aim;
+		start.z += (z - start.z) * aim;
+		return start;
+	}
+
+	private readonly muzzleAt = { right: 0, down: 0 };
 
 	// ---------------------------------------------------------------------
 	// Server input
@@ -561,6 +1054,7 @@ export class InfectedClient {
 		this.phase = m.phase;
 		this.round = m.round;
 		this.loadout = m.loadout;
+		if (m.phase !== 'waiting') this.endPractice();
 		this.endsAt = m.phase === 'waiting' ? 0 : now + m.timeLeft * 1000;
 		if (m.phase !== 'ended') this.summary = null;
 		const me = m.players.find((p) => p.id === this.me);
@@ -570,7 +1064,7 @@ export class InfectedClient {
 			if (me.alive !== this.alive) {
 				this.alive = me.alive;
 				if (!me.alive) {
-					this.setScoped(false);
+					this.leaveAim(true, now);
 					if (this.respawnAt <= now) this.respawnAt = now + INF_RESPAWN_SECS * 1000;
 				}
 			}
@@ -586,6 +1080,7 @@ export class InfectedClient {
 		else if (!this.moab || this.moab.callerId !== mb.callerId) this.moab = { callerId: mb.callerId, endsAt: now + mb.timeLeft * 1000 };
 		this.syncKnives(m.knives, now);
 		this.syncBeacons(m.beacons ?? []);
+		syncReloads(this.host.remotePlayers?.() ?? null, m);
 	}
 
 	/** Beacons from the state replace the local set (events keep it current in between). */
@@ -642,7 +1137,7 @@ export class InfectedClient {
 		return ws;
 	}
 
-	/** Fresh pistol (the server hands out fresh guns: survivor round/join spawns, the Alpha). */
+	/** Fresh pistol (the server hands out fresh guns: survivor round/join spawns, the Alpha of an older server). */
 	private freshSecondary(): void {
 		this.secondaryWs.equip(INF_SECONDARY);
 		limitAmmo(this.secondaryWs);
@@ -695,12 +1190,15 @@ export class InfectedClient {
 	private apply(ev: InfEvent, now: number): void {
 		const me = this.me;
 		const r = this.host.zombieRenderer();
+		this.fb.event(ev, now);
 		switch (ev.e) {
 			case 'phase':
 				this.phase = ev.phase;
 				this.round = ev.round;
 				this.loadout = ev.loadout;
 				if (this.state) this.state = { ...this.state, phase: ev.phase, round: ev.round, loadout: ev.loadout };
+				// A round starts: the practice range closes before the server's spawn and ammo events apply.
+				if (ev.phase !== 'waiting') this.endPractice();
 				// The server drops a running M.O.A.B. on every phase change (no event for that).
 				this.moab = null;
 				if (ev.phase === 'grace') {
@@ -721,6 +1219,9 @@ export class InfectedClient {
 					this.timeBonusAt = 0;
 					this.scavengerAt = 0;
 					this.host.infectedRenderer()?.clear();
+					r?.casings?.clear();
+					// Everyone gets fresh guns.
+					this.host.remotePlayers?.()?.stopReloads();
 					this.flash = { text: `Round ${ev.round} · ${WEAPONS[ev.loadout].label} · find a holdout`, at: now, tone: 'survivor' };
 					this.host.sound('round');
 				} else if (ev.phase === 'playing') {
@@ -728,6 +1229,7 @@ export class InfectedClient {
 				} else if (ev.phase === 'waiting') {
 					this.knives.clear();
 					this.clearBeacons();
+					this.host.remotePlayers?.()?.stopReloads();
 					this.summary = null;
 				} else if (ev.phase === 'ended') {
 					this.knives.clear();
@@ -745,10 +1247,11 @@ export class InfectedClient {
 				this.hasKnife = ev.hasKnife;
 				this.knifeAt = now;
 				this.slowUntil = 0;
-				this.setScoped(false);
+				this.leaveAim(true, now);
+				this.aimT = 0;
 				// A fall-out keeps the life (streak, perks, ammo); every other spawn starts a fresh one.
 				if (ev.reason !== 'fall') this.clearStreak();
-				// Fresh guns like the server: survivor round/join spawns, and every Alpha (re)spawn.
+				// Fresh guns like the server: survivor round/join spawns, and every Alpha (re)spawn of an older server.
 				if (ev.reason !== 'fall' && (ev.team === 'survivor' || ev.alpha)) this.freshSecondary();
 				if (ev.weapon === 'claws') this.holdClaws();
 				else {
@@ -785,6 +1288,7 @@ export class InfectedClient {
 				}
 				this.line(`${this.name(ev.id)} · Patient Zero`, ev.id === me, false, now);
 				this.host.sound('alpha');
+				pickFeedback(this.host, ev, me, now);
 				break;
 			case 'infect': {
 				if (ev.timeAdded > 0) {
@@ -803,12 +1307,13 @@ export class InfectedClient {
 				const by = ev.by === null ? null : this.name(ev.by);
 				this.line(infectText(victim, by, ev.method), ev.by === me, false, now);
 				if (by !== null && (ev.method === 'knife' || ev.method === 'bank')) this.feed[0]!.badge = { kind: ev.method, by, victim };
+				turnFeedback(this.host, ev, me, now);
 				break;
 			}
 			case 'hit':
 				if (ev.by !== me) break;
 				this.hitMarker = { at: now, head: ev.head, kill: ev.kill };
-				this.host.sound('hit');
+				hitFeedback(this.host, ev, now);
 				break;
 			case 'kill': {
 				const victim = ev.targetId === me ? 'you' : this.host.name(ev.targetId);
@@ -819,18 +1324,20 @@ export class InfectedClient {
 					this.alive = false;
 					this.respawnAt = now + INF_RESPAWN_SECS * 1000;
 					this.fireHeld = false;
-					this.setScoped(false);
+					this.leaveAim(true, now);
 					this.flash = { text: `Killed by ${this.host.name(ev.by)} · respawning`, at: now, tone: 'infected' };
 				}
+				killFeedback(this.host, this.state, ev, me, this.viewId(), this.eye, this.roleOf(ev.targetId), now);
 				break;
 			}
 			case 'shot':
 				if (ev.by === me) break;
-				if (ev.len > 0) {
-					const o = ev.o;
-					r?.tracer({ x: o.x, y: o.y, z: o.z - 6 }, { x: o.x + ev.d.x * ev.len, y: o.y + ev.d.y * ev.len, z: o.z + ev.d.z * ev.len }, now);
-				}
+				shotFeedback(this.host, this.world, r, ev, now);
 				this.host.sound(ev.weapon === 'knife' || ev.weapon === 'claws' ? ev.weapon : (`shot-${ev.weapon}` as InfSound), ev.o);
+				break;
+			case 'reload':
+				// Mine already played in reload().
+				if (ev.id !== me) reloadFeedback(this.host, ev, now);
 				break;
 			case 'hurt':
 				if (ev.id !== me) break;
@@ -867,7 +1374,8 @@ export class InfectedClient {
 						ws.reserve = ev.reserve;
 					}
 					if (this.meleeWs.weapon !== 'knife') this.meleeWs.equip('knife');
-					this.hold(ws);
+					// The ack of a swap I already moved on from only syncs that slot's ammo.
+					if (this.swapSettled(ev.weapon, now)) this.hold(ws, now);
 				}
 				break;
 			case 'knifeThrow':
@@ -879,6 +1387,7 @@ export class InfectedClient {
 				break;
 			case 'knifeBounce': {
 				this.host.infectedRenderer()?.spark({ x: ev.x, y: ev.y, z: ev.z }, 'bounce', now, { x: ev.vx, y: ev.vy, z: ev.vz });
+				this.host.sound('knifeBounce', { x: ev.x, y: ev.y, z: ev.z });
 				const k = this.knives.get(ev.id);
 				if (!k) break;
 				Object.assign(k, { x: ev.x, y: ev.y, z: ev.z, vx: ev.vx, vy: ev.vy, vz: ev.vz, at: now });
@@ -889,12 +1398,17 @@ export class InfectedClient {
 				// The glint backs out along the flight direction (unknown when the throw was missed).
 				const dir = prev && !prev.stuck ? { x: prev.vx, y: prev.vy, z: prev.vz } : undefined;
 				this.host.infectedRenderer()?.spark({ x: ev.x, y: ev.y, z: ev.z }, 'stick', now, dir);
+				this.host.sound('knifeStick', { x: ev.x, y: ev.y, z: ev.z });
 				const k = prev ?? { id: ev.id, ownerId: ev.ownerId, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, pitch: 0, yaw: 0, stuck: true, at: now };
 				Object.assign(k, { x: ev.x, y: ev.y, z: ev.z, vx: 0, vy: 0, vz: 0, pitch: ev.pitch, yaw: ev.yaw, stuck: true, at: now });
 				this.knives.set(ev.id, k);
 				break;
 			}
-			case 'knifePickup':
+			case 'knifePickup': {
+				// Mine sounds without a position; another player's from where the knife lay.
+				const k = this.knives.get(ev.id);
+				if (ev.ownerId === me) this.host.sound('knifePickup');
+				else if (k) this.host.sound('knifePickup', { x: k.x, y: k.y, z: k.z });
 				this.knives.delete(ev.id);
 				if (ev.ownerId === me) {
 					this.hasKnife = true;
@@ -902,6 +1416,7 @@ export class InfectedClient {
 					this.flash = { text: 'Throwing knife retrieved', at: now, tone: 'infected' };
 				}
 				break;
+			}
 			case 'knifeRemove':
 				this.knives.delete(ev.id);
 				break;
@@ -918,6 +1433,7 @@ export class InfectedClient {
 				// Cleanups (replaced, owner left, round over) vanish quietly; a smash bursts.
 				if (ev.by === null) break;
 				this.host.infectedRenderer()?.spark({ x: ev.x, y: ev.y, z: ev.z + INF_BEACON_HIT_Z }, 'beacon', now);
+				this.host.sound('beaconSmash', { x: ev.x, y: ev.y, z: ev.z + INF_BEACON_HIT_Z });
 				if (ev.by === me) {
 					this.flash = { text: 'Beacon destroyed! +50', at: now, tone: 'survivor' };
 					this.line(`You · Destroyed ${this.host.name(ev.ownerId)}'s beacon (+50)`, true, false, now);
@@ -929,6 +1445,7 @@ export class InfectedClient {
 			case 'beaconUse':
 				this.beacons.delete(ev.id);
 				this.host.infectedRenderer()?.spark({ x: ev.x, y: ev.y, z: ev.z + INF_BEACON_HIT_Z }, 'beacon', now);
+				this.host.sound('beaconUse', { x: ev.x, y: ev.y, z: ev.z + INF_BEACON_HIT_Z });
 				if (ev.ownerId === me) {
 					this.hasBeacon = false;
 					this.flash = { text: 'Respawned at your beacon!', at: now, tone: 'bonus' };
@@ -973,12 +1490,13 @@ export class InfectedClient {
 				this.moabDetonatedAt = now;
 				this.flash = { text: `M.O.A.B. DETONATED! ${ev.kills} eliminated`, at: now, tone: 'bonus' };
 				this.line(`${this.name(ev.by)} · M.O.A.B. › ${ev.kills} infected`, ev.by === me, false, now);
+				moabFeedback(this.host, this.state, this.viewId(), now);
 				if (this.team === 'infected' && this.alive) {
 					// Every living infected dies (the round ends right after).
 					this.alive = false;
 					this.respawnAt = now + INF_RESPAWN_SECS * 1000;
 					this.fireHeld = false;
-					this.setScoped(false);
+					this.leaveAim(true, now);
 				}
 				this.host.sound('moabDetonate');
 				break;
@@ -993,7 +1511,7 @@ export class InfectedClient {
 				this.moab = null;
 				this.knives.clear();
 				this.clearBeacons();
-				this.setScoped(false);
+				this.leaveAim(true, now);
 				this.host.sound('round');
 				break;
 			}
@@ -1022,12 +1540,17 @@ export class InfectedClient {
 		this.beaconList.length = 0;
 		for (const b of this.beacons.values()) this.beaconList.push(b);
 		ir?.syncBeacons(this.beaconList, this.viewId(), this.viewTeam(), now);
+		syncHeld(this.host.remotePlayers?.() ?? null, this.state, this.me);
+		this.practice.frame();
+		this.feelFrame(now, dt);
 		const r = this.host.zombieRenderer();
 		if (r) {
 			r.setWeapon(this.ws.weapon);
 			// Throwing knife ready in the left claw (back on pickup / respawn, gone on a throw).
 			r.setOffhandKnife(this.team === 'infected' && this.ws.weapon === 'claws' && this.hasKnife && this.alive, now);
-			r.updateViewmodel(now, viewmodel && !this.spectating && this.alive && !this.scoped, this.ws.reloadProgress(now), speed);
+			// The rifles' viewmodel goes once the scope is fully up (the scope overlay takes over).
+			const scopedIn = WEAPONS[this.ws.weapon].zoomFov !== null && ease(this.aimT) >= 1;
+			r.updateViewmodel(now, viewmodel && !this.spectating && this.alive && !scopedIn, this.ws.reloadProgress(now), speed, this.vmFeel, this.ws.mag);
 		}
 		return this.buildView(now);
 	}
@@ -1102,6 +1625,9 @@ export class InfectedClient {
 			this.hurtAt,
 			this.uavAt,
 			this.scoped,
+			this.aimView(),
+			this.scopeView(),
+			this.spreadView(),
 			this.summary ? 1 : 0,
 			this.spectating,
 			this.specId,
@@ -1113,11 +1639,19 @@ export class InfectedClient {
 			this.moab?.callerId,
 			this.moab?.endsAt,
 			this.moabDetonatedAt,
-			this.perkFlash?.at
+			this.perkFlash?.at,
+			this.fb.frame(now, this.viewYaw),
+			this.primaryWs.mag,
+			this.primaryWs.reserve,
+			this.practice.active,
+			this.primaryWs.weapon
 		].join('|');
 		if (key === this.viewKey && this.view) return this.view;
 		this.viewKey = key;
 		const def = WEAPONS[ws.weapon];
+		const practice = this.practice.active;
+		// Practice range: slot 1 names the gun being tried, not the round's.
+		const loadout = practice ? this.primaryWs.weapon : this.loadout;
 		this.view = {
 			phase: this.phase,
 			round: this.round,
@@ -1125,8 +1659,8 @@ export class InfectedClient {
 			team: this.team,
 			alpha: this.alpha,
 			lastSurvivor: this.lastSurvivor(),
-			loadout: this.loadout,
-			loadoutLabel: WEAPONS[this.loadout].label,
+			loadout,
+			loadoutLabel: WEAPONS[loadout].label,
 			survivors: s?.survivors ?? 0,
 			infected: s?.infected ?? 0,
 			hp: this.hp,
@@ -1155,6 +1689,9 @@ export class InfectedClient {
 			hurtAt: this.hurtAt,
 			uavAt: this.uavAt,
 			scoped: this.scoped,
+			scopeT: this.scopeView(),
+			aimT: this.aimView(),
+			spreadDeg: this.spreadView(),
 			summary: this.summary,
 			spectating: this.spectating,
 			spec: this.specView(),
@@ -1166,7 +1703,14 @@ export class InfectedClient {
 			moabReady: this.team === 'survivor' && this.moabReady,
 			moab: this.moab ? { callerName: this.name(this.moab.callerId), endsAt: this.moab.endsAt } : null,
 			moabDetonatedAt: this.moabDetonatedAt,
-			perkFlash: this.perkFlash
+			perkFlash: this.perkFlash,
+			scorePops: this.fb.scorePops,
+			hurtDirs: this.fb.hurtDirs,
+			summaryRows: this.summary ? this.fb.summaryRows : null,
+			nextLoadoutLabel: this.summary ? this.fb.nextLoadoutLabel : null,
+			focusId: this.viewId(),
+			slotAmmo: [this.primaryWs.mag + this.primaryWs.reserve, this.secondaryWs.mag + this.secondaryWs.reserve],
+			practice
 		};
 		return this.view;
 	}
@@ -1202,7 +1746,8 @@ export class InfectedClient {
 	}
 
 	dispose(): void {
-		this.setScoped(false);
+		this.practice.stop();
+		this.leaveAim(true);
 		this.knives.clear();
 		this.knifeList.length = 0;
 		this.clearBeacons();

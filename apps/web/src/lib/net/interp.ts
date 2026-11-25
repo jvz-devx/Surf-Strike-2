@@ -2,9 +2,10 @@
  * Remote-player interpolation buffer: snapshots are stored with their
  * arrival time and sampled ~100 ms in the past (docs/architecture.md#netcode).
  */
-import type { NetState } from '@surf/shared';
+import { INTERP_DELAY_MS, type NetState } from '@surf/shared';
 
-export const INTERP_DELAY_MS = 100;
+/** Shared with the server's lag compensation (packages/shared protocol.ts). */
+export { INTERP_DELAY_MS };
 const CAPACITY = 32;
 
 export interface Sample {

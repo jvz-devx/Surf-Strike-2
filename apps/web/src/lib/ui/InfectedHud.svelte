@@ -1,11 +1,49 @@
 <script lang="ts">
+	import { prefersReducedMotion } from 'svelte/motion';
+	import { innerHeight, innerWidth } from 'svelte/reactivity/window';
 	import { INF_MOAB_KILLS, INF_PERK_KILLS, type InfPerkId } from '@surf/shared';
 	import type { InfectedView } from '#lib/game/contract.js';
 	import { INF_PERK_INFO } from '#lib/game/infected.js';
 	import { ammoText, reloadProgress } from '#lib/game/zombies-view.js';
 	import { fadeOpacity, formatClock } from '#lib/ui/format.js';
+	import {
+		accuracyText,
+		ammoPrompt,
+		arcClear,
+		CALM_FLASH,
+		CALM_HIT,
+		CALM_VIGNETTE,
+		calmCueOpacity,
+		CalmLevel,
+		emptySlotHints,
+		hitKind,
+		hitOpacity,
+		hurtArcPath,
+		hurtDirOpacity,
+		nukeOpacity,
+		nukeWarm,
+		popOpacity,
+		CROSSHAIR_LINE_CLEAR_PX,
+		popRowTop,
+		RING_BOX,
+		RING_HALF_DEG,
+		RING_RADIUS,
+		RING_THICKNESS,
+		ringKeepOut,
+		scopeOverlay,
+		summaryLayout,
+		vignetteStrength,
+		type RingRect
+	} from '#lib/ui/infected-hud.js';
+	import { practiceHint } from '#lib/ui/infected-practice.js';
 
 	let { inf, now }: { inf: InfectedView; now: number } = $props();
+
+	/** How long the timed labels show (ms): +20s, +AMMO, the UAV line, the perk toast. */
+	const BONUS_MS = 1800;
+	const SCAVENGER_MS = 1500;
+	const UAV_MS = 3000;
+	const PERK_TOAST_MS = 1600;
 
 	/** Spectating (free-fly or a target): local-only feedback is hidden. */
 	const watching = $derived(inf.spectating ?? false);
@@ -44,12 +82,42 @@
 	const urgent = $derived(inf.phase === 'playing' && inf.endsAt > 0 && left <= 15);
 	const ammo = $derived(ammoText(inf.mag, inf.magSize, inf.reserve));
 	const reload = $derived(inf.reloadEndsAt > 0 ? reloadProgress(now, inf.reloadEndsAt, inf.reloadMs) : 1);
-	const flashOpacity = $derived(inf.flash ? fadeOpacity(now - inf.flash.at, 2000, 800) : 0);
-	const hitOpacity = $derived(!watching && inf.hitMarker ? fadeOpacity(now - inf.hitMarker.at, 120, 220) : 0);
-	const hurtOpacity = $derived(!watching && inf.hurtAt > 0 ? fadeOpacity(now - inf.hurtAt, 80, 420) : 0);
-	const bonus = $derived(inf.timeBonusAt > 0 && now - inf.timeBonusAt < 1800);
-	const scavenger = $derived(!watching && inf.scavengerAt > 0 && now - inf.scavengerAt < 1500);
-	const uav = $derived(inf.phase === 'playing' && inf.uavAt > 0 && now - inf.uavAt < 3000);
+	/**
+	 * prefers-reduced-motion: no pulsing, popping or flashing. The animations are off (CSS below) and
+	 * every event cue eases in and out instead of jumping (the calm helpers of infected-hud.ts).
+	 */
+	const reduced = $derived(prefersReducedMotion.current);
+	/** Reduced motion: the cues with one slot follow their events at a limited rate (once per frame, from `now`). */
+	const calmHurt = new CalmLevel(CALM_VIGNETTE);
+	const calmHit = new CalmLevel(CALM_HIT);
+	const calmFlash = new CalmLevel(CALM_FLASH);
+	const flashOpacity = $derived(inf.flash ? (reduced ? calmFlash.at(now, inf.flash.at) : fadeOpacity(now - inf.flash.at, 2000, 800)) : 0);
+	const hit = $derived(!watching && inf.hitMarker ? hitKind(inf.hitMarker) : null);
+	const hitShown = $derived(hit && inf.hitMarker ? (reduced ? calmHit.at(now, inf.hitMarker.at) : hitOpacity(now - inf.hitMarker.at, hit)) : 0);
+	/** Red edge when hit: there at once and fading, or a softer edge that eases in with reduced motion. */
+	const hurtOpacity = $derived(
+		watching || !(inf.hurtAt > 0) ? 0 : reduced ? calmHurt.at(now, inf.hurtAt) : fadeOpacity(now - inf.hurtAt, 80, 420) * vignetteStrength(false)
+	);
+	/** Where recent hits came from (local player only). */
+	const hurtDirs = $derived(!watching ? (inf.hurtDirs ?? []) : []);
+	/** Score popups of the viewed player (the client sends none in free-fly). */
+	const pops = $derived(inf.scorePops ?? []);
+	const reloading = $derived(inf.reloadEndsAt > 0 && now < inf.reloadEndsAt);
+	const prompt = $derived(
+		ammoPrompt({
+			phase: inf.phase,
+			team: inf.team,
+			alive: inf.alive,
+			spectating: watching,
+			mag: inf.mag,
+			magSize: inf.magSize,
+			reserve: inf.reserve,
+			reloading
+		})
+	);
+	const bonus = $derived(inf.timeBonusAt > 0 && now - inf.timeBonusAt < BONUS_MS);
+	const scavenger = $derived(!watching && inf.scavengerAt > 0 && now - inf.scavengerAt < SCAVENGER_MS);
+	const uav = $derived(inf.phase === 'playing' && inf.uavAt > 0 && now - inf.uavAt < UAV_MS);
 	/** UAV distance in metres (1 unit ≈ 2.54 cm), infected only. */
 	const uavMetres = $derived(!watching && inf.uavDist != null ? Math.max(1, Math.round(inf.uavDist * 0.0254)) : null);
 	const uavText = $derived(
@@ -73,35 +141,108 @@
 	/** Survivors in a round see their perk track (or the spectated survivor's). */
 	const showTrack = $derived(!infected && (inf.phase === 'playing' || inf.phase === 'grace') && (!watching || spec !== null));
 	/** Freshly unlocked perk (pops in the track for 1.6 s). */
-	const fresh = $derived(!spec && inf.perkFlash && now - inf.perkFlash.at < 1600 ? inf.perkFlash.perk : null);
+	const fresh = $derived(!spec && inf.perkFlash && now - inf.perkFlash.at < PERK_TOAST_MS ? inf.perkFlash.perk : null);
 	const moabReady = $derived(spec ? spec.moabReady : inf.moabReady);
 	const moabLeft = $derived(inf.moab ? Math.max(0, (inf.moab.endsAt - now) / 1000) : 0);
-	/** M.O.A.B. detonation: a blinding white-to-amber flash fading over 2.4 s. */
-	const NUKE_MS = 2400;
-	const nukeT = $derived(inf.moabDetonatedAt > 0 ? (now - inf.moabDetonatedAt) / NUKE_MS : 1);
-	const nukeOpacity = $derived(nukeT >= 0 && nukeT < 1 ? Math.pow(1 - nukeT, 1.6) : 0);
+	/** M.O.A.B. detonation: a white-to-amber flash, or a dim amber wash with reduced motion. */
+	const nuke = $derived(inf.moabDetonatedAt > 0 ? nukeOpacity(now - inf.moabDetonatedAt, reduced) : 0);
+	const scope = $derived(watching ? null : scopeOverlay(inf.scopeT, inf.scoped));
+	/** Where to go with an empty gun: the other slots that still work. */
+	const emptyHints = $derived(prompt === 'empty' ? emptySlotHints(activeSlot, inf.slotAmmo, inf.secondaryLabel) : []);
+	/** Round summary table (server stats); null: the one-line summary. */
+	const summaryRows = $derived(inf.phase === 'ended' && inf.summary ? (inf.summaryRows ?? null) : null);
+	const layout = $derived(summaryRows && summaryRows.length > 0 ? summaryLayout(summaryRows, inf.focusId) : null);
+	/** Two columns use short headers. */
+	const compact = $derived(layout !== null && layout.columns.length > 1);
+	/** Hit arc shape in the ring box: straight ahead, rotated per hit. */
+	const ARC = hurtArcPath(RING_RADIUS, RING_HALF_DEG, RING_THICKNESS);
+
+	let roundEl = $state<HTMLDivElement>();
+	let ringEl = $state<SVGSVGElement>();
+	let trackEl = $state<HTMLDivElement>();
+	/**
+	 * The round header stack as the area the hit arcs stay out of (ring units). On a small screen a
+	 * deep stack (M.O.A.B. banner, UAV line, flash) ends inside the ring: an arc that would reach
+	 * into it is not drawn. Measured when the stack or the ring changes size, never per frame.
+	 */
+	let stackKeepOut = $state.raw<RingRect | null>(null);
+	/** Lower edge of that stack in the HUD (px): the scope's vertical hair starts below it. */
+	let stackBottom = $state(0);
+	/** What the perk track takes from the bottom of the HUD (px) where it reaches under the crosshair column, else 0: the hair ends above it. */
+	let trackReach = $state(0);
+	$effect(() => {
+		const round = roundEl;
+		const ring = ringEl;
+		const track = trackEl;
+		// Moves without a resize: the ring with the screen centre, the header when spectating starts or ends.
+		void innerWidth.current;
+		void innerHeight.current;
+		void watching;
+		if (!round || !ring) {
+			stackKeepOut = null;
+			stackBottom = 0;
+			trackReach = 0;
+			return;
+		}
+		const measure = () => {
+			stackKeepOut = ringKeepOut(round.getBoundingClientRect(), ring.getBoundingClientRect());
+			stackBottom = round.offsetTop + round.offsetHeight;
+			const hud = round.offsetParent;
+			trackReach = track && hud && track.offsetLeft <= hud.clientWidth / 2 ? hud.clientHeight - track.offsetTop : 0;
+		};
+		const observer = new ResizeObserver(measure);
+		observer.observe(round);
+		observer.observe(ring);
+		if (track) observer.observe(track);
+		measure();
+		return () => observer.disconnect();
+	});
+	/** Practice range (no round): the banner says so and names the keys. */
+	const practice = $derived(practiceHint(inf));
 </script>
 
 {#if infected && (!watching || spec)}<div class="tint" aria-hidden="true"></div>{/if}
-{#if hurtOpacity > 0}<div class="vignette" style:opacity={hurtOpacity * 0.8} aria-hidden="true"></div>{/if}
-{#if nukeOpacity > 0}
-	<div class="nuke" style:opacity={nukeOpacity} style:--warm={Math.min(1, nukeT * 2.2)} aria-hidden="true"></div>
+{#if hurtOpacity > 0}<div class="vignette" style:opacity={hurtOpacity} aria-hidden="true"></div>{/if}
+{#if nuke > 0}
+	<div class="nuke" class:calm={reduced} style:opacity={nuke} style:--warm={nukeWarm(now - inf.moabDetonatedAt, reduced)} aria-hidden="true"></div>
 {/if}
 
-{#if inf.scoped && !watching}
-	<div class="scope" aria-hidden="true">
-		<div class="lens"></div>
+{#if scope}
+	<div
+		class="scope"
+		style:opacity={scope.opacity}
+		style:--hair-top="{stackBottom + 6}px"
+		style:--hair-bottom="{trackReach > 0 ? trackReach + 6 : 0}px"
+		aria-hidden="true"
+	>
+		<div class="lens" style:--lens={scope.scale}></div>
 		<div class="hair h"></div>
 		<div class="hair v"></div>
 	</div>
 {/if}
 
-<div class="round" data-top-hud class:watching aria-live="polite">
+<!-- Not over the summary table: the round is over. Always there otherwise, so the ring can be measured. -->
+{#if !layout}
+	<svg class="dmg" bind:this={ringEl} viewBox="{-RING_BOX / 2} {-RING_BOX / 2} {RING_BOX} {RING_BOX}" aria-hidden="true">
+		{#each hurtDirs as h (h.id)}
+			{#if arcClear(h.bearing, stackKeepOut)}
+				<path d={ARC} class:lethal={h.lethal} transform="rotate({h.bearing})" style:opacity={hurtDirOpacity(now - h.at, h.lethal, reduced)} />
+			{/if}
+		{/each}
+	</svg>
+{/if}
+
+<div class="round" data-top-hud class:watching bind:this={roundEl} aria-live="polite">
 	{#if inf.phase === 'waiting' || inf.phase === 'solo'}
 		<div class="banner ss-panel ss-shadow">
 			<span class="role">Infected</span>
-			<span class="msg">Waiting for players — infected needs 2+</span>
+			<span class="msg">{practice ? practice.title : 'Waiting for players — infected needs 2+'}</span>
 		</div>
+		{#if practice}
+			<div class="practice">
+				{#each practice.keys as k (k.key)}<span><b>{k.key}</b>{k.label}</span>{/each}
+			</div>
+		{/if}
 	{:else if inf.phase === 'grace'}
 		<div class="banner ss-panel ss-shadow">
 			<span class="role">Round {inf.round}</span>
@@ -114,7 +255,7 @@
 			<span class="role">{role.text}</span>
 			<span class="clock-wrap">
 				<span class="clock ss-num" class:low={left <= 30} class:urgent>{formatClock(left)}</span>
-				{#if bonus}<span class="pop bonus ss-num">+20s</span>{/if}
+				{#if bonus}<span class="pop bonus ss-num" style:opacity={reduced ? calmCueOpacity(now - inf.timeBonusAt, BONUS_MS) : null}>+20s</span>{/if}
 			</span>
 			<span class="stat"><span class="ss-label">Survivors</span> <span class="ss-num cyan">{inf.survivors}</span></span>
 			<span class="vs">vs</span>
@@ -130,10 +271,58 @@
 			</div>
 		{/if}
 		{#if uav && uavText}
-			<div class="uav" class:hunted={!watching && !infected}>
+			<div class="uav" class:hunted={!watching && !infected} style:opacity={reduced ? calmCueOpacity(now - inf.uavAt, UAV_MS) : null}>
 				{uavText}{#if uavMetres !== null}<span class="dist ss-num">{uavMetres}m</span>{/if}
 			</div>
 		{/if}
+	{:else if inf.phase === 'ended' && inf.summary && layout}
+		<div class="sumpanel ss-panel ss-shadow" class:lost={inf.summary.winner === 'infected'} class:two={compact}>
+			<div class="sumhead">
+				<span class="role">{inf.summary.winner === 'survivors' ? 'Survivors win' : 'Infected win'}</span>
+				<span class="stat"><span class="ss-label">Time</span> <span class="ss-num">{formatClock(inf.summary.secs)}</span></span>
+				<span class="stat"><span class="ss-label">Survived</span> <span class="ss-num cyan">{inf.summary.survivorsLeft}</span></span>
+				<span class="sumnext">
+					{#if inf.nextLoadoutLabel}<span class="badge loadout"><span class="ss-label">Next</span> {inf.nextLoadoutLabel}</span>{/if}
+					<span class="dim">next round in <span class="ss-num cd">{Math.ceil(left)}</span></span>
+				</span>
+			</div>
+			<div class="sumcols">
+				{#each layout.columns as col, ci (ci)}
+					<table class="sumtable">
+						<thead>
+							<tr>
+								<th class="nm" scope="col">Player</th>
+								<th class="c-score" scope="col">Score</th>
+								<th class="c-kills" scope="col">{#if compact}<abbr title="Kills">K</abbr>{:else}Kills{/if}</th>
+								<th class="c-inf" scope="col">{#if compact}<abbr title="Infections">Inf</abbr>{:else}Infections{/if}</th>
+								<th class="c-deaths" scope="col">{#if compact}<abbr title="Deaths">D</abbr>{:else}Deaths{/if}</th>
+								<th class="c-acc" scope="col">{#if compact}<abbr title="Accuracy">Acc</abbr>{:else}Accuracy{/if}</th>
+								<th class="c-streak" scope="col">{#if compact}<abbr title="Best streak">Str</abbr>{:else}Best streak{/if}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each col as r (r.id)}
+								<tr class:me={r.id === inf.focusId} class:inf={r.team === 'infected'}>
+									<td class="nm">
+										<div class="nmwrap">
+											<span class="pname">{r.name}</span>
+											{#if r.alpha}<span class="pz" title="Patient Zero">{compact ? 'P. Zero' : 'Patient Zero'}</span>{/if}
+										</div>
+									</td>
+									<td class="ss-num score">{r.score}</td>
+									<td class="ss-num" class:zero={r.kills === 0}>{r.kills}</td>
+									<td class="ss-num" class:zero={r.infections === 0}>{r.infections}</td>
+									<td class="ss-num" class:zero={r.deaths === 0}>{r.deaths}</td>
+									<td class="ss-num" class:zero={r.accuracy === null}>{accuracyText(r.accuracy)}</td>
+									<td class="ss-num" class:zero={r.bestStreak === 0}>{r.bestStreak}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				{/each}
+			</div>
+			{#if layout.more > 0}<div class="summore dim">+{layout.more} more players</div>{/if}
+		</div>
 	{:else if inf.phase === 'ended' && inf.summary}
 		<div class="banner ss-panel ss-shadow summary" class:lost={inf.summary.winner === 'infected'}>
 			<span class="role">{inf.summary.winner === 'survivors' ? 'Survivors win' : 'Infected win'}</span>
@@ -148,9 +337,36 @@
 	{/if}
 </div>
 
-{#if hitOpacity > 0 && inf.hitMarker}
-	<div class="hitmarker" class:head={inf.hitMarker.head} class:kill={inf.hitMarker.kill} style:opacity={hitOpacity} aria-hidden="true">
-		<i></i><i></i><i></i><i></i>
+{#if hit && hitShown > 0 && inf.hitMarker}
+	{#key inf.hitMarker.at}
+		<div class="hitmarker hm-{hit}" style:opacity={hitShown} aria-hidden="true">
+			<i></i><i></i><i></i><i></i>{#if inf.hitMarker.head}<b></b>{/if}
+		</div>
+	{/key}
+{/if}
+
+{#if prompt}
+	<div class="ammo-prompt ap-{prompt}" style:--clear="{CROSSHAIR_LINE_CLEAR_PX}px">
+		{#if prompt === 'reload'}
+			<span class="pline"><span class="pkey">R</span>Reload</span>
+		{:else if prompt === 'low'}
+			<span class="pline">Low ammo</span>
+		{:else}
+			<span class="pline">No ammo</span>
+			<span class="palts">
+				{#each emptyHints as h (h.key)}<span class="palt"><span class="pkey">{h.key}</span>{h.label}</span>{/each}
+			</span>
+		{/if}
+	</div>
+{/if}
+
+{#if pops.length > 0}
+	<div class="pops" style:--clear="{CROSSHAIR_LINE_CLEAR_PX}px" aria-hidden="true">
+		{#each pops as p, i (p.id)}
+			<div class="spop" class:big={p.points >= 250} style:--rowtop={popRowTop(pops.length - 1 - i)} style:opacity={popOpacity(now - p.at, reduced)}>
+				<span class="spin"><span class="pts ss-num">+{p.points}</span>{p.label}</span>
+			</div>
+		{/each}
 	</div>
 {/if}
 
@@ -161,7 +377,8 @@
 	</div>
 {/if}
 
-<div class="killfeed">
+<!-- The stats summary covers the round: the feed makes room for it. -->
+<div class="killfeed" class:hidden={layout !== null}>
 	{#each inf.killFeed as k (k.id)}
 		<div class="kill" class:mine={k.mine} class:hs={k.head} class:knifed={k.badge?.kind === 'knife'} class:banked={k.badge?.kind === 'bank'}>
 			{#if k.badge}
@@ -174,7 +391,7 @@
 </div>
 
 {#if showTrack}
-	<div class="perktrack ss-panel ss-shadow" class:specialist>
+	<div class="perktrack ss-panel ss-shadow" class:specialist bind:this={trackEl}>
 		<span class="streak" class:gold={specialist}>
 			{#if specialist}Specialist{:else}<span class="ss-label">Streak</span> <span class="ss-num">{streak}</span>{/if}
 		</span>
@@ -192,7 +409,11 @@
 	</div>
 	{#if fresh}
 		{#key inf.perkFlash?.at}
-			<div class="perktoast" class:gold={fresh === 'specialist'}>
+			<div
+				class="perktoast"
+				class:gold={fresh === 'specialist'}
+				style:opacity={reduced && inf.perkFlash ? calmCueOpacity(now - inf.perkFlash.at, PERK_TOAST_MS) : null}
+			>
 				<span class="ss-label">Perk unlocked</span>
 				{INF_PERK_INFO[fresh].toast}
 			</div>
@@ -246,12 +467,12 @@
 			<div class="weapon ss-panel ss-shadow">
 				<span class="whead">
 					<span class="wname">{weaponLabel}</span>
-					{#if scavenger}<span class="pop ammo-pop">+AMMO</span>{/if}
+					{#if scavenger}<span class="pop ammo-pop" style:opacity={reduced ? calmCueOpacity(now - inf.scavengerAt, SCAVENGER_MS) : null}>+AMMO</span>{/if}
 				</span>
 				{#if armed}
 					<span class="slots">
-						<span class="slot" class:active={activeSlot === 1}><span class="cap">1</span>{inf.loadoutLabel}</span>
-						<span class="slot" class:active={activeSlot === 2}><span class="cap">2</span>{inf.secondaryLabel}</span>
+						<span class="slot" class:active={activeSlot === 1} class:dry={!spec && inf.slotAmmo?.[0] === 0}><span class="cap">1</span>{inf.loadoutLabel}</span>
+						<span class="slot" class:active={activeSlot === 2} class:dry={!spec && inf.slotAmmo?.[1] === 0}><span class="cap">2</span>{inf.secondaryLabel}</span>
 						<span class="slot" class:active={activeSlot === 3}><span class="cap">3</span>Knife</span>
 					</span>
 				{:else}
@@ -364,6 +585,25 @@
 		font-weight: 600;
 		letter-spacing: 0.04em;
 	}
+	.practice {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 14px;
+		padding: 3px 12px;
+		background: rgba(8, 12, 18, 0.65);
+		border: 1px solid var(--panel-border);
+		font-size: 0.85em;
+		color: var(--text-dim);
+		letter-spacing: 0.04em;
+		white-space: nowrap;
+	}
+	.practice b {
+		margin-right: 5px;
+		padding: 0 4px;
+		color: #ffd27a;
+		border: 1px solid rgba(255, 210, 122, 0.45);
+		font-weight: 600;
+	}
 	.pop {
 		position: absolute;
 		left: 100%;
@@ -452,47 +692,381 @@
 			0 0 14px rgba(255, 190, 40, 0.85),
 			0 2px 4px rgba(0, 0, 0, 0.9);
 	}
+	/*
+	 * Hit marker, three states told apart by colour, size and weight: short white
+	 * ticks for a body hit, longer and heavier gold ticks for a headshot, a wide
+	 * red cross for a kill (with a gold pip when the kill was a headshot).
+	 */
 	.hitmarker {
 		position: absolute;
 		left: 50%;
 		top: 50%;
-		width: 28px;
-		height: 28px;
+		width: 26px;
+		height: 26px;
 		transform: translate(-50%, -50%);
+		--len: 8px;
+		--th: 2px;
+		--col: #fff;
+	}
+	.hitmarker.hm-head {
+		width: 30px;
+		height: 30px;
+		--len: 11px;
+		--th: 3px;
+		--col: #ffd24a;
+	}
+	.hitmarker.hm-kill {
+		width: 44px;
+		height: 44px;
+		--len: 14px;
+		--th: 3px;
+		--col: #ff5a5a;
+		animation: hit-kill 140ms ease-out;
 	}
 	.hitmarker i {
 		position: absolute;
-		width: 9px;
-		height: 2px;
-		background: #fff;
+		width: var(--len);
+		height: var(--th);
+		background: var(--col);
 		box-shadow: 0 0 2px #000;
 	}
-	.hitmarker.head i {
-		background: #ffd24a;
+	.hitmarker.hm-head i {
+		box-shadow:
+			0 0 2px #000,
+			0 0 6px rgba(255, 200, 60, 0.8);
 	}
-	.hitmarker.kill i {
-		background: #ff5a5a;
-		width: 12px;
+	.hitmarker.hm-kill i {
+		box-shadow:
+			0 0 2px #000,
+			0 0 7px rgba(255, 60, 40, 0.85);
 	}
+	/* Each tick lies on a diagonal of the box, starting at its corner. */
 	.hitmarker i:nth-child(1) {
 		left: 0;
-		top: 4px;
+		top: calc((var(--len) - var(--th)) / 2);
 		transform: rotate(45deg);
 	}
 	.hitmarker i:nth-child(2) {
 		right: 0;
-		top: 4px;
+		top: calc((var(--len) - var(--th)) / 2);
 		transform: rotate(-45deg);
 	}
 	.hitmarker i:nth-child(3) {
 		left: 0;
-		bottom: 4px;
+		bottom: calc((var(--len) - var(--th)) / 2);
 		transform: rotate(-45deg);
 	}
 	.hitmarker i:nth-child(4) {
 		right: 0;
-		bottom: 4px;
+		bottom: calc((var(--len) - var(--th)) / 2);
 		transform: rotate(45deg);
+	}
+	.hitmarker b {
+		display: none;
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: 6px;
+		height: 6px;
+		margin: -3px 0 0 -3px;
+		background: #ffd24a;
+		box-shadow: 0 0 2px #000;
+		transform: rotate(45deg);
+	}
+	.hitmarker.hm-kill b {
+		display: block;
+	}
+	@keyframes hit-kill {
+		from {
+			transform: translate(-50%, -50%) scale(0.6);
+		}
+		to {
+			transform: translate(-50%, -50%) scale(1);
+		}
+	}
+	/*
+	 * Hit direction ring: outside the ammo prompt and the score popups, clear of the panels.
+	 * An arc that would reach into the round header stack is left out (arcClear).
+	 */
+	.dmg {
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: calc(400px * var(--hud-scale));
+		height: calc(400px * var(--hud-scale));
+		transform: translate(-50%, -50%);
+		overflow: visible;
+		pointer-events: none;
+	}
+	.dmg path {
+		fill: rgba(255, 70, 50, 0.9);
+		stroke: rgba(40, 0, 0, 0.6);
+		stroke-width: 1;
+		filter: drop-shadow(0 0 5px rgba(255, 40, 20, 0.7));
+	}
+	.dmg path.lethal {
+		fill: #ff2c1c;
+	}
+	/* Beside the crosshair: ammo prompt on the left, score popups on the right. */
+	.ammo-prompt {
+		position: absolute;
+		right: calc(50% + 52px * var(--hud-scale));
+		top: 50%;
+		/* Above the line of the crosshair arms and the scope's hair (below it are the keys). */
+		transform: translateY(calc(-100% - var(--clear)));
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 3px;
+		font-size: calc(13px * var(--hud-scale));
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		white-space: nowrap;
+		color: #ffd27a;
+		text-shadow: var(--shadow-text);
+	}
+	.ammo-prompt.ap-low {
+		color: #ffb347;
+	}
+	.ammo-prompt.ap-empty {
+		color: #ff7a6a;
+	}
+	.pline,
+	.palt {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+	}
+	.pkey {
+		min-width: 1.4em;
+		padding: 0 3px;
+		text-align: center;
+		font-weight: 800;
+		letter-spacing: 0;
+		color: #0b0f14;
+		background: #ffd27a;
+		box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.35);
+		text-shadow: none;
+	}
+	/* One slot per line: the prompt stays narrow enough to end inside the hit ring. */
+	.palts {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 2px;
+		font-size: 0.8em;
+		letter-spacing: 0.04em;
+		color: var(--text);
+	}
+	.pops {
+		position: absolute;
+		left: calc(50% + 52px * var(--hud-scale));
+		top: 50%;
+		font-size: calc(13px * var(--hud-scale));
+	}
+	/* One row per popup (--rowtop: popRowTop), stacked upwards from just above the crosshair line (the arms and the scope's hair). */
+	.spop {
+		position: absolute;
+		left: 0;
+		top: 0;
+		height: 1.5em;
+		line-height: 1.5em;
+		transform: translateY(calc(var(--rowtop) * 1.5em - var(--clear)));
+		transition: transform 160ms ease-out;
+		white-space: nowrap;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		color: #fff;
+		text-shadow: var(--shadow-text);
+	}
+	/* Grows into place from its left edge: it never reaches past its own box (keys display on the left, hit ring on the right). */
+	.spin {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.4em;
+		transform-origin: left center;
+		animation: spop-in 200ms ease-out;
+	}
+	.spop .pts {
+		font-size: 1.2em;
+		font-weight: 700;
+		line-height: 1;
+		color: #ffd24a;
+	}
+	.spop.big .pts {
+		text-shadow:
+			0 0 8px rgba(255, 200, 60, 0.8),
+			0 1px 2px #000;
+	}
+	@keyframes spop-in {
+		from {
+			opacity: 0;
+			transform: scale(0.75);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+	/* Round summary (server stats): a header line over one table, or two above 8 players. */
+	.sumpanel {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		box-sizing: border-box;
+		width: calc(600px * var(--hud-scale));
+		padding: 8px 12px 10px;
+		background: var(--panel-bg-strong);
+		border-top: 2px solid #7fe8ff;
+	}
+	/* Two tables: still clear of the vote panel on the left at 1280 wide. */
+	.sumpanel.two {
+		width: calc(640px * var(--hud-scale));
+	}
+	.sumpanel.lost {
+		border-top-color: #ff7a6a;
+	}
+	/* Wraps onto a second line when a long loadout label meets the countdown; each part stays whole. */
+	.sumhead {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 2px 16px;
+		white-space: nowrap;
+	}
+	.sumhead .role {
+		color: #bff4ff;
+	}
+	.sumpanel.lost .sumhead .role {
+		color: #ff9a8a;
+	}
+	.sumnext {
+		margin-left: auto;
+		display: inline-flex;
+		align-items: baseline;
+		gap: 10px;
+	}
+	/* One width for every digit (the number font has no tabular figures), so the header never rewraps as it counts down. */
+	.sumnext .cd {
+		display: inline-block;
+		width: 0.75em;
+		text-align: right;
+	}
+	.sumcols {
+		display: flex;
+		align-items: flex-start;
+		gap: 14px;
+	}
+	.sumtable {
+		flex: 1 1 0;
+		min-width: 0;
+		table-layout: fixed;
+		border-collapse: collapse;
+		font-size: 0.85em;
+	}
+	.sumtable th {
+		padding: 0 5px 3px;
+		text-align: right;
+		font-size: calc(10px * var(--hud-scale));
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		white-space: nowrap;
+		color: var(--text-dim);
+	}
+	.sumtable abbr {
+		text-decoration: none;
+	}
+	.sumtable td {
+		height: 1.5em;
+		padding: 0 5px;
+		text-align: right;
+		white-space: nowrap;
+		border-top: 1px solid rgba(255, 255, 255, 0.06);
+	}
+	.sumtable th.nm,
+	.sumtable td.nm {
+		text-align: left;
+	}
+	/* Team bar: cyan survivors, red infected (the colours of the round header counts). */
+	.sumtable td.nm {
+		border-left: 2px solid #7fe8ff;
+	}
+	.sumtable tr.inf td.nm {
+		border-left-color: #ff7a6a;
+	}
+	.nmwrap {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+	}
+	.pname {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.pz {
+		flex: none;
+		padding: 0 4px;
+		font-size: 0.72em;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #ffb347;
+		border: 1px solid rgba(255, 160, 60, 0.7);
+	}
+	.sumtable td.score {
+		font-weight: 700;
+	}
+	.sumtable td.zero {
+		color: var(--text-faint);
+	}
+	/* The local player (or the spectated one). */
+	.sumtable tr.me td {
+		color: #fff;
+		background: rgba(255, 210, 122, 0.16);
+	}
+	.sumtable tr.me td.nm {
+		font-weight: 700;
+		color: #ffd27a;
+	}
+	.c-score {
+		width: calc(56px * var(--hud-scale));
+	}
+	.c-kills {
+		width: calc(48px * var(--hud-scale));
+	}
+	.c-inf {
+		width: calc(84px * var(--hud-scale));
+	}
+	.c-deaths {
+		width: calc(58px * var(--hud-scale));
+	}
+	.c-acc {
+		width: calc(74px * var(--hud-scale));
+	}
+	.c-streak {
+		width: calc(92px * var(--hud-scale));
+	}
+	.two .c-score {
+		width: calc(44px * var(--hud-scale));
+	}
+	.two .c-kills,
+	.two .c-deaths {
+		width: calc(26px * var(--hud-scale));
+	}
+	.two .c-inf,
+	.two .c-streak {
+		width: calc(30px * var(--hud-scale));
+	}
+	.two .c-acc {
+		width: calc(40px * var(--hud-scale));
+	}
+	.summore {
+		font-size: 0.8em;
+		text-align: right;
 	}
 	.tint {
 		position: absolute;
@@ -513,13 +1087,14 @@
 		inset: 0;
 		overflow: hidden;
 	}
+	/* --lens: 1.35 while the zoom starts, 1 when it is in (the surround closes in). */
 	.lens {
 		position: absolute;
 		left: 50%;
 		top: 50%;
 		width: 80vmin;
 		height: 80vmin;
-		transform: translate(-50%, -50%);
+		transform: translate(-50%, -50%) scale(var(--lens, 1));
 		border-radius: 50%;
 		box-shadow: 0 0 0 200vmax #000;
 	}
@@ -527,38 +1102,51 @@
 		position: absolute;
 		background: rgba(0, 0, 0, 0.9);
 	}
+	/*
+	 * Both hairs end inside the lens (radius 40vmin), 5vmin short of its edge: the vertical one
+	 * stays clear of the speedometer at 720p, the horizontal one of the panels at the sides. The
+	 * vertical one also starts below the round header stack (--hair-top), however deep that is,
+	 * and ends above the perk track where that reaches under the crosshair (--hair-bottom).
+	 */
 	.hair.h {
-		left: 10%;
-		right: 10%;
+		left: calc(50% - 35vmin);
+		right: calc(50% - 35vmin);
 		top: 50%;
 		height: 1px;
 	}
 	.hair.v {
-		top: 10%;
-		bottom: 10%;
+		top: max(calc(50% - 35vmin), var(--hair-top, 0px));
+		bottom: max(calc(50% - 35vmin), var(--hair-bottom, 0px));
 		left: 50%;
 		width: 1px;
 	}
+	/* Below the hit ring: clear of the arcs at every bearing, the score popups and the keys display. */
 	.down {
 		position: absolute;
 		left: 50%;
-		top: 58%;
+		top: calc(50% + 200px * var(--hud-scale));
 		transform: translateX(-50%);
-		padding: 10px 22px;
+		padding: 8px 16px;
 		text-align: center;
+		white-space: nowrap;
 		background: rgba(80, 14, 18, 0.84);
 		border-color: rgba(150, 230, 90, 0.55);
 		font-size: calc(15px * var(--hud-scale));
 	}
+	/* Narrow enough to stay right of the chat column at 1280 wide. */
 	.down .title {
-		font-size: 1.4em;
+		font-size: 1.2em;
 		font-weight: 700;
-		letter-spacing: 0.1em;
+		letter-spacing: 0.08em;
 		text-transform: uppercase;
 	}
+	.down .msg {
+		font-size: 0.85em;
+	}
+	/* Under the connection status, which grows with the HUD scale. */
 	.killfeed {
 		position: absolute;
-		top: 54px;
+		top: max(54px, calc(14px + 44px * var(--hud-scale)));
 		right: 18px;
 		display: flex;
 		flex-direction: column;
@@ -569,6 +1157,9 @@
 	.kill {
 		background: rgba(8, 12, 18, 0.6);
 		padding: 2px 8px;
+	}
+	.killfeed.hidden {
+		display: none;
 	}
 	.kill.mine {
 		border: 1px solid rgba(255, 210, 120, 0.7);
@@ -774,8 +1365,9 @@
 			transform: scale(0.8);
 		}
 	}
+	/* Below the spectator bar, which grows with the HUD scale. */
 	.round.watching {
-		top: 104px;
+		top: max(112px, calc(18px + 94px * var(--hud-scale)));
 	}
 	.clock.urgent {
 		display: inline-block;
@@ -859,6 +1451,13 @@
 	.slot.active .cap {
 		background: #ffd27a;
 	}
+	/* No round left in this slot. */
+	.slot.dry {
+		color: var(--text-faint);
+	}
+	.slot.dry .cap {
+		background: #ff7a6a;
+	}
 	/* M.O.A.B. detonation: white core warming to amber as it fades (--warm 0 → 1). */
 	.nuke {
 		position: absolute;
@@ -870,6 +1469,10 @@
 			rgb(255 calc(255 - var(--warm) * 50) calc(240 - var(--warm) * 170)) 45%,
 			rgb(255 calc(200 - var(--warm) * 60) calc(90 - var(--warm) * 60)) 100%
 		);
+	}
+	/* Reduced motion: flat amber, no white core (the opacity eases in and out once). */
+	.nuke.calm {
+		background: rgb(255 170 60);
 	}
 	.moab-inbound {
 		display: inline-flex;
@@ -1006,10 +1609,11 @@
 		padding: 0 4px;
 		border: 1px solid rgba(26, 16, 0, 0.7);
 	}
+	/* Its pop starts a little low: 2 px more than the track needs. */
 	.perktoast {
 		position: absolute;
 		right: 18px;
-		bottom: calc(22px + 128px * var(--hud-scale));
+		bottom: calc(22px + 130px * var(--hud-scale));
 		display: flex;
 		flex-direction: column;
 		align-items: flex-end;
@@ -1022,6 +1626,8 @@
 		background: rgba(8, 30, 44, 0.78);
 		border: 1px solid rgba(120, 230, 255, 0.8);
 		text-shadow: 0 0 10px rgba(60, 210, 255, 0.7);
+		/* Pops from its anchored corner, so the overshoot never crosses the screen edge. */
+		transform-origin: right bottom;
 		animation: pop 1.6s ease-out forwards;
 	}
 	.perktoast.gold {
@@ -1029,5 +1635,46 @@
 		background: rgba(50, 34, 0, 0.82);
 		border-color: rgba(255, 200, 60, 0.95);
 		text-shadow: 0 0 12px rgba(255, 190, 40, 0.85);
+	}
+	@keyframes arc-in {
+		from {
+			opacity: 0;
+		}
+	}
+	/*
+	 * prefers-reduced-motion: nothing pulses, pops or blinks. The elements keep
+	 * their static look (their lifetimes are set in the script, not by the
+	 * animations), and the steady glows below stand in for the pulses. The
+	 * script eases every event cue in and out instead (inline opacity: hurt
+	 * vignette, hit marker, hit arcs, score popups, flash, UAV line, perk
+	 * toast, +20s, +AMMO).
+	 */
+	@media (prefers-reduced-motion: reduce) {
+		.banner.last,
+		.pop,
+		.uav,
+		.beacon .dot,
+		.clock.urgent,
+		.moab-inbound,
+		.moab-ready,
+		.perk.fresh,
+		.perktoast,
+		.hitmarker.hm-kill,
+		.spin {
+			animation: none;
+		}
+		.spop {
+			transition: none;
+		}
+		/* An arc that comes out from behind the header stack (the view turned, a row went) fades in like a new one. */
+		.dmg path {
+			animation: arc-in 120ms linear;
+		}
+		.banner.last {
+			box-shadow: 0 0 12px rgba(255, 200, 60, 0.5);
+		}
+		.moab-inbound {
+			box-shadow: 0 0 14px rgba(255, 110, 30, 0.7);
+		}
 	}
 </style>

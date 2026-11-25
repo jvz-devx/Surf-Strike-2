@@ -25,6 +25,8 @@ export const CLIENT_CVARS: readonly CvarDef[] = [
 	{ name: 'sensitivity', default: 2, min: 0.0001, max: 100, help: 'Mouse sensitivity (Source-compatible)' },
 	{ name: 'm_yaw', default: 0.022, min: -1, max: 1, help: 'Degrees per mouse count, horizontal' },
 	{ name: 'm_pitch', default: 0.022, min: -1, max: 1, help: 'Degrees per mouse count, vertical' },
+	{ name: 'zoom_sensitivity_ratio', default: 1, min: 0.1, max: 4, help: 'Scoped mouse sensitivity factor (1 = same hand movement per screen distance as unscoped)' },
+	{ name: 'cl_aimtoggle', default: 0, bool: true, help: 'Infected: Mouse2 toggles aiming down sights instead of holding it' },
 	{ name: 'fov', default: 90, min: 60, max: 130, help: 'Horizontal FOV at 4:3 (CS scaling for widescreen)' },
 	{ name: 'volume', default: 0.5, min: 0, max: 1, help: 'Master volume 0-1' },
 	{ name: 'cl_fullscreen', default: 1, bool: true, help: 'Play in fullscreen, where Ctrl+W cannot close the tab (Chromium browsers)' },
