@@ -14,7 +14,7 @@ export function standing(x: number, y: number, z: number, yaw = 0, ducked = fals
 
 /** One frame: everybody on screen, close to the camera. */
 export function animate(players: RemotePlayers, now: number, dt = 1 / 60): void {
-	players.update({ dt, distance: () => 100 }, now);
+	players.update({ dt, distance: () => 100, heightShare: () => 0 }, now);
 }
 
 /** The character drawn under an avatar or corpse root. */

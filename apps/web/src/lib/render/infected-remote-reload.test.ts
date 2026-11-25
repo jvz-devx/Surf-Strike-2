@@ -143,9 +143,9 @@ describe('remote reloads', () => {
 		for (let i = 0; i < frames; i++) {
 			const t = i * 16;
 			animate(ref.p, t, 0.016);
-			far.p.update({ dt: 0.016, distance: () => 6000 }, t);
+			far.p.update({ dt: 0.016, distance: () => 6000, heightShare: () => 0 }, t);
 			// Off screen from the middle of the reload on.
-			off.p.update({ dt: 0.016, distance: () => (i < 100 ? 100 : -1) }, t);
+			off.p.update({ dt: 0.016, distance: () => (i < 100 ? 100 : -1), heightShare: () => 0 }, t);
 			if (i === 120) {
 				expect(ref.parts()).toContain('mag');
 				expect(far.parts()).toContain('mag');
@@ -153,7 +153,7 @@ describe('remote reloads', () => {
 			}
 		}
 		// Back on screen: whole in its first frame.
-		off.p.update({ dt: 0.016, distance: () => 100 }, frames * 16);
+		off.p.update({ dt: 0.016, distance: () => 100, heightShare: () => 0 }, frames * 16);
 		for (const c of [ref, far, off]) {
 			expect(c.parts()).toEqual([]);
 			expect((c.roots[0]!.getObjectByName('held') as THREE.Mesh).geometry).toBe(c.assets.geometry('barrett'));

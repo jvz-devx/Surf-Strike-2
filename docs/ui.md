@@ -113,7 +113,7 @@ While the practice range is open ([modes.md](modes.md#practice-range): waiting f
 
 ## Remote players
 
-Remote players are animated characters with cosmetics and a name tag ([characters.md](characters.md)). In Infected and Zombie Run they hold their weapon ([modes.md](modes.md#infected)).
+Remote players are animated characters with cosmetics and a name tag ([characters.md](characters.md)). Up close the tag stays at most 160 px wide in a window 720 px high (`TAG_MAX_SHARE` in `render/players.ts`, in every mode); who sees a tag is up to the mode. In Infected and Zombie Run they hold their weapon ([modes.md](modes.md#infected)).
 
 ## Weapon model viewer
 

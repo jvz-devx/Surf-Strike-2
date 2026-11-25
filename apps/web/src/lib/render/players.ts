@@ -13,6 +13,11 @@ import { VelocityTracker } from './character/motion.js';
 
 /** Height of the name tag centre above the crown. */
 const TAG_ABOVE = 14;
+/** Size of a player's name tag in the world. */
+const TAG_WIDTH = 64;
+const TAG_HEIGHT = 16;
+/** Up close a name tag stays this wide on screen: 160 px in a window 720 px high. */
+export const TAG_MAX_SHARE = 160 / 720;
 /** Hit flash on the victim's avatar (ms) and its white glow (Infected). */
 export const HIT_FLASH_MS = 100;
 const HIT_FLASH = new THREE.Color(0xffffff).multiplyScalar(0.55);
@@ -147,7 +152,7 @@ export class RemotePlayers {
 		const { tex } = makeTag(name);
 		const tagMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, fog: false });
 		const tag = new THREE.Sprite(tagMat);
-		tag.scale.set(64, 16, 1);
+		tag.scale.set(TAG_WIDTH, TAG_HEIGHT, 1);
 		tag.position.set(0, 72 + TAG_ABOVE, 0);
 		tag.renderOrder = 5;
 
@@ -469,7 +474,7 @@ export class RemotePlayers {
 	}
 
 	/** Animate the visible players (once per frame, before rendering). `now` (ms) runs the flashes and eases, on hidden avatars too. */
-	update(view: Pick<CrowdView, 'dt' | 'distance'>, now: number): void {
+	update(view: Pick<CrowdView, 'dt' | 'distance' | 'heightShare'>, now: number): void {
 		for (const a of this.avatars.values()) {
 			this.paint(a, now);
 			if (this.hidden || !a.root.visible) continue;
@@ -478,8 +483,17 @@ export class RemotePlayers {
 				a.model.skipFrame(view.dt, a.motion);
 				continue;
 			}
-			a.tag.position.y = a.model.update(view.dt, a.motion, dist) + TAG_ABOVE;
+			this.fitTag(a, a.model.update(view.dt, a.motion, dist), view);
 		}
+	}
+
+	/** Place the tag above the crown; up close it shrinks to TAG_MAX_SHARE, with the same gap under it. */
+	private fitTag(a: Avatar, crown: number, view: Pick<CrowdView, 'heightShare'>): void {
+		const at = a.root.position;
+		const share = view.heightShare(at.x, at.y + crown + TAG_ABOVE, at.z, TAG_WIDTH);
+		const s = share > TAG_MAX_SHARE ? TAG_MAX_SHARE / share : 1;
+		a.tag.scale.set(TAG_WIDTH * s, TAG_HEIGHT * s, 1);
+		a.tag.position.y = crown + TAG_ABOVE - (TAG_HEIGHT / 2) * (1 - s);
 	}
 
 	ids(): IterableIterator<number> {

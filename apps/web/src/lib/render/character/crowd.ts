@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 
 const m = new THREE.Matrix4();
+const v = new THREE.Vector3();
 
 export class CrowdView {
 	/** Seconds since the last frame (capped). */
@@ -13,6 +14,8 @@ export class CrowdView {
 	private readonly cam = new THREE.Vector3();
 	private readonly frustum = new THREE.Frustum();
 	private readonly sphere = new THREE.Sphere(new THREE.Vector3(), 64);
+	private readonly toView = new THREE.Matrix4();
+	private lens = 1;
 	private count = 0;
 	private lastCount = 0;
 
@@ -22,8 +25,16 @@ export class CrowdView {
 		camera.updateMatrixWorld();
 		this.cam.setFromMatrixPosition(camera.matrixWorld);
 		this.frustum.setFromProjectionMatrix(m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+		this.toView.copy(camera.matrixWorldInverse);
+		this.lens = camera.projectionMatrix.elements[5]!;
 		this.lastCount = this.count;
 		this.count = 0;
+	}
+
+	/** How much of the window height something `size` wide and facing the camera covers at (x, y, z); > 1 is more than all of it. */
+	heightShare(x: number, y: number, z: number, size: number): number {
+		const depth = -v.set(x, y, z).applyMatrix4(this.toView).z;
+		return (size * this.lens) / (2 * Math.max(1, depth));
 	}
 
 	/**

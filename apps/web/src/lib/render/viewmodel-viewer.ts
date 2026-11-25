@@ -486,7 +486,7 @@ export function createViewmodelViewer(canvas: HTMLCanvasElement): { destroy(): v
 	const settled = new Set<Cell>();
 	const animate = (c: Cell, ids: readonly number[], tp: TpCell, now: number): void => {
 		const dist = isFar(tp.dist) ? Number(tp.dist) : 100;
-		const view = { dt: 1 / 30, distance: () => dist };
+		const view = { dt: 1 / 30, distance: () => dist, heightShare: () => 0 };
 		// Every cell's avatars are hidden in between: a reload comes in again in every frame, a bolt cycle runs again.
 		for (let i = !settled.has(c) ? 60 : tp.play === 'reload' ? 6 : 1; i > 0; i--) players.update(view, now);
 		if (tp.play === 'bolt') {
@@ -497,7 +497,7 @@ export function createViewmodelViewer(canvas: HTMLCanvasElement): { destroy(): v
 		settled.add(c);
 		if (!tp.fire) return;
 		for (const id of ids) players.fired(id, now);
-		players.update({ dt: 0.02, distance: () => dist }, now);
+		players.update({ dt: 0.02, distance: () => dist, heightShare: () => 0 }, now);
 	};
 	const hideAvatars = (): void => {
 		for (let id = 1; id <= avatars; id++) players.setPose(id, avatarPose, false);
