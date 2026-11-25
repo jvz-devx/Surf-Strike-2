@@ -188,7 +188,7 @@ describe('HnsGame round flow', () => {
 		s.place(seeker, at(-300, 0));
 		const pulls = s.step(100).filter((e) => e.e === 'spawn');
 		expect(pulls).toEqual([expect.objectContaining({ id: seeker, role: 'seeker', pos: { x: -500, y: 0, z: 0 } })]);
-		expect(s.g.posAt(seeker, s.now() - 100)).toBeNull();
+		expect(s.g.posAt(seeker, s.now() - 100)).toMatchObject(at(-500, 0));
 	});
 
 	it('knife kill converts the hider into a frozen seeker at a seeker spawn', () => {

@@ -42,6 +42,8 @@ function events<K extends ZmEvent['e']>(c: TestClient, e: K, from = 0): Ev<K>[] 
 const lastState = (c: TestClient) => c.of('modeState').at(-1) as ZmState;
 
 async function moveTo(c: TestClient, id: number, p: Vec3) {
+	const spawn = [...server.lobby.clients].find((o) => o.id === id)?.pendingSpawn;
+	if (spawn) c.sendState(netState(0, spawn.x, { y: spawn.y, z: spawn.z, status: Status.Alive }));
 	c.sendState(netState(1, p.x, { y: p.y, z: p.z, status: Status.Alive }));
 	const deadline = Date.now() + 2000;
 	for (;;) {
@@ -98,6 +100,20 @@ describe('zombies mode', () => {
 		assert.equal(st.players[0]!.id, aId);
 		assert.ok(a.messages.some((m) => m.type === 'chat' && m.system && /Round 1: reach the evac point/.test(m.text)));
 		assert.ok(a.zombieFrames.length > 0, 'zombie snapshots are sent');
+	});
+
+	it('drops an in-flight unflagged state after a Zombie Run spawn', async () => {
+		const b = new TestClient(server.port);
+		clients.push(b);
+		const w = await b.hello('Bob');
+		const msg = await b.waitFor('zm', (m) => m.ev.e === 'spawn');
+		assert.equal(msg.ev.e, 'spawn');
+		b.sendState(netState(99, msg.ev.x + 1000, { y: msg.ev.y, z: msg.ev.z }));
+		await b.barrier();
+		assert.equal([...server.lobby.clients].find((p) => p.id === w.selfId)?.state, null);
+		await moveTo(b, w.selfId, msg.ev);
+		b.close();
+		await a.waitFor('leave', (m) => m.id === w.selfId);
 	});
 
 	it('pistol: 4 body hits kill (hit markers, kill feed), a headshot kills at once', async () => {

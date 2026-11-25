@@ -19,6 +19,7 @@ import type {
 	ServerMessage,
 	RichEntry,
 	SnapshotEntry,
+	Vec3,
 	VoteOption
 } from '@surf/shared';
 import {
@@ -28,6 +29,8 @@ import {
 	mapTitle,
 	encodeSnapshot,
 	decodeState,
+	FLAG_TELEPORTED,
+	isRaceMode,
 	mapCvars as sharedMapCvars,
 	MapRotation,
 	MAX_CHAT,
@@ -51,8 +54,8 @@ import type { AccountRow, BanRow, Db } from './db.ts';
 import { Economy } from './economy.ts';
 import { Shop } from './shop.ts';
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
-import { INITIAL_RTT_MS, PeerRtt } from './peer-rtt.ts';
-import type { ZoneKind } from './validation.ts';
+import { MAX_REWIND_RTT_MS, PeerRtt } from './peer-rtt.ts';
+import { mapTeleport, nearPose, type ZoneKind } from './validation.ts';
 
 export { SNAPSHOT_HZ };
 /** Gamemode rule ticks (tag contact checks), at least the snapshot rate. */
@@ -138,6 +141,7 @@ interface Client {
 	spectating: boolean;
 	targetId: number | null;
 	state: NetState | null;
+	pendingSpawn: Vec3 | null;
 	ping: number;
 	rtt: PeerRtt;
 	/** Worn cosmetics (docs/economy.md#shop); the default look for guests. */
@@ -148,6 +152,8 @@ interface Client {
 }
 
 const ZONE_KINDS = new Set<ZoneKind>(['start', 'stage', 'checkpoint', 'end']);
+/** State packets are ordered. The first pose near the spawn acknowledges it without changing the wire format. */
+const SPAWN_ACK_RADIUS = 64;
 const PLAYER_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 
 /** Full cvars for a map: its gamemode's profile, then the map's overrides. */
@@ -440,7 +446,10 @@ export class Lobby {
 			spectating: false,
 			targetId: null,
 			state: null,
-			ping: INITIAL_RTT_MS,
+			pendingSpawn: null,
+			get ping() {
+				return Math.min(MAX_REWIND_RTT_MS, this.rtt.estimate(performance.now()));
+			},
 			rtt: new PeerRtt(),
 			loadout: emptyLoadout(),
 			rate: { state: new Window(), chat: new Window(), json: new Window(), shop: new Window(), casino: new Window() },
@@ -457,6 +466,9 @@ export class Lobby {
 			} catch (err) {
 				this.log(`error handling message from #${c.id}: ${(err as Error).message}`);
 			}
+		});
+		socket.on('pong', (data) => {
+			if (c.helloed) c.rtt.pong(data.toString(), performance.now());
 		});
 		socket.on('close', () => this.onClose(c));
 		socket.on('error', () => socket.terminate());
@@ -504,10 +516,12 @@ export class Lobby {
 			if (n > RATE.state.kick) return this.kick(c, 'state flood');
 			if (n > RATE.state.limit || !c.helloed || c.spectating) return;
 			const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
-			const s = decodeState(ab);
+			const received = decodeState(ab);
+			if (!received) return;
+			const s = this.combatState(c, received);
 			if (!s) return;
 			c.state = s;
-			this.economy.state(c, s);
+			this.economy.state(c, received);
 			this.mode.state(c, s);
 			return;
 		}
@@ -597,11 +611,6 @@ export class Lobby {
 			}
 			case 'admin':
 				return this.admin.handle(c, msg.action);
-			case 'pong': {
-				const rtt = c.rtt.pong(msg.t, t);
-				if (rtt !== null) c.ping = rtt;
-				return;
-			}
 			default:
 				return;
 		}
@@ -886,6 +895,18 @@ export class Lobby {
 		this.setSpectate(c, true, target.id);
 	}
 
+	/** Only server spawns and plausible map teleports break the combat pose history. */
+	private combatState(c: Client, state: NetState): NetState | null {
+		if (isRaceMode(this.mode.id)) return state;
+		if (c.pendingSpawn) {
+			if (!nearPose(state, c.pendingSpawn, SPAWN_ACK_RADIUS)) return null;
+			c.pendingSpawn = null;
+			return { ...state, flags: state.flags | FLAG_TELEPORTED };
+		}
+		if (!(state.flags & FLAG_TELEPORTED) || mapTeleport(this.map, c.state, state)) return state;
+		return { ...state, flags: state.flags & ~FLAG_TELEPORTED };
+	}
+
 	private setSpectate(c: Client, spectating: boolean, targetId: number | null): void {
 		if (spectating) {
 			const target = [...this.clients].find((o) => o.id === targetId && o !== c && o.helloed && !o.spectating);
@@ -899,6 +920,7 @@ export class Lobby {
 		c.targetId = targetId;
 		if (changed) {
 			c.state = null;
+			c.pendingSpawn = null;
 			if (spectating) this.rotation.removeVoter(String(c.id));
 		}
 		this.broadcast({ type: 'spectating', id: c.id, spectating, targetId });
@@ -1062,6 +1084,7 @@ export class Lobby {
 		for (const c of this.clients) {
 			if (!c.helloed) continue;
 			c.state = null;
+			c.pendingSpawn = null;
 			this.send(c, {
 				type: 'mapChange',
 				map: map.id,
@@ -1102,6 +1125,7 @@ export class Lobby {
 			const totals = c && c.accountId !== null ? this.stats.totals(c.accountId) : null;
 			return {
 				...r,
+				ping: c ? Math.round(c.rtt.estimate(performance.now())) : r.ping,
 				pointsTotal: totals?.pointsTotal ?? null,
 				playtimeSecs: totals?.playtimeSecs ?? null,
 				// Read fresh: awards, purchases, loot boxes, casino and admins all change it.
@@ -1129,7 +1153,9 @@ export class Lobby {
 	}
 
 	private ping(c: Client, now: number): void {
-		this.send(c, { type: 'ping', t: c.rtt.probe(now) });
+		if (c.socket.readyState !== c.socket.OPEN) return;
+		c.socket.ping(c.rtt.probe(now));
+		this.send(c, { type: 'ping', t: now });
 	}
 
 	// -----------------------------------------------------------------------
@@ -1143,6 +1169,10 @@ export class Lobby {
 	}
 
 	private send(c: Client, msg: ServerMessage): void {
+		if ((msg.type === 'hns' || msg.type === 'inf' || msg.type === 'zm') && msg.ev.e === 'spawn' && msg.ev.id === c.id) {
+			c.pendingSpawn = 'pos' in msg.ev ? msg.ev.pos : { x: msg.ev.x, y: msg.ev.y, z: msg.ev.z };
+			c.state = null;
+		}
 		this.sendRaw(c, JSON.stringify(msg));
 	}
 

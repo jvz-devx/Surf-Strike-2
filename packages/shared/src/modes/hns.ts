@@ -582,8 +582,8 @@ export class HnsGame {
 	/** Make `id` a seeker at a seeker spawn, frozen until `frozenUntil` (0 = not frozen). */
 	private makeSeeker(id: number, p: HnsPlayer, frozenUntil: number, now: number): void {
 		p.role = 'seeker';
-		p.history.length = 0;
 		const s = this.spawnFor(this.spawns.seekers);
+		this.setPos(id, { ...s.pos, ducked: false }, now, true);
 		p.frozenUntil = frozenUntil;
 		p.freezeAt = frozenUntil > now ? { pos: { ...s.pos }, yaw: s.yaw } : null;
 		this.emit({ e: 'spawn', id, role: 'seeker', pos: { ...s.pos }, yaw: s.yaw, freezeSecs: Math.max(0, (frozenUntil - now) / 1000) });
@@ -627,8 +627,8 @@ export class HnsGame {
 				p.lastSeekRound = this.round;
 				this.makeSeeker(id, p, this.endsAt, now);
 			} else {
-				p.history.length = 0;
 				const s = hiderSpawns[k++ % hiderSpawns.length]!;
+				this.setPos(id, { ...s.pos, ducked: false }, now, true);
 				this.emit({ e: 'spawn', id, role: 'hider', pos: { ...s.pos }, yaw: s.yaw, freezeSecs: 0 });
 			}
 		}
@@ -679,7 +679,7 @@ export class HnsGame {
 			const f = p.freezeAt.pos;
 			if (Math.hypot(pos.x - f.x, pos.y - f.y, pos.z - f.z) <= HNS_FREEZE_SLACK) continue;
 			p.lastPull = now;
-			p.history.length = 0;
+			this.setPos(id, { ...f, ducked: false }, now, true);
 			this.emit({ e: 'spawn', id, role: p.role, pos: { ...f }, yaw: p.freezeAt.yaw, freezeSecs: (p.frozenUntil - now) / 1000 });
 		}
 	}

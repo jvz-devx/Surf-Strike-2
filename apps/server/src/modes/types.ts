@@ -23,6 +23,7 @@ export interface ModePlayer {
 	readonly spectating: boolean;
 	/** Latest state packet on this map (null after join/map change/spectate until one arrives). */
 	readonly state: NetState | null;
+	/** Fresh RTT in milliseconds, capped for combat rewind. */
 	readonly ping: number;
 }
 

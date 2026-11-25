@@ -127,6 +127,8 @@ async function join(name: string): Promise<P> {
 
 /** Send a position and wait until the server stored it (the mode reads it at once). */
 async function moveTo(p: P, x: number, y: number, z = 0): Promise<void> {
+	const spawn = [...server.lobby.clients].find((o) => o.id === p.id)?.pendingSpawn;
+	if (spawn) p.c.sendState(netState(0, spawn.x, { y: spawn.y, z: spawn.z, status: Status.Alive }));
 	p.c.sendState(netState(1, x, { y, z, status: Status.Alive }));
 	const deadline = Date.now() + 2000;
 	for (;;) {
@@ -505,7 +507,7 @@ describe('infected mode', () => {
 });
 
 /** Lobby-side client of a test player (ping is set here for lag compensation). */
-const lobbyClient = (p: P) => [...server.lobby.clients].find((o) => o.id === p.id)! as unknown as { ping: number };
+const lobbyClient = (p: P) => [...server.lobby.clients].find((o) => o.id === p.id)!;
 
 describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner', () => {
 	const logs: string[] = [];
@@ -555,7 +557,7 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 	const survivorsOf = () => lastState(ps.Ann!.c).players.filter((p) => p.team === 'survivor').map((p) => byId(p.id));
 	const toPhase = (phase: InfState['phase'], maxMs: number) => runUntil(() => game().phase === phase, maxMs);
 
-	it('round 1 (barrett): lag compensation by ping + view delay (tick 2^31-1), gun kill + scavenger, Patient Zero infects', async () => {
+	it('round 1 (barrett): lag compensation by ping + view delay (tick 2^31-1), gun kill + scavenger, Patient Zero infects', async ({ mock }) => {
 		for (const name of ['Ann', 'Ben', 'Cat', 'Dan']) await join(name);
 		const { Ann: a, Ben: b, Cat: c, Dan: d } = ps as Record<string, P>;
 		assert.equal(a!.c.of('welcome')[0]!.mode, 'infected');
@@ -580,7 +582,8 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		await moveTo(a!, -400, 1500);
 		await run(250);
 		const n = b!.c.messages.length;
-		lobbyClient(b!).ping = 0;
+		let simulatedRtt = 0;
+		mock.method(lobbyClient(b!).rtt, 'estimate', () => simulatedRtt);
 		const o = eye(b!);
 		const aimOld = { x: -400, y: 1350, z: 30 };
 		const dir = unit(aimOld.x - o.x, aimOld.y - o.y, aimOld.z - o.z);
@@ -590,12 +593,12 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		assert.equal(game().secondaryOf(b!.id)!.mag, 11, 'the pistol fired');
 		assert.equal(events(b!.c, 'hit', n).length, 0, 'no ping: misses the old spot');
 		await run(200);
-		// Re-stage with a 200 ms ping: his screen is 316 ms behind, so 250 ms after the move he still sees the old spot.
+		// Re-stage with a 150 ms ping: his screen is 266 ms behind, so 250 ms after the move he still sees the old spot.
 		await moveTo(a!, -400, 1350);
 		await run(500);
 		await moveTo(a!, -400, 1500);
 		await run(250);
-		lobbyClient(b!).ping = 200;
+		simulatedRtt = 150;
 		const m = b!.c.messages.length;
 		b!.c.send({ type: 'fire', weapon: 'pistol', origin: o, dir, tick: 0x7fffffff });
 		await settle();
@@ -604,7 +607,7 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 			[[a!.id, false]],
 			'the rewind to what he saw lands the hit'
 		);
-		lobbyClient(b!).ping = 0;
+		simulatedRtt = 0;
 		b!.c.send({ type: 'loadout', weapon: 'barrett' });
 		await settle();
 		await run(500); // fire rate and the draw
