@@ -34,6 +34,11 @@ export async function runBackup(
 	now: Date = new Date()
 ): Promise<string> {
 	mkdirSync(dir, { recursive: true });
+	// The scheduler serializes backups. Clean up partial copies left by a stopped process.
+	for (const name of readdirSync(dir)) {
+		const finalName = name.replace(/\.tmp(?:-journal)?$/, '');
+		if (name !== finalName && BACKUP_NAME_RE.test(finalName)) rmSync(join(dir, name), { force: true });
+	}
 	const finalPath = join(dir, backupFilename(now));
 	const tmpPath = `${finalPath}.tmp`;
 	try {

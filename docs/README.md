@@ -71,7 +71,7 @@ Weapon models: `tools/models/procedural/build.sh [id…]` rebuilds the script-bu
 | Not included | Practice `!saveloc`/`!tele`, weapons outside Zombie Run and infected (and the hide and seek knife), anti-cheat, mobile |
 | Identity | Simple accounts (username + password, no email/verification) in the server's SQLite; only accounts' runs reach the leaderboard. Guests pick a name and play everything without saving runs |
 | Settings | Developer console (`~`) plus an Esc menu (Change map, Settings, Account) |
-| Admin | Esc › Admin for accounts in `ADMIN_USERNAMES` (default `tim`; by account, never display name): enable/disable maps, force map change, ban/unban (account, guest key + IP, close 4009) |
+| Admin | Esc › Admin for accounts in `ADMIN_USERNAMES` (unset by default; by account, never display name): enable/disable maps, force map change, ban/unban (account, guest key + IP, close 4009) |
 | HUD | CS2-era layout and feel, original art, open fonts |
 | Map vote | 15:00 per map; vote at 0:30 left; 3 other maps + "Extend 10 min"; `!rtv` at 60% |
 | Maps | original: surf (aurora, ember, skyrend, hadal: all rated easy), bhop (meadow easy, circuit / reliquary / rimefall hard), tag (quayside), Zombie Run (lowtide); themed, stylised |

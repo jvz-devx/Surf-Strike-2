@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { describe, it } from 'node:test';
 import Database from 'better-sqlite3';
 import { backupFilename, runBackup, startBackupSchedule } from './backup.ts';
@@ -48,6 +48,24 @@ describe('database backups', () => {
 			} finally {
 				restored.close();
 			}
+		} finally {
+			db.close();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('removes interrupted partial copies before the next backup and keeps valid backups', async () => {
+		const dir = mkdtempSync(join(tmpdir(), 'surf-backup-stale-'));
+		const db = new Db(':memory:');
+		try {
+			const first = await runBackup(db, dir, 2, new Date('2026-11-25T01:00:00Z'));
+			const stale = join(dir, 'surf-20261125T020000Z.db.tmp');
+			writeFileSync(stale, 'partial backup');
+			writeFileSync(`${stale}-journal`, 'partial journal');
+			const unrelated = join(dir, 'unrelated.db.tmp');
+			writeFileSync(unrelated, '');
+			const last = await runBackup(db, dir, 2, new Date('2026-11-25T03:00:00Z'));
+			assert.deepEqual(readdirSync(dir).sort(), [first, last, unrelated].map((path) => basename(path)).sort());
 		} finally {
 			db.close();
 			rmSync(dir, { recursive: true, force: true });
