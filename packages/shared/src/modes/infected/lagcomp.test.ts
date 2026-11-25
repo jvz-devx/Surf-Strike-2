@@ -373,4 +373,3 @@ describe('lag compensation in the game', () => {
 		expect(c.g.of('infect').at(-1)).toMatchObject({ id: 2, by: 1, method: 'claws' });
 	});
 });
-
