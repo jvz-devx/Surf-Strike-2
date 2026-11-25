@@ -366,19 +366,20 @@ describe('shop on the server', () => {
 			spec.send({ type: 'spectate', targetId: -1 });
 			const { c, id, accountId } = await register('NewsOpener', LOOTBOX.price * 2);
 			const all = [guest, spec, c];
+			const fromOpener = (m: { id: number; name: string }) => m.id === id && m.name === 'NewsOpener';
 			const quiet = async (n: number) => {
 				for (const x of all) {
 					await x.barrier();
-					assert.equal(x.of('boxNews').length, n);
+					assert.equal(x.of('boxNews').filter(fromOpener).length, n);
 				}
 			};
 			const r = await open(c);
 			await quiet(0);
 			// Whatever the client claims, the server announces its own result.
 			c.send({ type: 'boxRevealed', item: 'hat_2030', duplicate: true });
-			for (const x of all) assert.deepEqual(await x.waitFor('boxNews'), { type: 'boxNews', id, name: 'NewsOpener', item: r.item, duplicate: false });
+			for (const x of all) assert.deepEqual(await x.waitFor('boxNews', fromOpener), { type: 'boxNews', id, name: 'NewsOpener', item: r.item, duplicate: false });
 			const rarity = getCosmetic(r.item)!.rarity;
-			const said = guest.of('chat').some((m) => /found .* in a loot box/.test(m.text));
+			const said = guest.of('chat').some((m) => /^NewsOpener found .* in a loot box/.test(m.text));
 			assert.equal(said, rarity === 'rare' || rarity === 'epic');
 			reveal(c);
 			reveal(guest);
@@ -386,9 +387,10 @@ describe('shop on the server', () => {
 
 			for (const i of lootItems().slice(1)) server.db.db.prepare('INSERT OR IGNORE INTO owned_items (account_id, item_id, bought_at, price) VALUES (?, ?, 1, 0)').run(accountId, i.id);
 			server.db.db.prepare('DELETE FROM owned_items WHERE account_id = ? AND item_id = ?').run(accountId, lootItems()[0]!.id);
+			const afterFirst = guest.messages.length;
 			const d = await open(c);
 			reveal(c);
-			const m = await guest.waitFor('boxNews', () => true, guest.messages.findIndex((x) => x.type === 'boxNews') + 1);
+			const m = await guest.waitFor('boxNews', fromOpener, afterFirst);
 			assert.deepEqual([m.item, m.duplicate], [d.item, d.item !== lootItems()[0]!.id]);
 			for (const x of all) x.close();
 		});
@@ -396,15 +398,17 @@ describe('shop on the server', () => {
 		it('another open and a disconnect announce what is left', async () => {
 			const { c: other } = await connect('NewsOther');
 			const { c, id } = await register('NewsTwice', LOOTBOX.price * 2);
+			const fromOpener = (m: { id: number; name: string }) => m.id === id && m.name === 'NewsTwice';
 			const a = await open(c);
 			const b = await open(c);
-			const first = await other.waitFor('boxNews');
+			const first = await other.waitFor('boxNews', fromOpener);
 			assert.deepEqual([first.id, first.item], [id, a.item]);
 			await other.barrier();
-			assert.equal(other.of('boxNews').length, 1);
+			assert.equal(other.of('boxNews').filter(fromOpener).length, 1);
+			const beforeClose = other.messages.length;
 			c.close();
-			const left = await other.waitFor('leave', (m) => m.id === id);
-			assert.deepEqual(other.of('boxNews').slice(1).map((m) => [m.name, m.item]), [['NewsTwice', b.item]]);
+			const left = await other.waitFor('leave', (m) => m.id === id, beforeClose);
+			assert.deepEqual(other.of('boxNews').filter(fromOpener).slice(1).map((m) => [m.name, m.item]), [['NewsTwice', b.item]]);
 			assert.ok(left);
 			other.close();
 		});
