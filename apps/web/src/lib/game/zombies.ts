@@ -47,7 +47,7 @@ export const SOLO_ID = 1;
 const ZERO: Vec3 = { x: 0, y: 0, z: 0 };
 const SOLO_VIEW_MS = 200;
 
-export type ZmSound = 'shot-pistol' | 'shot-lmg' | 'shot-sniper' | 'knife' | 'reload' | 'hit' | 'hurt' | 'groan' | 'checkpoint';
+export type ZmSound = 'shot-pistol' | 'shot-lmg' | 'shot-sniper' | 'knife' | 'reload' | 'casing' | 'shell' | 'hit' | 'hurt' | 'groan' | 'checkpoint';
 
 export interface ZmHost {
 	online(): boolean;
@@ -488,7 +488,7 @@ export class ZombiesClient {
 		if (r) {
 			r.sync(this.samples, now);
 			r.setWeapon(this.ws.weapon);
-			r.updateViewmodel(now, viewmodel && this.alive && !this.scoped, this.ws.reloadProgress(now), speed);
+			r.updateViewmodel(now, viewmodel && this.alive && !this.scoped, this.ws.reloadProgress(now), speed, undefined, this.ws.mag);
 		}
 		// A groan now and then from the nearest zombies (the sound is silent if not shipped).
 		if (this.samples.length > 0 && now - this.lastGroan > 2500) {

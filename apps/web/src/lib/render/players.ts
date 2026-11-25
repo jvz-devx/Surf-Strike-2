@@ -2,16 +2,33 @@
  * Remote players and the race ghost: character models (docs/characters.md)
  * with a name tag sprite. Positions are Source feet origins.
  */
-import { emptyLoadout, type Loadout } from '@surf/shared';
+import { emptyLoadout, type Loadout, type WeaponId } from '@surf/shared';
 import * as THREE from 'three';
 import { emptyMotion, type MotionState } from './character/animator.js';
 import type { CrowdView } from './character/crowd.js';
-import { HeldAssets, type HeldItem } from './character/held.js';
+import type { HeldAssets, HeldItem } from './character/held.js';
+import { PALETTE_SIZE } from './character/material.js';
 import { applyLoadout, CharacterModel, personOf, type CharacterRole } from './character/model.js';
 import { VelocityTracker } from './character/motion.js';
 
 /** Height of the name tag centre above the crown. */
 const TAG_ABOVE = 14;
+/** Size of a player's name tag in the world. */
+const TAG_WIDTH = 64;
+const TAG_HEIGHT = 16;
+/** Up close a name tag stays this wide on screen: 160 px in a window 720 px high. */
+export const TAG_MAX_SHARE = 160 / 720;
+/** Hit flash on the victim's avatar (ms) and its white glow (Infected). */
+export const HIT_FLASH_MS = 100;
+const HIT_FLASH = new THREE.Color(0xffffff).multiplyScalar(0.55);
+const NO_GLOW = new THREE.Color(0x000000);
+/** A survivor who turns eases into the infected colours over this long (ms). */
+export const TURN_EASE_MS = 450;
+/** `turn()` arms the ease for the role flip of the next mode state (ms). */
+const TURN_ARM_MS = 1500;
+/** Muzzle flash of a remote shot (ms). */
+export const MUZZLE_FLASH_MS = 55;
+const V = new THREE.Vector3();
 
 /** Pose and motion of a player this frame (Source units and axes). */
 export interface AvatarPose extends MotionState {
@@ -39,9 +56,24 @@ interface Avatar {
 	infected: InfectedRole;
 	/** Hide and seek: a seeker (red tint, red SEEKER tag). */
 	seeker: boolean;
+	/** Infected practice range: a target dummy (its tag is the bare name, whatever its look). */
+	target: boolean;
+	/** Hit flash and muzzle flash until (ms); 0 when off. */
+	flashUntil: number;
+	muzzleUntil: number;
+	/** Turn ease: palettes it runs between and its start (-Infinity when not easing); `turnAt` arms it. */
+	from: Float32Array;
+	to: Float32Array;
+	easeAt: number;
+	turnAt: number;
+	/** Running reload: the gun, when it started and how long it takes (ms); 0 ms when none runs. */
+	reloadItem: HeldItem | null;
+	reloadAt: number;
+	reloadMs: number;
 }
 
 export type InfectedRole = 'none' | 'infected' | 'alpha';
+export type InfectedLook = Exclude<InfectedRole, 'none'>;
 
 type TagStyle = 'plain' | 'it' | 'zombie' | 'infected' | 'alpha' | 'seeker';
 
@@ -120,14 +152,35 @@ export class RemotePlayers {
 		const { tex } = makeTag(name);
 		const tagMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, fog: false });
 		const tag = new THREE.Sprite(tagMat);
-		tag.scale.set(64, 16, 1);
+		tag.scale.set(TAG_WIDTH, TAG_HEIGHT, 1);
 		tag.position.set(0, 72 + TAG_ABOVE, 0);
 		tag.renderOrder = 5;
 
 		const root = new THREE.Group();
 		root.add(model.group, tag);
 		this.group.add(root);
-		return { root, model, motion: emptyMotion(), tag, tagTex: tex, name, it: false, zombie: false, infected: 'none', seeker: false };
+		return {
+			root,
+			model,
+			motion: emptyMotion(),
+			tag,
+			tagTex: tex,
+			name,
+			it: false,
+			zombie: false,
+			infected: 'none',
+			seeker: false,
+			target: false,
+			flashUntil: 0,
+			muzzleUntil: 0,
+			from: new Float32Array(PALETTE_SIZE),
+			to: new Float32Array(PALETTE_SIZE),
+			easeAt: -Infinity,
+			turnAt: -Infinity,
+			reloadItem: null,
+			reloadAt: 0,
+			reloadMs: 0
+		};
 	}
 
 	/** Ensure an avatar exists with this name. */
@@ -147,7 +200,7 @@ export class RemotePlayers {
 
 	private retag(a: Avatar): void {
 		a.tagTex.dispose();
-		const style: TagStyle = a.infected !== 'none' ? a.infected : a.zombie ? 'zombie' : a.seeker ? 'seeker' : a.it ? 'it' : 'plain';
+		const style: TagStyle = a.target ? 'plain' : a.infected !== 'none' ? a.infected : a.zombie ? 'zombie' : a.seeker ? 'seeker' : a.it ? 'it' : 'plain';
 		const { tex } = makeTag(a.name, style);
 		(a.tag.material as THREE.SpriteMaterial).map = tex;
 		(a.tag.material as THREE.SpriteMaterial).needsUpdate = true;
@@ -170,12 +223,34 @@ export class RemotePlayers {
 		this.restyle(a);
 	}
 
-	/** Infected mode: infected (blood-red, hunched, red tag) or Patient Zero (charred, orange glow and tag). */
-	setInfected(id: number, role: InfectedRole): void {
+	/**
+	 * Infected mode: infected (blood-red, hunched, red tag) or Patient Zero (charred, orange glow and tag).
+	 * With `now`, a survivor whose infection was announced by `turn()` eases into the colours.
+	 */
+	setInfected(id: number, role: InfectedRole, now?: number): void {
 		const a = this.avatars.get(id);
 		if (!a || a.infected === role) return;
+		const ease = now !== undefined && a.infected === 'none' && role !== 'none' && now - a.turnAt < TURN_ARM_MS;
+		if (ease) a.model.material.save(a.from);
+		a.turnAt = -Infinity;
+		a.easeAt = -Infinity;
 		a.infected = role;
 		this.restyle(a);
+		if (ease) this.startEase(a, now);
+	}
+
+	/** Infected practice range: mark a target dummy. Its name tag stays the bare name (no role prefix). */
+	setTarget(id: number, target: boolean): void {
+		const a = this.avatars.get(id);
+		if (!a || a.target === target) return;
+		a.target = target;
+		this.retag(a);
+	}
+
+	/** Ease from the palette in `a.from` to the one the avatar wears now. */
+	private startEase(a: Avatar, now: number): void {
+		a.model.material.save(a.to);
+		a.easeAt = now;
 	}
 
 	/** Look, posture and tag from the avatar's flags (infected > zombie > IT > base). */
@@ -185,14 +260,169 @@ export class RemotePlayers {
 		this.retag(a);
 	}
 
-	/** Item in a player's hands (third person), `claws` for infected claws. */
-	setHeld(id: number, item: HeldItem | 'claws' | null): void {
-		this.avatars.get(id)?.model.setHeld(item);
+	/**
+	 * Item in a player's hands (third person), `claws` for infected claws.
+	 * `knife`: an infected still has the throwing knife, shown in the left claw
+	 * (Patient Zero of an older server may hold a gun; the knife is not drawn then).
+	 */
+	setHeld(id: number, item: HeldItem | 'claws' | null, knife = false): void {
+		const a = this.avatars.get(id);
+		if (!a) return;
+		const was = a.model.held;
+		if (!a.model.setHeld(item, knife)) return;
+		// Swapped away from the gun: its reload is over. One of the new gun may be ahead of the mode state.
+		if (a.reloadItem === was) this.endReload(a);
+		a.muzzleUntil = 0;
+		a.model.showMuzzle(false);
 	}
 
-	/** A player shot (recoil) or swung a knife or claws. */
+	/** A player shot (recoil) or swung a knife or claws. A gun that shoots is not being reloaded. */
 	act(id: number, kind: 'fire' | 'swing'): void {
-		this.avatars.get(id)?.model.animator.act(kind);
+		const a = this.avatars.get(id);
+		if (!a) return;
+		this.endReload(a);
+		a.model.animator.act(kind);
+	}
+
+	// ---------------------------------------------------------------------
+	// Reloads (docs/characters.md#animation)
+
+	/**
+	 * A player started reloading `item` at `now`, for `ms`. It shows while the
+	 * item is in the hands and runs on the clock, also off screen and hidden. A
+	 * swap, a shot, `turn` and `stopReload` end it early; it blends out then.
+	 */
+	reload(id: number, item: WeaponId, now: number, ms: number): void {
+		const a = this.avatars.get(id);
+		if (!a || item === 'claws' || !(ms > 0)) return;
+		a.reloadItem = item;
+		a.reloadAt = now;
+		a.reloadMs = ms;
+	}
+
+	/** A reload ended early (swap, death, new round). */
+	stopReload(id: number): void {
+		const a = this.avatars.get(id);
+		if (a) this.endReload(a);
+	}
+
+	/** Every reload ended early (round reset), or those of players `keep` refuses. */
+	stopReloads(keep?: (id: number) => boolean): void {
+		for (const [id, a] of this.avatars) if (a.reloadMs > 0 && !keep?.(id)) this.endReload(a);
+	}
+
+	private endReload(a: Avatar): void {
+		a.reloadItem = null;
+		a.reloadMs = 0;
+		a.model.animator.reload(null);
+	}
+
+	// ---------------------------------------------------------------------
+	// Hit and kill feedback (docs/modes.md#infected)
+
+	/**
+	 * This survivor was just infected (`infect` event). The avatar eases into
+	 * the infected colours instead of switching at once: armed here, started
+	 * when the mode state flips its role, or started now when the state came
+	 * first. Posture and claws switch at once: the server's hit capsules do too.
+	 */
+	turn(id: number, now: number): void {
+		const a = this.avatars.get(id);
+		if (!a) return;
+		this.endReload(a);
+		if (a.infected === 'none') {
+			a.turnAt = now;
+			return;
+		}
+		a.model.recolor('none');
+		a.model.material.save(a.from);
+		a.model.recolor();
+		this.startEase(a, now);
+	}
+
+	/** My shot hit this player: the avatar flashes white for HIT_FLASH_MS. */
+	flash(id: number, now: number): void {
+		const a = this.avatars.get(id);
+		if (a) a.flashUntil = now + HIT_FLASH_MS;
+	}
+
+	/** A remote shot or swing (Infected): recoil and muzzle flash for a gun, a slash for melee. */
+	fired(id: number, now: number): void {
+		const a = this.avatars.get(id);
+		if (!a) return;
+		this.act(id, a.model.gun ? 'fire' : 'swing');
+		if (!a.model.hasMuzzle) return;
+		a.muzzleUntil = now + MUZZLE_FLASH_MS;
+		a.model.showMuzzle(true);
+	}
+
+	/**
+	 * Muzzle of the gun a drawn avatar holds, as a Source point (tracer start
+	 * of a remote shot). False when the avatar is hidden or holds no gun.
+	 */
+	muzzle(id: number, out: { x: number; y: number; z: number }): boolean {
+		const a = this.avatars.get(id);
+		if (!a || this.hidden || !a.root.visible || !a.model.muzzle(V)) return false;
+		out.x = V.x;
+		out.y = -V.z;
+		out.z = V.y;
+		return true;
+	}
+
+	/** Where an avatar stands right now; false when it is not in play (down, spectating, no snapshot). Ignores `cl_hideplayers`. */
+	pose(id: number, out: AvatarPose): boolean {
+		const a = this.avatars.get(id);
+		if (!a || !a.root.visible) return false;
+		out.x = a.root.position.x;
+		out.y = -a.root.position.z;
+		out.z = a.root.position.y;
+		copyMotion(out, a.motion);
+		return true;
+	}
+
+	/** The drawn character of a player (its corpse takes over the look and the pose). */
+	model(id: number): CharacterModel | null {
+		return this.avatars.get(id)?.model ?? null;
+	}
+
+	/** Length (ms) of the reload a player is in, 0 for none (tests and debugging). */
+	reloading(id: number): number {
+		return this.avatars.get(id)?.reloadMs ?? 0;
+	}
+
+	/** Feedback state of an avatar (tests and debugging). */
+	feedback(id: number): { held: HeldItem | 'claws' | null; knife: boolean; muzzleFlash: boolean; flashing: boolean; easing: boolean } | null {
+		const a = this.avatars.get(id);
+		if (!a) return null;
+		return { held: a.model.held, knife: a.model.knife, muzzleFlash: a.muzzleUntil > 0, flashing: a.flashUntil > 0, easing: a.easeAt !== -Infinity };
+	}
+
+	/** Turn ease, hit flash, muzzle flash and reload progress of this frame. */
+	private paint(a: Avatar, now: number): void {
+		if (a.reloadMs > 0) {
+			// Events are stamped with performance.now(), frames with the (slightly older) rAF time.
+			const p = Math.max(0, (now - a.reloadAt) / a.reloadMs);
+			if (p < 1) a.model.animator.reload(a.reloadItem, p, a.reloadMs);
+			else this.endReload(a);
+		}
+		const mat = a.model.material;
+		if (a.easeAt !== -Infinity) {
+			// Events are stamped with performance.now(), frames with the (slightly older) rAF time.
+			const k = Math.max(0, (now - a.easeAt) / TURN_EASE_MS);
+			if (k >= 1) {
+				a.easeAt = -Infinity;
+				a.model.recolor();
+			} else mat.mix(a.from, a.to, k * k * (3 - 2 * k));
+		}
+		if (a.flashUntil > 0) {
+			const on = now < a.flashUntil;
+			mat.emissive.copy(on ? HIT_FLASH : NO_GLOW);
+			if (!on) a.flashUntil = 0;
+		}
+		if (a.muzzleUntil > 0 && now >= a.muzzleUntil) {
+			a.muzzleUntil = 0;
+			a.model.showMuzzle(false);
+		}
 	}
 
 	/** Cosmetics of a player (docs/characters.md); kept across map changes. */
@@ -243,18 +473,27 @@ export class RemotePlayers {
 		copyMotion(a.motion, p);
 	}
 
-	/** Animate the visible players (once per frame, before rendering). */
-	update(view: CrowdView): void {
-		if (this.hidden) return;
+	/** Animate the visible players (once per frame, before rendering). `now` (ms) runs the flashes and eases, on hidden avatars too. */
+	update(view: Pick<CrowdView, 'dt' | 'distance' | 'heightShare'>, now: number): void {
 		for (const a of this.avatars.values()) {
-			if (!a.root.visible) continue;
+			this.paint(a, now);
+			if (this.hidden || !a.root.visible) continue;
 			const dist = view.distance(a.root.position);
 			if (dist < 0) {
 				a.model.skipFrame(view.dt, a.motion);
 				continue;
 			}
-			a.tag.position.y = a.model.update(view.dt, a.motion, dist) + TAG_ABOVE;
+			this.fitTag(a, a.model.update(view.dt, a.motion, dist), view);
 		}
+	}
+
+	/** Place the tag above the crown; up close it shrinks to TAG_MAX_SHARE, with the same gap under it. */
+	private fitTag(a: Avatar, crown: number, view: Pick<CrowdView, 'heightShare'>): void {
+		const at = a.root.position;
+		const share = view.heightShare(at.x, at.y + crown + TAG_ABOVE, at.z, TAG_WIDTH);
+		const s = share > TAG_MAX_SHARE ? TAG_MAX_SHARE / share : 1;
+		a.tag.scale.set(TAG_WIDTH * s, TAG_HEIGHT * s, 1);
+		a.tag.position.y = crown + TAG_ABOVE - (TAG_HEIGHT / 2) * (1 - s);
 	}
 
 	ids(): IterableIterator<number> {

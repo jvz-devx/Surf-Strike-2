@@ -38,6 +38,7 @@ import {
 	PROTOCOL_VERSION,
 	RICHEST,
 	sanitizeText,
+	SNAPSHOT_HZ,
 	TAG_TICK_HZ,
 	usernameKey
 } from '@surf/shared';
@@ -52,7 +53,7 @@ import { Shop } from './shop.ts';
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
 import type { ZoneKind } from './validation.ts';
 
-export const SNAPSHOT_HZ = 32;
+export { SNAPSHOT_HZ };
 /** Gamemode rule ticks (tag contact checks), at least the snapshot rate. */
 export const MODE_TICK_HZ = TAG_TICK_HZ;
 export const SCOREBOARD_MS = 1000;

@@ -123,8 +123,10 @@ describe('settings sections', () => {
 	it('gives engine defaults', () => {
 		expect(sectionDefaults('mouse')).toEqual([
 			['sensitivity', 2],
+			['zoom_sensitivity_ratio', 1],
 			['m_yaw', 0.022],
-			['m_pitch', 0.022]
+			['m_pitch', 0.022],
+			['cl_aimtoggle', 0]
 		]);
 		expect(cvarDefault('cl_ghost')).toBe(1);
 		expect(cvarDefault('nope', 7)).toBe(7);

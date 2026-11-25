@@ -13,6 +13,7 @@
 	import RtvRequest from '#lib/ui/RtvRequest.svelte';
 	import ScorePanel from '#lib/ui/ScorePanel.svelte';
 	import Crosshair from '#lib/ui/Crosshair.svelte';
+	import { crosshairOpacity } from '#lib/game/gunfeel.js';
 	import KeysDisplay from '#lib/ui/KeysDisplay.svelte';
 	import PosReadout from '#lib/ui/PosReadout.svelte';
 	import Scoreboard from '#lib/ui/Scoreboard.svelte';
@@ -105,7 +106,7 @@
 		{#if hud.zombies}<ZombiesHud z={hud.zombies} {now} />{/if}
 		{#if hud.infected}<InfectedHud inf={hud.infected} {now} />{/if}
 		{#if showScorePanel}<ScorePanel mode={hud.gameMode} input={scoreInput} unofficial={race && hud.unofficial} />{/if}
-		{#if !hud.zombies?.scoped && !hud.infected?.scoped && !hud.hns?.blindfold}<Crosshair cvars={hud.cvars} />{/if}
+		{#if !hud.zombies?.scoped && !hud.infected?.scoped && !hud.hns?.blindfold && crosshairOpacity(hud.infected?.aimT) > 0}<Crosshair cvars={hud.cvars} spreadDeg={hud.infected?.spreadDeg} opacity={crosshairOpacity(hud.infected?.aimT)} />{/if}
 
 		<div class="below-crosshair">
 			{#if clickHint}

@@ -13,6 +13,9 @@
  * `&view=casino` the Casino, playable (`&tab=coinflip|crash|slots`, `&nocasino` a server without it, `&roll=<0..1>` a fixed roll),
  * `&view=inventory` the Inventory (`&items=<n>` owned items, default 130, with made-up ones; 0 = empty), `&ban=<seconds>` the ban screen (`&ban=0` permanent),
  * `&boxnews` loot box news (one of each rarity in turn; `=<rarity or item id>`, `=all` many at once).
+ * Infected: `&mode=infected` shows the Infected HUD: `&scene=` one of
+ * INF_MOCK_SCENES (infected-mock.ts), `&vote=1` keeps the map vote open, `&keys=0` hides
+ * the keys display. `&scale=1` forces `--hud-scale`.
  */
 import { cosmeticPrice, COSMETIC_SLOTS, CASINO_MAX_BET, CASINO_MIN, coinflipPayout, crashPayout, crashState, pts, rollCoin, rollCrash, rollSlots, slotPayout, emptyLoadout, gameMode, getCosmetic, isGameModeId, listCosmetics, LOOTBOX, lootItems, registerCosmetic, rollLoot, shopItems, Status, TICK_RATE, type RarityId, type GameModeId, type LootRarity, type ModeState, type ScoreRow, type CasinoOutcome } from '@surf/shared';
 import { itemMesh, registerItemMesh } from '#lib/render/character/items.js';
@@ -21,6 +24,7 @@ import { parseBoxNews, parseCasinoNews, pushBoxNews } from '#lib/game/box-news.j
 import { casinoError, casinoResult, crashStarted, parseCasino } from '#lib/game/casino.js';
 import { awardPopup, noticePopup } from '#lib/game/coins.js';
 import type { GameApi, GameHandle, HudStateShape } from '#lib/game/contract.js';
+import { infMockSpectates, isInfMockScene, mockInfectedView, type InfMockScene } from '#lib/ui/infected-mock.js';
 
 const T = TICK_RATE;
 
@@ -124,6 +128,10 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 	const race = gameMode(mode).family === 'race';
 	const coinsN = params.has('coins') ? Number(params.get('coins')) : null;
 	const asAdmin = params.get('view') === 'admin' || params.has('admin');
+	const sceneParam = params.get('scene');
+	const infScene: InfMockScene | null = params.get('mode') === 'infected' ? (isInfMockScene(sceneParam) ? sceneParam : 'survivor') : null;
+	const scale = params.get('scale');
+	if (scale) document.documentElement.style.setProperty('--hud-scale', scale);
 	if (params.has('boxall')) mockOwned(130);
 	const owned = coinsN === 0 ? [] : mockOwned(Number(params.get('items') ?? 130));
 	const hud: HudStateShape = $state({
@@ -131,14 +139,14 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		connecting: false,
 		playerCount: 12,
 		maxPlayers: 32,
-		mapId: 'surf_ember',
-		mapTitle: 'Ember',
+		mapId: infScene ? 'infected_outpost' : 'surf_ember',
+		mapTitle: infScene ? 'Outpost' : 'Ember',
 		mapTimeLeft: 462,
 		gameMode: mode,
 		modeFamily: gameMode(mode).family,
 		tag: null,
 		zombies: null,
-		infected: null,
+		infected: infScene ? mockInfectedView(infScene, t0) : null,
 		hns: null,
 		maps: [
 			{ id: 'surf_aurora', title: 'Aurora', kind: 'surf', difficulty: 'easy' },
@@ -255,7 +263,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			{ id: 4, from: null, text: 'New map record by glidepath: 02:18.902', system: true, at: t0 }
 		],
 		chatOpen: open === 'chat',
-		vote: params.has('rtv') || params.has('novote')
+		vote: params.has('rtv') || params.has('novote') || (infScene && !params.has('vote'))
 			? null
 			: {
 					labels: [
@@ -304,7 +312,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		selfId: selfPos,
 		selfName: 'you',
 		modeState: mockState(mode, rows),
-		spectating: null,
+		spectating: infScene && infMockSpectates(infScene) ? { targetName: 'glidepath', freeFly: false } : null,
 		consoleOpen: open === 'console',
 		consoleLines: [
 			{ id: 1, text: 'Surf Strike 2 console. Type "help".', kind: 'output' },
@@ -314,7 +322,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		],
 		settingsOpen: open === 'settings' || open === 'maps',
 		authPanelOpen: open === 'auth' || open === 'name',
-		pointerLocked: false,
+		pointerLocked: infScene !== null,
 		fullscreenSupported: true,
 		desktopOnly: open === 'desktop',
 		fps: 144,
@@ -326,7 +334,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			fov: 90,
 			volume: 0.5,
 			cl_showfps: 1,
-			cl_showkeys: 1,
+			cl_showkeys: params.get('keys') === '0' ? 0 : 1,
 			cl_showpos: 0,
 			cl_crosshairsize: 5,
 			cl_crosshairgap: 1,
@@ -616,6 +624,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 
 	const ctx = canvas.getContext('2d');
 	let raf = 0;
+	let infAt = t0;
 	const frame = () => {
 		const t = (performance.now() - t0) / 1000;
 		const s = 1200 + Math.sin(t * 0.8) * 300;
@@ -623,6 +632,11 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		hud.speed = s;
 		hud.runTicks = Math.round((72.402 + t) * T);
 		hud.mapTimeLeft = Math.max(0, 462 - t);
+		// Infected: re-issue the scene so popups, arcs and hit markers stay on screen.
+		if (infScene && performance.now() - infAt > 1000) {
+			infAt = performance.now();
+			hud.infected = mockInfectedView(infScene, infAt);
+		}
 		if (ctx) {
 			const { width: w, height: h } = canvas;
 			const g = ctx.createLinearGradient(0, 0, 0, h);

@@ -701,7 +701,8 @@ describe('infected_terminal throwing knives', () => {
 			expect(solidAt(b)).toBe(false);
 			if (wall) expect(b.vx * d.x + b.vy * d.y).toBeLessThan(0);
 			else expect([b.vx * d.x + b.vy * d.y > 0, b.vz > 0, b.z < 4]).toEqual([true, true, true]);
-			const k = 0.1;
+			// In the knife's path 0.08 s after the bounce: close enough that a low, falling bank is still in the air.
+			const k = 0.08;
 			g.put(2, b.x + b.vx * k, b.y + b.vy * k, Math.max(0, b.z + b.vz * k - 30 - CLEARANCE));
 			const inf = g.until('infect', 2, 600);
 			expect(inf).toMatchObject({ id: 2, by: 1, method: 'bank' });

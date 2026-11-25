@@ -31,9 +31,13 @@ Control API on `http://127.0.0.1:<port+1>` (default 27017) for scripts and agent
 | `POST /bots?count=<N>` | Scale live bots up or down |
 | `POST /shutdown` | Stop the launcher (bots, game server, control API, Vite) |
 | `POST /bot/move?index=0&x=&y=&z=&yaw=&pitch=` | Teleport a bot (omitted values stay) |
-| `POST /bot/action?index=0&type=fire\|throwKnife\|reload\|loadout\|spectate` | Bot shoots or throws (aim with `tx,ty,tz` or `yaw,pitch`; `weapon=`), reloads, picks a loadout, or spectates (`target=<id>`, `none`, or toggle) |
+| `POST /bot/action?index=0&type=fire\|throwKnife\|placeBeacon\|reload\|loadout\|spectate` | Bot shoots or throws (aim with `tx,ty,tz` or `yaw,pitch`; `weapon=`), plants a respawn beacon (infected), reloads, picks a loadout, or spectates (`target=<id>`, `none`, or toggle). In infected a `fire` right after a `loadout` waits for the weapon's draw time; the reply carries `delayMs`, 0 when the shot left at once |
 
 In solo mode (no server), `?map=<id>` opens that map directly, e.g. `http://localhost:5173/?map=infected_outpost`.
+
+Dev previews (dev builds only): `?mockhud` shows the HUD and Esc menu with sample data (`&mode=infected&scene=<scene>` for the Infected HUD), and `?mockvm` shows the weapon models without the game ([ui.md](ui.md#infected-hud), [ui.md](ui.md#weapon-model-viewer)).
+
+Weapon models: `tools/models/procedural/build.sh [id…]` rebuilds the script-built guns in `apps/web/static/models/weapons/` (Blender headless; one script per gun, guide in `tools/models/procedural/README.md`), and `tools/models/build.sh <raw dir> knife` the generated knife from its raw image-to-3D file (settings in `tools/models/manifest.json`). After a rebuild that changes the geometry, re-measure the fit points in `apps/web/src/lib/render/weapon-assets.ts`; `weapon-assets.test.ts` checks them against the shipped files.
 
 ## Documents
 
@@ -42,9 +46,9 @@ In solo mode (no server), `?map=<id>` opens that map directly, e.g. `http://loca
 | [architecture.md](architecture.md) | Hosting, Cloudflare tunnel, server discovery, netcode, repo layout |
 | [physics.md](physics.md) | Source movement port, cvars, collision and traces |
 | [gameplay.md](gameplay.md) | Timer, zones, stages, leaderboards, chat, spectate, map vote, lobby, accounts |
-| [modes.md](modes.md) | Gamemode framework (surf, bhop, tag, Zombie Run, hide and seek), how to add a mode, per-mode rules |
+| [modes.md](modes.md) | Gamemode framework (surf, bhop, tag, infected, Zombie Run, hide and seek), how to add a mode, per-mode rules |
 | [maps.md](maps.md) | Map format and the four map designs |
-| [ui.md](ui.md) | HUD, console, cvars, Esc settings, account panel, audio |
+| [ui.md](ui.md) | HUD (Infected HUD included), console, cvars, Esc settings, account panel, audio, dev previews |
 | [characters.md](characters.md) | Character models, animation, cosmetic slots and how to add an item |
 | [economy.md](economy.md) | Points, coins, payouts per mode, abuse detection, and how a mode pays |
 | [roadmap.md](roadmap.md) | Milestones and out of scope |
@@ -63,7 +67,7 @@ In solo mode (no server), `?map=<id>` opens that map directly, e.g. `http://loca
 | Rendering/collision | Three.js; custom convex-brush AABB traces, no physics engine |
 | Gamemodes | `MapDef.kind` is the gamemode: surf and bhop (race: timer, zones, PBs), tag (server-run rounds, score = time not IT) Zombie Run (co-op escape with weapons against AI zombies, gates, turned players fight for the zombies) and hide and seek (45 s blindfolded seekers, 4:00 knife hunt, found hiders become seekers, bhop capped at 300 u/s); rotation mixes all modes ([modes.md](modes.md)) |
 | Features | Timer, zones, stages, PBs, top-10 leaderboard, chat, score panel, Tab scoreboard with total points and playtime, spectate |
-| Not included | Practice `!saveloc`/`!tele`, weapons outside Zombie Run (and the hide and seek knife), anti-cheat, mobile |
+| Not included | Practice `!saveloc`/`!tele`, weapons outside Zombie Run and infected (and the hide and seek knife), anti-cheat, mobile |
 | Identity | Simple accounts (username + password, no email/verification) in the server's SQLite; only accounts' runs reach the leaderboard. Guests pick a name and play everything without saving runs |
 | Settings | Developer console (`~`) plus an Esc menu (Change map, Settings, Account) |
 | Admin | Esc › Admin for accounts in `ADMIN_USERNAMES` (default `tim`; by account, never display name): enable/disable maps, force map change, ban/unban (account, guest key + IP, close 4009) |

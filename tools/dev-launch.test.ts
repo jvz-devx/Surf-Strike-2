@@ -1,11 +1,11 @@
 /**
- * Unit tests for the dev launcher's pure helpers:
- *   pnpm --filter server exec tsx --test ../../tools/dev-launch.test.ts
+ * Unit tests for the dev launcher's pure helpers; part of the server's `pnpm test`.
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { GAME_MODE_IDS, MAPS, mapsForMode, SANDBOX, Status, tagSpawns } from '../packages/shared/src/index.ts';
+import { GAME_MODE_IDS, INF_AMMO, MAPS, mapsForMode, SANDBOX, Status, tagSpawns, WEAPONS, ZM_FIRE_TOLERANCE, type InfectedGame, type MapDef } from '../packages/shared/src/index.ts';
 import {
+	Bot,
 	BOT_RING,
 	botSpawn,
 	botStatus,
@@ -15,6 +15,7 @@ import {
 	defaultBots,
 	dirFromAngles,
 	dirTowards,
+	drawWaitMs,
 	gameUrl,
 	launchMaps,
 	listText,
@@ -23,7 +24,8 @@ import {
 	PATROL_RADIUS,
 	PATROL_SPEED,
 	patrolPose,
-	resolveTarget
+	resolveTarget,
+	type AimQuery
 } from './dev-launch.ts';
 
 const close = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`);
@@ -211,4 +213,89 @@ test('botStatus per mode', () => {
 	assert.equal(botStatus('infected'), Status.Alive);
 	assert.equal(botStatus('zombies'), Status.Alive);
 	assert.equal(botStatus('surf'), Status.StartZone);
+});
+
+test('drawWaitMs: the rest of the draw time after a swap, infected only', () => {
+	assert.equal(drawWaitMs('infected', 'lmg', 0), WEAPONS.lmg.deployMs);
+	assert.equal(drawWaitMs('infected', 'pistol', 100), WEAPONS.pistol.deployMs! - 100);
+	assert.equal(drawWaitMs('infected', 'pistol', WEAPONS.pistol.deployMs!), 0);
+	assert.equal(drawWaitMs('infected', 'barrett', 10_000), 0);
+	// Never swapped (-Infinity ago is Infinity since), and a clock that ran backwards.
+	assert.equal(drawWaitMs('infected', 'lmg', Infinity), 0);
+	assert.equal(drawWaitMs('infected', 'lmg', -50), WEAPONS.lmg.deployMs);
+	// Whole milliseconds, rounded up: a timer never fires early.
+	assert.equal(drawWaitMs('infected', 'knife', 0.4), WEAPONS.knife.deployMs);
+	// Claws have no draw; the other modes have no draw time at all.
+	assert.equal(drawWaitMs('infected', 'claws', 0), 0);
+	assert.equal(drawWaitMs('zombies', 'lmg', 0), 0);
+	assert.equal(drawWaitMs('tag', 'pistol', 0), 0);
+	// The wait covers what the server enforces (its draw time is scaled by the fire tolerance).
+	for (const w of ['lmg', 'pistol', 'knife', 'sniper', 'barrett', 'striker', 'smg'] as const) {
+		assert.ok(drawWaitMs('infected', w, 0) >= WEAPONS[w].deployMs! * ZM_FIRE_TOLERANCE, w);
+	}
+});
+
+const until = async (done: () => boolean, ms = 5000) => {
+	const end = Date.now() + ms;
+	while (!done()) {
+		if (Date.now() > end) throw new Error('timed out');
+		await new Promise((r) => setTimeout(r, 15));
+	}
+};
+
+test('a bot that swaps and fires at once holds the shot until the weapon is drawn; the server accepts it', async () => {
+	const { startServer } = await import('../apps/server/src/server.ts');
+	const server = await startServer({
+		port: 0,
+		dbPath: ':memory:',
+		maps: launchMaps(),
+		initialMap: 'infected_outpost',
+		// A long grace period: the round stays in one phase for the whole test.
+		modes: modeOptions({ fast: false, grace: 60, round: null, countdown: null }),
+		log: () => {}
+	});
+	const lobby = server.lobby as unknown as { currentMap: MapDef; gameMode: { game: InfectedGame } };
+	const bots = [0, 1].map((i) => new Bot(i, server.port, lobby.currentMap, () => false, () => {}));
+	try {
+		const game = lobby.gameMode.game;
+		const bot = bots[0]!;
+		await until(() => bots.every((b) => b.connected) && game.phase === 'grace' && game.weaponOf(bot.selfId) !== null && bot.modeState !== null);
+		const pistol = () => game.secondaryOf(bot.selfId)!;
+		const full = INF_AMMO.pistol!.mag;
+		assert.equal(pistol().mag, full);
+
+		// Swap and fire in one go: the shot is held for the pistol's draw time, then accepted.
+		bot.loadout('pistol');
+		const delay = bot.fire({});
+		assert.ok(delay > 0 && delay <= WEAPONS.pistol.deployMs!, `delay ${delay}`);
+		await until(() => game.weaponOf(bot.selfId)!.weapon === 'pistol');
+		assert.equal(pistol().mag, full);
+		await until(() => pistol().mag === full - 1);
+
+		// Drawn: the next shot leaves at once.
+		await new Promise((r) => setTimeout(r, WEAPONS.pistol.fireMs + 50));
+		assert.equal(bot.fire({}), 0);
+		await until(() => pistol().mag === full - 2);
+
+		// What the hold prevents: the same swap with the shot sent straight away is rejected.
+		const raw = bot as unknown as { shoot(q: AimQuery): void };
+		const primary = game.primaryOf(bot.selfId)!;
+		const before = primary.mag;
+		bot.loadout(primary.weapon);
+		raw.shoot({});
+		await until(() => game.weaponOf(bot.selfId)!.weapon === primary.weapon);
+		await new Promise((r) => setTimeout(r, 120));
+		assert.equal(primary.mag, before);
+
+		// A held shot is dropped when the bot closes (its gun on the server stays as it was).
+		const gun = pistol();
+		bot.loadout('pistol');
+		assert.ok(bot.fire({}) > 0);
+		bot.close();
+		await new Promise((r) => setTimeout(r, WEAPONS.pistol.deployMs! + 150));
+		assert.equal(gun.mag, full - 2);
+	} finally {
+		for (const b of bots) b.close();
+		await server.close();
+	}
 });

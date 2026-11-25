@@ -17,7 +17,6 @@ import {
 	INF_SECONDARY,
 	INF_SLEIGHT_RELOAD_FACTOR,
 	INF_SPECIALIST_CADENCE_FACTOR,
-	INF_SPECIALIST_HP,
 	INF_STEADY_SPEED_FACTOR,
 	INF_STEADY_SPREAD_FACTOR,
 	INF_SURVIVOR_HP,
@@ -39,6 +38,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import type { BeaconRenderPose, InfectedRenderer, SparkKind } from '../render/infected.js';
 import type { ZombieRenderer } from '../render/zombies.js';
+import { RECOIL, recoilRestMs, SPREAD } from './gunfeel.js';
 import { INF_FIRE_TICK_NOW, INF_PERK_INFO, InfectedClient, infectText, infMaxHp, infRole, pelletTracers, stepKnife, type InfHost } from './infected.js';
 
 const SPAWNS = [
@@ -307,7 +307,7 @@ describe('pure helpers', () => {
 });
 
 describe('offline', () => {
-	it('solo: free roam, waiting banner, no shots or throws', () => {
+	it('solo: free roam, waiting banner, nothing sent for shots or throws', () => {
 		const sent: ClientMessage[] = [];
 		const host = {
 			online: () => false,
@@ -879,10 +879,12 @@ describe('throwing knife client', () => {
 		expect(u.sentTypes()).toEqual(['throwKnife']);
 		expect(u.zoom).toEqual([]);
 		u.c.press('attack2', false, 30);
+		expect(u.zoom).toEqual([]);
 		u.c.press('attack2', true, 40);
 		expect(u.zoom).toEqual([WEAPONS.sniper.zoomFov]);
 		expect(u.c.frame(50, true, 0)).toMatchObject({ scoped: true, hasKnife: false, alpha: true });
-		u.c.press('attack2', true, 60);
+		// Held aim (the default): letting go of Mouse2 brings the scope down.
+		u.c.press('attack2', false, 60);
 		expect(u.zoom.at(-1)).toBeNull();
 		u.c.onEvent({ e: 'ammo', id: 1, weapon: 'claws', mag: 0, reserve: 0 }, 70);
 		expect(u.c.weapon).toBe('claws');
@@ -1205,7 +1207,8 @@ describe('3-slot survivor classes (real InfectedGame)', () => {
 		expect(h.game.playerView(2)!.weapon).toBe('pistol');
 		expect(h.view(2)).toMatchObject({ weapon: 'pistol', mag: INF_AMMO.pistol!.mag, reserve: INF_AMMO.pistol!.reserve, magSize: WEAPONS.pistol.magazine });
 		expect(c2.maxSpeed(h.clock.now)).toBe(WEAPONS.pistol.moveSpeed);
-		// One pistol shot: client and server agree on the pistol magazine.
+		// One pistol shot (after the draw): client and server agree on the pistol magazine.
+		h.advance(WEAPONS.pistol.deployMs!);
 		c2.press('attack', true, h.clock.now);
 		h.tick(2, { x: 150, y: 2000, z: 40 });
 		c2.press('attack', false, h.clock.now);
@@ -1226,6 +1229,7 @@ describe('3-slot survivor classes (real InfectedGame)', () => {
 		const h = playing([1, 2, 3], { loadout: 'smg' });
 		const c2 = h.peer(2).c;
 		c2.slot(2, h.clock.now);
+		h.advance(WEAPONS.pistol.deployMs!); // the draw
 		c2.press('attack', true, h.clock.now);
 		h.tick(2, { x: 150, y: 2000, z: 40 });
 		c2.press('attack', false, h.clock.now);
@@ -1240,29 +1244,35 @@ describe('3-slot survivor classes (real InfectedGame)', () => {
 });
 
 describe('survivor primaries (client prediction)', () => {
-	it('Barrett: Mouse2 scopes (38 FOV), the semi-auto stays scoped after a shot, viewmodel hidden while scoped', () => {
+	it('Barrett: Mouse2 scopes (38 FOV), the semi-auto stays scoped after a shot, viewmodel hidden once fully scoped', () => {
 		const u = survivorMe('barrett', 10, 20);
 		u.c.press('attack2', true, 10);
 		expect(u.zoom).toEqual([WEAPONS.barrett.zoomFov]);
 		expect(WEAPONS.barrett.zoomFov).toBe(38);
-		pull(u, 20);
+		// The rifle comes up to the eye while the scope zooms in, then the overlay takes over.
+		u.c.frame(200, true, 0);
+		expect(u.vm.visible).toBe(true);
+		u.c.frame(420, true, 0);
+		expect(u.vm.visible).toBe(false);
+		pull(u, 430);
 		expect(fires(u)).toHaveLength(1);
-		const v = u.c.frame(30, true, 0);
+		const v = u.c.frame(440, true, 0);
 		expect(v).toMatchObject({ scoped: true, weapon: 'barrett', mag: 9 });
 		expect(u.vm.visible).toBe(false);
 		// Semi-auto: the next shot after fireMs, still scoped.
-		pull(u, 20 + WEAPONS.barrett.fireMs - 5);
+		pull(u, 430 + WEAPONS.barrett.fireMs - 5);
 		expect(fires(u)).toHaveLength(1);
-		pull(u, 20 + WEAPONS.barrett.fireMs + 1);
+		pull(u, 430 + WEAPONS.barrett.fireMs + 1);
 		expect(fires(u)).toHaveLength(2);
-		expect(u.c.frame(400, true, 0).scoped).toBe(true);
-		// Mouse2 again unscopes, a weapon swap unscopes too.
-		u.c.press('attack2', true, 410);
+		expect(u.c.frame(900, true, 0).scoped).toBe(true);
+		// Letting go of Mouse2 unscopes, a weapon swap unscopes too.
+		u.c.press('attack2', false, 910);
 		expect(u.zoom.at(-1)).toBeNull();
-		u.c.press('attack2', true, 420);
-		u.c.slot(2, 430);
+		u.c.press('attack2', true, 920);
+		expect(u.zoom.at(-1)).toBe(38);
+		u.c.slot(2, 930);
 		expect(u.zoom.at(-1)).toBeNull();
-		expect(u.c.frame(440, true, 0)).toMatchObject({ scoped: false, weapon: 'pistol' });
+		expect(u.c.frame(940, true, 0)).toMatchObject({ scoped: false, weapon: 'pistol' });
 	});
 
 	it('Striker: one trigger pull draws 5-8 scattered pellet tracers inside the pellet cone; the pistol draws one', () => {
@@ -1281,7 +1291,7 @@ describe('survivor primaries (client prediction)', () => {
 		expect(u.vm.tracers.every((t) => Math.hypot(t.to.x, t.to.y, t.to.z - 64) <= WEAPONS.striker.range + 1)).toBe(true);
 		u.vm.tracers.length = 0;
 		u.c.slot(2, 400);
-		pull(u, 410);
+		pull(u, 410 + WEAPONS.pistol.deployMs!); // after the draw
 		expect(u.vm.tracers).toHaveLength(1);
 	});
 
@@ -1339,19 +1349,21 @@ describe('specialist perks (client prediction)', () => {
 		u.c.slot(3, 30);
 		expect(u.c.maxSpeed(40)).toBeCloseTo(WEAPONS.knife.moveSpeed * INF_STEADY_SPEED_FACTOR, 9);
 		u.c.slot(1, 50);
-		for (let i = 0; i < 10; i++) pull(u, 100 + i * (WEAPONS.striker.fireMs + 5));
+		// After the draw (deployMs).
+		// Each pull from rest: the view kick of the last shot is back on the aim point.
+		for (let i = 0; i < 10; i++) pull(u, 600 + i * (Math.max(WEAPONS.striker.fireMs, recoilRestMs(RECOIL.striker!)) + 5));
 		expect(fires(u)).toHaveLength(10);
-		const tight = (WEAPONS.striker.spread + WEAPONS.striker.pelletSpread!) * INF_STEADY_SPREAD_FACTOR;
+		const tight = (SPREAD.striker!.max + WEAPONS.striker.pelletSpread!) * INF_STEADY_SPREAD_FACTOR;
 		expect(u.vm.tracers).toHaveLength(10 * pelletTracers('striker'));
 		for (const t of u.vm.tracers) expect(tracerDeg(t)).toBeLessThanOrEqual(tight + 1e-6);
 		// The aim spread itself is halved too (fire message direction).
 		for (const m of fires(u)) {
 			const d = (m as { dir: Vec3 }).dir;
-			expect((Math.acos(Math.min(1, d.x)) * 180) / Math.PI).toBeLessThanOrEqual(WEAPONS.striker.spread * INF_STEADY_SPREAD_FACTOR + 1e-6);
+			expect((Math.acos(Math.min(1, d.x)) * 180) / Math.PI).toBeLessThanOrEqual(SPREAD.striker!.max * INF_STEADY_SPREAD_FACTOR + 1e-6);
 		}
 	});
 
-	it('Specialist: 6 HP at once, all perks, faster cadence; the state and spectators agree', () => {
+	it('Specialist: all perks, faster cadence, no extra HP; the state and spectators agree', () => {
 		const u = survivorMe('lmg', 100, 50);
 		// Without specialist the LMG waits its full fireMs.
 		u.c.press('attack', true, 1000);
@@ -1363,7 +1375,7 @@ describe('specialist perks (client prediction)', () => {
 		u.c.press('attack', false, 1100);
 		streakTo(u, 7, 1200);
 		const v = u.c.frame(1210, true, 0);
-		expect(v).toMatchObject({ hp: INF_SPECIALIST_HP, maxHp: INF_SPECIALIST_HP, streak: 7, perks: ['hardline', 'sleight', 'scavenger', 'steady', 'specialist'] });
+		expect(v).toMatchObject({ hp: INF_SURVIVOR_HP, maxHp: INF_SURVIVOR_HP, streak: 7, perks: ['hardline', 'sleight', 'scavenger', 'steady', 'specialist'] });
 		expect(v.flash).toMatchObject({ text: 'SPECIALIST BONUS! All Perks Active +250', tone: 'bonus' });
 		expect(v.killFeed[0]!.text).toContain('SPECIALIST');
 		const t0 = 2000;
@@ -1371,14 +1383,14 @@ describe('specialist perks (client prediction)', () => {
 		u.c.tick(t0, ORIGIN, 64, 0, 0, false);
 		u.c.tick(t0 + WEAPONS.lmg.fireMs * INF_SPECIALIST_CADENCE_FACTOR + 1, ORIGIN, 64, 0, 0, false);
 		expect(fires(u)).toHaveLength(4);
-		// The state reconciles (same perks), a spectator sees the 6-pip survivor.
+		// The state reconciles (same perks), a spectator sees the same.
 		const perks = infPerksForStreak(7);
-		u.c.onModeState(st({ players: [pv(1, { hp: 6, streak: 7, perks }), pv(3, { hp: 6, streak: 7, perks, moabReady: true })] }), 2100);
-		expect(u.c.frame(2110, true, 0)).toMatchObject({ maxHp: INF_SPECIALIST_HP, hp: 6 });
+		u.c.onModeState(st({ players: [pv(1, { streak: 7, perks }), pv(3, { streak: 7, perks, moabReady: true })] }), 2100);
+		expect(u.c.frame(2110, true, 0)).toMatchObject({ maxHp: INF_SURVIVOR_HP, streak: 7, perks });
 		u.c.setSpectate(true, 3);
-		expect(u.c.frame(2120, true, 0).spec).toMatchObject({ id: 3, maxHp: INF_SPECIALIST_HP, streak: 7, perks, moabReady: true });
-		expect(infMaxHp('survivor', [])).toBe(INF_SURVIVOR_HP);
-		expect(infMaxHp('infected', perks)).toBe(INF_INFECTED_HP);
+		expect(u.c.frame(2120, true, 0).spec).toMatchObject({ id: 3, maxHp: INF_SURVIVOR_HP, streak: 7, perks, moabReady: true });
+		expect(infMaxHp('survivor')).toBe(INF_SURVIVOR_HP);
+		expect(infMaxHp('infected')).toBe(INF_INFECTED_HP);
 	});
 
 	it('perks end with the survivor life: infection, a new round; a fall-out keeps them', () => {

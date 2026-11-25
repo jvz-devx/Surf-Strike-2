@@ -78,6 +78,21 @@
 			numStep={0.01}
 			onset={set('sensitivity')}
 		/>
+		<Slider
+			id="ss-zoomsens"
+			label="Scoped sensitivity"
+			value={n('zoom_sensitivity_ratio')}
+			min={0.1}
+			max={2}
+			step={0.05}
+			numberField
+			numMin={0.1}
+			numMax={4}
+			numStep={0.01}
+			onset={set('zoom_sensitivity_ratio')}
+		/>
+		<p class="note">Factor while a scope is up or the sights are raised. 1 keeps the same hand movement per screen distance as unscoped.</p>
+		<Toggle label="Toggle aim" hint="Mouse2 toggles aiming down sights instead of holding it" checked={on('cl_aimtoggle')} onset={flag('cl_aimtoggle')} />
 		<div class="sub ss-label">Advanced</div>
 		<Slider
 			id="ss-myaw"

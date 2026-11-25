@@ -215,7 +215,7 @@ export interface InfectedView {
 	/** performance.now() when grace / round / summary ends (0 in waiting/solo). */
 	endsAt: number;
 	team: InfTeam;
-	/** Patient Zero while still holding the round gun before first infection. */
+	/** Patient Zero, until the first infection. */
 	alpha: boolean;
 	/** Local player is the last remaining survivor (with >=2 infected). */
 	lastSurvivor: boolean;
@@ -256,6 +256,12 @@ export interface InfectedView {
 	/** Timestamp of the latest UAV pulse. */
 	uavAt: number;
 	scoped: boolean;
+	/** Scope overlay progress 0..1 of the two rifles (eased; it comes in over the last part of their aim); absent = follows `scoped`. */
+	scopeT?: number;
+	/** Aim down sights progress 0..1 (eased) of the held gun, every gun; 0 while spectating. */
+	aimT?: number;
+	/** Current hip cone half-angle in degrees (grows with fire and movement), whatever the aim; drives the crosshair gap. */
+	spreadDeg?: number;
 	summary: { winner: 'survivors' | 'infected'; secs: number; survivorsLeft: number; top: string | null } | null;
 	/** Spectating someone (or free-fly): local viewmodel, scope, hurt and down panels are hidden. */
 	spectating?: boolean;
@@ -278,6 +284,20 @@ export interface InfectedView {
 	moabDetonatedAt: number;
 	/** My latest perk unlock (toast). */
 	perkFlash: { perk: InfPerkId; at: number } | null;
+	/** Score popups of the viewed player (me, or the spectate target), oldest first. */
+	scorePops?: readonly import('./infected-hud-events.js').InfScorePop[];
+	/** Recent hits on me with their direction relative to the view (none while spectating). */
+	hurtDirs?: readonly import('./infected-hud-events.js').InfHurtDir[];
+	/** Round summary table from the server's stats; null or absent: the one-line summary. */
+	summaryRows?: readonly import('./infected-hud-events.js').InfSummaryRow[] | null;
+	/** Label of the next round's survivor primary (round summary), when the server sent it. */
+	nextLoadoutLabel?: string | null;
+	/** Player whose summary row is highlighted: me, or the spectate target. */
+	focusId?: number;
+	/** Rounds left (magazine + reserve) in slot 1 (primary) and slot 2 (pistol). */
+	slotAmmo?: readonly [number, number];
+	/** The practice range is open (no round: offline, or waiting for a second player; never while spectating). */
+	practice?: boolean;
 }
 
 /** What the infected HUD shows of a spectated player (only what `modeState` carries). */

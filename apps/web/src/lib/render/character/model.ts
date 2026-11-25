@@ -9,7 +9,9 @@ import { CharacterAnimator, type MotionState, type Posture } from './animator.js
 import { CharacterEffect, effectDef } from './effects.js';
 import { HAIR_STYLES, type HairStyle } from './body.js';
 import { acquireLook, lookKey, type LookGeometry, type LookSpec } from './geometry.js';
-import { HeldAssets, type HeldItem } from './held.js';
+import type { GunId } from '../gun-rig.js';
+import { FLASHES, nextShape } from '../muzzle-flash.js';
+import { HELD, HeldAssets, type HeldItem } from './held.js';
 import { drawnItems, itemMesh, type PlayerTint } from './items.js';
 import { CharacterMaterial } from './material.js';
 import { PAL, type Lod } from './mesh-kit.js';
@@ -19,7 +21,7 @@ import './common/index.js';
 import './uncommon/index.js';
 import './rare/index.js';
 import './epic/index.js';
-import { commitPose, createSkeleton, type CharacterSkeleton, type SocketName } from './skeleton.js';
+import { BONES, commitPose, createSkeleton, type CharacterSkeleton, type SocketName } from './skeleton.js';
 
 /** Gameplay looks. They override clothing colours, so they read at any distance. */
 export type CharacterRole = 'none' | 'it' | 'seeker' | 'zombie' | 'infected' | 'alpha' | 'ghost';
@@ -169,6 +171,17 @@ export class CharacterModel {
 	private effectsOn = true;
 	private heldMesh: THREE.Mesh | null = null;
 	private heldShown: HeldItem | null = null;
+	private flashMesh: THREE.Mesh | null = null;
+	private flashShape = -1;
+	private flashShots = 0;
+	/** The gun in parts, while its player reloads (built once, at the first reload). */
+	private magMesh: THREE.Mesh | null = null;
+	private dropMesh: THREE.Mesh | null = null;
+	private actMesh: THREE.Mesh | null = null;
+	private split: HeldItem | null = null;
+	/** Throwing knife of an infected, in the left claw. */
+	private hasKnife = false;
+	private knifeHand: THREE.Mesh | null = null;
 	/** Seconds of animation not yet applied (throttled far characters). */
 	private pending = 0;
 	private skip = Math.floor(Math.random() * 3);
@@ -277,20 +290,90 @@ export class CharacterModel {
 		return this.role;
 	}
 
-	/** Item in the hands; `claws` grows talons instead. */
-	setHeld(item: HeldItem | 'claws' | null): void {
+	/**
+	 * Item in the hands; `claws` grows talons instead. `knife`: an infected
+	 * still has the throwing knife. Returns whether the item changed.
+	 */
+	setHeld(item: HeldItem | 'claws' | null, knife = false): boolean {
 		const claws = item === 'claws';
+		const changed = item !== this.held;
 		this.animator.held = claws ? null : item;
-		if (claws === this.claws) return;
+		if (changed || knife !== this.hasKnife) {
+			this.hasKnife = knife;
+			if (knife && claws && !this.knifeHand) this.attach('handL', (this.knifeHand = this.assets.knifeInHand()));
+			if (this.knifeHand) this.knifeHand.visible = knife && claws;
+		}
+		if (claws === this.claws) return changed;
 		this.claws = claws;
 		this.animator.claws = claws;
 		this.rebuild();
+		return changed;
 	}
 
-	private recolor(): void {
+	/** What `setHeld` last put in the hands. */
+	get held(): HeldItem | 'claws' | null {
+		return this.claws ? 'claws' : this.animator.held;
+	}
+
+	/** The throwing knife of an infected. */
+	get knife(): boolean {
+		return this.hasKnife;
+	}
+
+	/** Holds a gun. */
+	get gun(): boolean {
+		const h = this.animator.held;
+		return h !== null && HELD[h].muzzle !== null;
+	}
+
+	/** A gun is in the hands and drawn (not during the swap to it). */
+	get hasMuzzle(): boolean {
+		return this.gun && this.heldShown === this.animator.held;
+	}
+
+	/** World position of the muzzle of the drawn gun; false without one. */
+	muzzle(out: THREE.Vector3): boolean {
+		if (!this.hasMuzzle || !this.heldMesh) return false;
+		const m = HELD[this.heldShown!].muzzle!;
+		this.heldMesh.updateWorldMatrix(true, false);
+		this.heldMesh.localToWorld(out.set(m[0], m[1], m[2]));
+		return true;
+	}
+
+	/** Show or hide the muzzle flash of the drawn gun. */
+	showMuzzle(on: boolean): void {
+		if (!on || !this.hasMuzzle || !this.heldMesh) {
+			if (this.flashMesh) this.flashMesh.visible = false;
+			return;
+		}
+		if (!this.flashMesh) {
+			this.flashMesh = new THREE.Mesh(this.assets.flashes.of('pistol')[0], this.assets.flashes.material);
+			this.flashMesh.name = 'muzzle';
+			this.flashMesh.renderOrder = 3;
+			this.heldMesh.add(this.flashMesh);
+		}
+		const id = this.heldShown as GunId;
+		const { muzzle, flash } = HELD[id];
+		// With reduced motion one flash in three, and a smaller one: a burst doesn't strobe.
+		if (this.assets.calm && this.flashShots++ % 3 !== 0) {
+			this.flashMesh.visible = false;
+			return;
+		}
+		const shapes = this.assets.flashes.of(id);
+		this.flashShape = nextShape(this.flashShape, shapes.length);
+		this.flashMesh.geometry = shapes[this.flashShape]!;
+		this.flashMesh.position.set(muzzle![0], muzzle![1], muzzle![2]);
+		this.flashMesh.scale.setScalar(flash * (0.85 + 0.3 * Math.random()) * (this.assets.calm ? 0.6 : 1));
+		// The brake of the .50 cal blows to the sides.
+		this.flashMesh.rotation.x = FLASHES[id].jets > 0 ? 0 : Math.random() * Math.PI * 2;
+		this.flashMesh.visible = true;
+	}
+
+	/** Write the palette of the look (of another role: to ease between the two). */
+	recolor(role: CharacterRole = this.role): void {
 		const m = this.material;
 		const p = this.person;
-		const r = ROLES[this.role];
+		const r = ROLES[role];
 		const hex = (i: number, h: number, glow = 0) => m.set(i, c1.setHex(h), glow);
 		if (r.skin !== undefined) c2.setHex(r.skin);
 		else c2.copy(p.skin);
@@ -354,6 +437,32 @@ export class CharacterModel {
 		return this.animator.headTop;
 	}
 
+	/**
+	 * Take over the look and the pose of another character as it stands: person,
+	 * clothes, role, claws, LOD, bones and facing (a corpse). Nothing held.
+	 */
+	mirror(from: CharacterModel): void {
+		this.person = from.person;
+		this.loadout = { ...from.loadout };
+		this.role = from.role;
+		this.claws = from.claws;
+		this.rebuild();
+		this.lod = from.lod;
+		this.mesh.geometry = this.look.get(this.lod);
+		this.group.rotation.y = from.group.rotation.y;
+		for (const b of BONES) {
+			this.sk.bones[b].position.copy(from.sk.bones[b].position);
+			this.sk.bones[b].quaternion.copy(from.sk.bones[b].quaternion);
+		}
+		commitPose(this.sk);
+	}
+
+	/** Pose at once, whatever the throttle says (a model that gets one pose only). */
+	settle(s: MotionState): void {
+		this.skip = 0;
+		this.update(0, s, 0);
+	}
+
 	/** Off screen: no animation, only keep the facing and the elapsed time. */
 	skipFrame(dtSec: number, s: MotionState): void {
 		this.setYaw(s.yaw);
@@ -363,14 +472,85 @@ export class CharacterModel {
 
 	private syncHeld(): void {
 		const want = this.animator.drawnHeld;
+		if (this.split !== null && (want !== this.split || !this.animator.partsOn)) this.join();
+		this.swapHeld(want);
+		if (this.animator.partsOn) this.syncParts();
+	}
+
+	/** Draw the held gun in parts, where the animator has them. */
+	private syncParts(): void {
+		const gun = this.heldMesh;
+		const item = this.heldShown;
+		const parts = item && this.assets.parts(item);
+		if (!gun || !parts) return;
+		const p = this.animator.parts;
+		if (this.split !== item) {
+			this.split = item;
+			gun.geometry = parts.body;
+			const mag = (this.magMesh ??= this.part('mag', this.mesh));
+			mag.geometry = parts.mag;
+			if (parts.act) {
+				const act = (this.actMesh ??= this.part('held-act', gun));
+				act.geometry = parts.act;
+				act.visible = true;
+			}
+		}
+		const mag = this.magMesh!;
+		mag.visible = p.mag !== 'none';
+		mag.position.copy(p.magP);
+		mag.quaternion.copy(p.magQ);
+		if (p.falling) {
+			const drop = (this.dropMesh ??= this.part('mag-drop', this.mesh));
+			drop.geometry = parts.mag;
+			drop.position.copy(p.fallP);
+			drop.quaternion.copy(p.fallQ);
+		}
+		if (this.dropMesh) this.dropMesh.visible = p.falling;
+		if (this.actMesh) {
+			this.actMesh.position.copy(p.actP);
+			this.actMesh.quaternion.copy(p.actQ);
+		}
+		if (p.off) {
+			gun.position.copy(p.offP);
+			gun.quaternion.copy(p.offQ);
+		} else {
+			gun.position.set(0, 0, 0);
+			gun.quaternion.identity();
+		}
+	}
+
+	private part(name: string, parent: THREE.Object3D): THREE.Mesh {
+		const m = new THREE.Mesh(new THREE.BufferGeometry(), this.assets.material);
+		m.name = name;
+		parent.add(m);
+		return m;
+	}
+
+	/** Back to the gun as one mesh, in the hand. */
+	private join(): void {
+		this.heldMesh!.geometry = this.assets.geometry(this.split!);
+		this.heldMesh!.position.set(0, 0, 0);
+		this.heldMesh!.quaternion.identity();
+		this.split = null;
+		for (const m of [this.magMesh, this.dropMesh, this.actMesh]) if (m) m.visible = false;
+	}
+
+	/** Parts drawn besides the gun (tests and debugging). */
+	get partsShown(): string[] {
+		return [this.magMesh, this.dropMesh, this.actMesh].filter((m) => m?.visible).map((m) => m!.name);
+	}
+
+	private swapHeld(want: HeldItem | null): void {
 		if (want === this.heldShown) return;
 		this.heldShown = want;
+		if (this.flashMesh) this.flashMesh.visible = false;
 		if (!want) {
 			if (this.heldMesh) this.heldMesh.visible = false;
 			return;
 		}
 		if (!this.heldMesh) {
 			this.heldMesh = new THREE.Mesh(this.assets.geometry(want), this.assets.material);
+			this.heldMesh.name = 'held';
 			this.attach('handR', this.heldMesh);
 		}
 		this.heldMesh.geometry = this.assets.geometry(want);

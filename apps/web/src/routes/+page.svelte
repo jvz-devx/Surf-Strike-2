@@ -10,16 +10,24 @@
 	onMount(() => {
 		let destroyed = false;
 		let h: GameHandle | null = null;
-		let stopGallery: (() => void) | null = null;
+		let stopViewer: (() => void) | null = null;
 		const params = new URLSearchParams(location.search);
 
 		(async () => {
 			try {
+				if (import.meta.env.DEV && params.has('mockvm')) {
+					// Dev-only viewer of the first-person models: no game and no HUD.
+					const { createViewmodelViewer } = await import('#lib/render/viewmodel-viewer.js');
+					if (destroyed) return;
+					const viewer = createViewmodelViewer(canvas);
+					stopViewer = () => viewer.destroy();
+					return;
+				}
 				// Dev-only character viewer (docs/characters.md).
 				if (import.meta.env.DEV && params.has('characters')) {
 					const { startGallery } = await import('#lib/render/character/gallery.js');
 					if (destroyed) return;
-					stopGallery = startGallery(canvas);
+					stopViewer = startGallery(canvas);
 					return;
 				}
 				let created: GameHandle;
@@ -42,8 +50,8 @@
 
 		return () => {
 			destroyed = true;
+			stopViewer?.();
 			h?.destroy();
-			stopGallery?.();
 			handle = null;
 		};
 	});

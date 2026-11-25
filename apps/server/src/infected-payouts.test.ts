@@ -1,7 +1,7 @@
 /** Coins in Infected (docs/economy.md#infected): the real InfectedMode and economy on fake clocks. */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { INFECTED_PAY, pts, VIEW_HEIGHT, type MapDef, type Vec3 } from '@surf/shared';
+import { INFECTED_PAY, pts, VIEW_HEIGHT, type InfEvent, type MapDef, type Vec3 } from '@surf/shared';
 import type { SimPlayer } from './economy-helpers.ts';
 import { InfectedMode, type InfectedModeOptions } from './modes/infected.ts';
 import { modeWorld } from './payout-helpers.ts';
@@ -128,6 +128,45 @@ describe('infected: survivors', () => {
 		assert.deepEqual(all(t, 'infWin'), [0, 0, 0, 0]);
 	});
 
+	it('a shotgun volley is one kill and one shot: pellets and reloads pay nothing by themselves', () => {
+		const t = round(4);
+		// Round 2 has the shotgun.
+		toEnd(t);
+		t.s.runUntil(() => t.g.phase === 'grace', 30);
+		start(t);
+		assert.equal(t.g.playerView(t.ps[1]!.id)!.weapon, 'striker');
+		const acted: number[] = [];
+		const eco = t.s.w.mode as { acted(id: number): void };
+		const real = eco.acted.bind(eco);
+		eco.acted = (id) => {
+			acted.push(id);
+			real(id);
+		};
+		const alpha = t.ps.find((p) => p.id === t.g.alphaId)!;
+		const gunner = t.ps.find((p) => p.id !== t.g.alphaId)!;
+		const before = t.s.paid(gunner, 'infKills');
+		for (let i = 1; i <= 4; i++) {
+			t.s.runUntil(() => t.g.playerView(alpha.id)!.alive, 10);
+			t.s.put(gunner, 0, -2000);
+			t.s.put(alpha, 40, -2000);
+			t.s.run(1.5);
+			const n = acted.length;
+			t.s.put(gunner, 0, -2000);
+			t.s.put(alpha, 40, -2000);
+			fire(t, gunner, { x: 1, y: 0, z: -0.3 });
+			assert.ok(!t.g.playerView(alpha.id)!.alive, 'eight pellets kill');
+			assert.equal(acted.length - n, 1, 'one shot');
+			// A shot refused by the fire rate, and a reload, are no acts.
+			fire(t, gunner, { x: 1, y: 0, z: 0 });
+			t.s.send(gunner, { type: 'reload' });
+			assert.equal(acted.length - n, 1);
+			t.s.put(gunner, -2500, 2500);
+			t.s.put(alpha, -2300, 2500);
+			t.s.run(4);
+		}
+		assert.equal(t.s.paid(gunner, 'infKills') - before, pts(1), 'four kills');
+	});
+
 	it('M.O.A.B.: 8 to the caller, the next ones in the map session 1; its kills pay nothing else and are no contacts', () => {
 		const t = round(5, { moabKills: 2, moabCountdownSecs: 1 });
 		for (let i = 0; i < 2; i++) {
@@ -201,6 +240,30 @@ describe('infected: the infected', () => {
 		for (const p of t.ps.slice(1, 3)) pay({ e: 'infect', id: p.id, by: t.ps[0]!.id, method: 'bank', timeAdded: 20 });
 		assert.equal(t.s.paid(t.ps[0]!, 'infInfect'), pts(2));
 		assert.equal(t.s.paid(t.ps[0]!, 'infBank'), pts(1));
+	});
+
+	it('a thrown knife pays like claws: the direction in the event changes nothing', () => {
+		const t = round(4);
+		const [zero, a, b] = t.ps as [SimPlayer, SimPlayer, SimPlayer];
+		t.s.put(zero, 0, -2000);
+		t.s.put(a, 120, -2000);
+		t.s.run(1.5);
+		const pay = (t.s.mode as unknown as { pay(ev: InfEvent): void }).pay.bind(t.s.mode);
+		const seen: InfEvent[] = [];
+		(t.s.mode as unknown as { pay(ev: InfEvent): void }).pay = (ev) => {
+			seen.push(ev);
+			pay(ev);
+		};
+		t.s.send(zero, { type: 'throwKnife', origin: { x: 0, y: -2000, z: 0.25 + VIEW_HEIGHT }, dir: { x: 1, y: 0, z: 0 } });
+		t.s.run(0.5);
+		const infect = seen.find((ev) => ev.e === 'infect')!;
+		assert.ok(infect.e === 'infect');
+		assert.deepEqual([infect.id, infect.by, infect.method, infect.dx, infect.dy], [a.id, zero.id, 'knife', 1, 0]);
+		for (const p of [zero, a]) t.s.put(p, -2500 + p.id * 150, 2500);
+		assert.equal(t.s.paid(zero, 'infInfect'), pts(1));
+		assert.equal(t.s.paid(zero, 'infBank'), 0);
+		hit(t, zero, b);
+		assert.equal(t.s.paid(zero, 'infInfect'), pts(2));
 	});
 
 	it('throwing rounds away: no win pay before half the clock, and the infection stock runs dry', () => {

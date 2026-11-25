@@ -3,7 +3,6 @@ import { buildCollisionWorld } from '../../collision/world.ts';
 import type { MapDef } from '../../maps/types.ts';
 import { VIEW_HEIGHT } from '../../movement/api.ts';
 import type { Vec3 } from '../../types.ts';
-import { headCentre } from '../zombies/hitbox.ts';
 import { WEAPONS } from '../zombies/weapons.ts';
 import {
 	INF_AMMO,
@@ -24,7 +23,6 @@ import {
 	INF_SECONDARY,
 	INF_SLEIGHT_RELOAD_FACTOR,
 	INF_SPECIALIST_CADENCE_FACTOR,
-	INF_SPECIALIST_HP,
 	INF_SPECIALIST_KNOCKBACK_FACTOR,
 	INF_STEADY_SPEED_FACTOR,
 	INF_SCORE_INFECT,
@@ -35,6 +33,7 @@ import {
 	INF_SCORE_SURVIVE_TICK,
 	INF_SCORE_SURVIVE_WIN,
 	INF_STEP_MS,
+	INF_SURVIVOR_HP,
 	InfectedGame,
 	infEventRoute,
 	infLoadout,
@@ -137,10 +136,10 @@ function newGame(ids: number[], opts: Opts = {}, map: MapDef = testMap()) {
 		placed.set(id, { x, y, z });
 		place(id, x, y, z, yaw);
 	};
-	/** Fire at a point (head: head centre of a yaw-0 pose at `t`; body: 30 above feet). */
+	/** Fire at a point (head: inside the head of an upright and of a hunched model at `t`, yaw 0; body: 12 above the feet, on the legs of both). */
 	const shoot = (id: number, t: Vec3, head: boolean, tick = game.tick) => {
 		const o = eye(id);
-		const aim = head ? headCentre({ ...t, yaw: 0 }) : { x: t.x, y: t.y, z: t.z + 30 };
+		const aim = head ? { x: t.x + 3, y: t.y, z: t.z + 65.5 } : { x: t.x, y: t.y, z: t.z + 12 };
 		const weapon = game.weaponOf(id)!.weapon;
 		const r = game.fire(id, { weapon, origin: o, dir: unit(aim.x - o.x, aim.y - o.y, aim.z - o.z), tick }, clock.now);
 		events.push(...r.events);
@@ -168,9 +167,9 @@ function playing(ids: number[], opts: Opts = {}, map?: MapDef) {
 }
 
 describe('rules data', () => {
-	it('presets rotate barrett → striker → lmg → smg and limit ammo; the pistol is the secondary', () => {
-		expect([1, 2, 3, 4, 5, 6].map(infLoadout)).toEqual(['barrett', 'striker', 'lmg', 'smg', 'barrett', 'striker']);
-		expect(INF_PRESETS).toEqual(['barrett', 'striker', 'lmg', 'smg']);
+	it('presets rotate barrett → striker → lmg → smg → sniper and limit ammo; the pistol is the secondary', () => {
+		expect([1, 2, 3, 4, 5, 6, 7].map(infLoadout)).toEqual(['barrett', 'striker', 'lmg', 'smg', 'sniper', 'barrett', 'striker']);
+		expect(INF_PRESETS).toEqual(['barrett', 'striker', 'lmg', 'smg', 'sniper']);
 		expect(INF_SECONDARY).toBe('pistol');
 		expect(INF_AMMO.barrett).toEqual({ mag: 10, reserve: 20, scavenger: 10 });
 		expect(INF_AMMO.striker).toEqual({ mag: 12, reserve: 24, scavenger: 12 });
@@ -215,6 +214,7 @@ describe('round flow (fake clock)', () => {
 		g.shoot(1, { x: 0, y: 0, z: 0 }, false); // spend a round during grace
 		expect(g.game.primaryOf(1)!.mag).toBe(9);
 		g.game.selectWeapon(1, 'pistol', g.clock.now);
+		g.advance(WEAPONS.pistol.deployMs!); // the draw
 		g.shoot(1, { x: 0, y: 0, z: 0 }, false);
 		expect(g.game.secondaryOf(1)!.mag).toBe(11);
 		g.advance(600);
@@ -226,11 +226,13 @@ describe('round flow (fake clock)', () => {
 		expect(g.game.view(g.clock.now)).toMatchObject({ survivors: 2, infected: 1, alphaId: 1, loadout: 'barrett', secondary: 'pistol', moab: null });
 	});
 
-	it('rotates the preset over four rounds', () => {
+	it('rotates the preset over five rounds', () => {
 		const g = newGame([1, 2], { roundSecs: 1 });
 		g.advance(16_000);
 		const loadouts = g.of('phase').filter((p) => p.phase === 'grace').map((p) => p.loadout);
-		expect(loadouts.slice(0, 5)).toEqual(['barrett', 'striker', 'lmg', 'smg', 'barrett']);
+		expect(loadouts.slice(0, 6)).toEqual(['barrett', 'striker', 'lmg', 'smg', 'sniper', 'barrett']);
+		const sniper = g.of('spawn').filter((e) => e.reason === 'round' && e.weapon === 'sniper');
+		expect(sniper[0]).toMatchObject({ mag: 5, reserve: 15 });
 		const s = g.of('spawn').filter((e) => e.reason === 'round' && e.weapon === 'striker');
 		expect(s[0]).toMatchObject({ mag: 12, reserve: 24 });
 		const smg = g.of('spawn').filter((e) => e.reason === 'round' && e.weapon === 'smg');
@@ -352,7 +354,7 @@ describe('Patient Zero', () => {
 		expect(gun).toMatchObject({ ok: false, reason: 'wrong weapon' });
 	});
 
-	it('a specialist survivor (6 HP) is infected by one swipe too', () => {
+	it('a specialist survivor is infected by one swipe too', () => {
 		const g = playing([1, 2, 3], LMG);
 		g.put(3, 1000, 1000);
 		g.put(2, -600, 600);
@@ -362,7 +364,7 @@ describe('Patient Zero', () => {
 			g.advance(200);
 			g.shoot(2, { x: -600, y: 300, z: 0 }, true);
 		}
-		expect(g.game.playerView(2)).toMatchObject({ hp: INF_SPECIALIST_HP, team: 'survivor' });
+		expect(g.game.playerView(2)).toMatchObject({ hp: INF_SURVIVOR_HP, streak: INF_PERK_KILLS.specialist, team: 'survivor' });
 		while (!g.game.playerView(1)!.alive) g.advance(INF_STEP_MS);
 		g.claw(1, 2);
 		expect(g.of('infect')).toEqual([{ e: 'infect', id: 2, by: 1, method: 'claws', timeAdded: INF_INFECTION_BONUS_SECS }]);
@@ -472,7 +474,10 @@ describe('infected and survivors', () => {
 			g.advance(100);
 		}
 		expect(g.game.reload(3, g.clock.now)).toBe(true);
-		expect(g.game.selectWeapon(3, 'knife', g.clock.now)).toEqual([{ e: 'ammo', id: 3, weapon: 'knife', mag: 0, reserve: 0 }]);
+		expect(g.game.selectWeapon(3, 'knife', g.clock.now)).toEqual([
+			{ e: 'ammo', id: 3, weapon: 'knife', mag: 0, reserve: 0 },
+			{ e: 'reload', id: 3, weapon: 'lmg', ms: 0 }
+		]);
 		expect(g.game.selectWeapon(3, 'lmg', g.clock.now)).toEqual([{ e: 'ammo', id: 3, weapon: 'lmg', mag: 97, reserve: 100 }]);
 		expect(g.game.weaponOf(3)!.reloading(g.clock.now)).toBe(false);
 		expect(g.game.selectWeapon(3, 'sniper', g.clock.now)).toEqual([]);
@@ -556,7 +561,8 @@ describe('throwing knife', () => {
 		g.put(3, 1000, 1000);
 		g.game.throwKnife(1, g.eye(1), unit(1, 0, 0), g.clock.now);
 		const inf = g.advanceUntil('infect', 500);
-		expect(inf).toEqual({ e: 'infect', id: 2, by: 1, method: 'knife', timeAdded: INF_INFECTION_BONUS_SECS });
+		// Thrown along +x: the event carries the way the knife travelled.
+		expect(inf).toEqual({ e: 'infect', id: 2, by: 1, method: 'knife', timeAdded: INF_INFECTION_BONUS_SECS, dx: 1, dy: 0 });
 		expect(g.of('knifeRemove')).toHaveLength(1);
 		expect(g.of('knifeBounce')).toHaveLength(0);
 		expect(g.game.playerView(1)!.score).toBe(INF_SCORE_INFECT + INF_SCORE_KNIFE_BONUS);
@@ -600,7 +606,8 @@ describe('throwing knife', () => {
 		const t = 0.06;
 		g.put(2, b.x + b.vx * t, b.y + b.vy * t, b.z + b.vz * t - 30);
 		const inf = g.advanceUntil('infect', 300);
-		expect(inf).toEqual({ e: 'infect', id: 2, by: 1, method: 'bank', timeAdded: INF_INFECTION_BONUS_SECS });
+		// Thrown along +x, it comes back off the wall: the direction is the one after the bounce.
+		expect(inf).toEqual({ e: 'infect', id: 2, by: 1, method: 'bank', timeAdded: INF_INFECTION_BONUS_SECS, dx: -1, dy: 0 });
 		expect(g.game.playerView(1)!.score).toBe(INF_SCORE_INFECT + INF_SCORE_KNIFE_BONUS + INF_SCORE_BANK_BONUS);
 	});
 
@@ -735,7 +742,7 @@ describe('throwing knife edge cases', () => {
 		expect(b).toHaveLength(1);
 		expect(b[0]!.z).toBeLessThan(4);
 		expect(b[0]!.x).toBeLessThan(-300);
-		expect(inf).toEqual({ e: 'infect', id: 2, by: 1, method: 'bank', timeAdded: INF_INFECTION_BONUS_SECS });
+		expect(inf).toEqual({ e: 'infect', id: 2, by: 1, method: 'bank', timeAdded: INF_INFECTION_BONUS_SECS, dx: 1, dy: 0 });
 		expect(g.game.playerView(1)!.score).toBe(INF_SCORE_INFECT + INF_SCORE_KNIFE_BONUS + INF_SCORE_BANK_BONUS);
 	});
 
@@ -751,7 +758,7 @@ describe('throwing knife edge cases', () => {
 		g.put(2, k.x + 36, 4, k.z - 30);
 		g.put(3, k.x + 28, -4, k.z - 30);
 		g.advance(INF_STEP_MS);
-		expect(g.of('infect')).toEqual([{ e: 'infect', id: 3, by: 1, method: 'knife', timeAdded: INF_INFECTION_BONUS_SECS }]);
+		expect(g.of('infect')).toEqual([{ e: 'infect', id: 3, by: 1, method: 'knife', timeAdded: INF_INFECTION_BONUS_SECS, dx: 1, dy: 0 }]);
 		expect(g.game.playerView(2)!.team).toBe('survivor');
 	});
 
@@ -998,8 +1005,10 @@ describe('anti-exploit and robustness', () => {
 		expect(g.of('infect')).toHaveLength(1);
 		// Survivor knife on a survivor.
 		g.game.selectWeapon(3, 'knife', g.clock.now);
+		g.advance(WEAPONS.knife.deployMs!); // the draw
 		g.put(4, 640, 0);
 		const knife = g.shoot(3, { x: 640, y: 0, z: 0 }, false);
+		expect(knife.ok).toBe(true);
 		expect(knife.events.filter((e) => e.e === 'hit')).toEqual([]);
 	});
 
@@ -1141,10 +1150,10 @@ describe('anti-exploit and robustness', () => {
 });
 
 describe('multi-round cycle', () => {
-	it('rounds 1 → 5 rotate barrett → striker → lmg → smg → barrett and reset knives, UAV, stats, HP, perks and the Alpha', () => {
+	it('rounds 1 → 6 rotate barrett → striker → lmg → smg → sniper → barrett and reset knives, UAV, stats, HP, perks and the Alpha', () => {
 		const g = newGame([1, 2, 3], { roundSecs: 3 });
 		const loadouts: string[] = [];
-		for (let round = 1; round <= 5; round++) {
+		for (let round = 1; round <= 6; round++) {
 			while (g.game.phase !== 'playing') g.advance(INF_STEP_MS);
 			expect(g.game.phase).toBe('playing');
 			expect(g.game.round).toBe(round);
@@ -1187,7 +1196,7 @@ describe('multi-round cycle', () => {
 			expect(g.game.alphaId).toBeNull();
 			expect(g.game.infections).toBe(0);
 		}
-		expect(loadouts).toEqual(['barrett', 'striker', 'lmg', 'smg', 'barrett']);
+		expect(loadouts).toEqual(['barrett', 'striker', 'lmg', 'smg', 'sniper', 'barrett']);
 	});
 
 	it('a cancelled grace period does not use up a round or its preset', () => {
@@ -1332,6 +1341,7 @@ describe('respawn beacon', () => {
 		const b = g.game.placeBeacon(1, g.clock.now).events.find((e): e is Ev<'beaconPlace'> => e.e === 'beaconPlace')!;
 		g.put(1, 600, -600);
 		g.game.selectWeapon(2, 'knife', g.clock.now);
+		g.advance(WEAPONS.knife.deployMs!); // the draw
 		g.put(2, -650, 600);
 		const r = atBeacon(g, 2, b);
 		expect(r.ok).toBe(true);
@@ -1664,6 +1674,7 @@ describe('survivor primaries and the three-slot loadout', () => {
 		}
 		expect(g.game.selectWeapon(2, 'pistol', g.clock.now)).toEqual([{ e: 'ammo', id: 2, weapon: 'pistol', mag: 12, reserve: 36 }]);
 		expect(g.game.moveSpeed(2)).toBe(WEAPONS.pistol.moveSpeed);
+		g.advance(WEAPONS.pistol.deployMs!); // the draw
 		for (let i = 0; i < 2; i++) {
 			expect(fireDir(g, 2, unit(0, -1, 0)).ok).toBe(true);
 			g.advance(200);
@@ -1672,7 +1683,10 @@ describe('survivor primaries and the three-slot loadout', () => {
 		expect(g.game.primaryOf(2)).toMatchObject({ weapon: 'lmg', mag: 97, reserve: 100 });
 		// A pistol reload cut short by a swap gives nothing.
 		expect(g.game.reload(2, g.clock.now)).toBe(true);
-		expect(g.game.selectWeapon(2, 'knife', g.clock.now)).toEqual([{ e: 'ammo', id: 2, weapon: 'knife', mag: 0, reserve: 0 }]);
+		expect(g.game.selectWeapon(2, 'knife', g.clock.now)).toEqual([
+			{ e: 'ammo', id: 2, weapon: 'knife', mag: 0, reserve: 0 },
+			{ e: 'reload', id: 2, weapon: 'pistol', ms: 0 }
+		]);
 		g.advance(WEAPONS.pistol.reloadMs * 2);
 		expect(g.game.selectWeapon(2, 'pistol', g.clock.now)).toEqual([{ e: 'ammo', id: 2, weapon: 'pistol', mag: 10, reserve: 36 }]);
 		expect(g.game.weaponOf(2)!.reloading(g.clock.now)).toBe(false);
@@ -1691,8 +1705,9 @@ describe('survivor primaries and the three-slot loadout', () => {
 	it('becoming Patient Zero or infected with the pistol out or a reload running ends on claws', () => {
 		const g = newGame([1, 2, 3], LMG);
 		g.advance(500);
+		for (const id of [1, 2]) g.game.selectWeapon(id, 'pistol', g.clock.now);
+		g.advance(WEAPONS.pistol.deployMs!); // the draw
 		for (const id of [1, 2]) {
-			g.game.selectWeapon(id, 'pistol', g.clock.now);
 			g.shoot(id, { x: 0, y: 0, z: 0 }, false);
 			expect(g.game.reload(id, g.clock.now)).toBe(true);
 		}
@@ -1800,7 +1815,7 @@ describe('kill streak perks and the M.O.A.B.', () => {
 		expect(g.game.secondaryOf(3)!.reserve).toBe(WEAPONS.pistol.reserve);
 	});
 
-	it('5 kills: steady aim (+12 % speed); 7 kills: specialist bonus (cadence, knockback, 6 HP, +250); infection resets it all', () => {
+	it('5 kills: steady aim (+12 % speed); 7 kills: specialist bonus (cadence, knockback, +250, no extra HP); infection resets it all', () => {
 		const g = streakGame();
 		for (let i = 0; i < 4; i++) killOne(g);
 		expect(g.game.moveSpeed(3)).toBe(WEAPONS.lmg.moveSpeed);
@@ -1810,7 +1825,7 @@ describe('kill streak perks and the M.O.A.B.', () => {
 		const before = g.game.playerView(3)!.score;
 		const seventh = killOne(g);
 		expect(perkEvents(seventh)).toEqual([{ e: 'perk', id: 3, perk: 'specialist', streak: 7 }]);
-		expect(g.game.playerView(3)).toMatchObject({ streak: 7, hp: INF_SPECIALIST_HP, kills: 7, perks: ['hardline', 'sleight', 'scavenger', 'steady', 'specialist'] });
+		expect(g.game.playerView(3)).toMatchObject({ streak: 7, hp: INF_SURVIVOR_HP, kills: 7, perks: ['hardline', 'sleight', 'scavenger', 'steady', 'specialist'] });
 		expect(g.game.playerView(3)!.score - before).toBe(INF_SCORE_KILL + INF_SCORE_SPECIALIST);
 		// Stronger knockback on a body hit that does not kill.
 		const v = [1, 2].find((id) => g.game.playerView(id)!.alive) ?? (g.advanceUntil('spawn', 4000), [1, 2].find((id) => g.game.playerView(id)!.alive)!);

@@ -1,6 +1,6 @@
 # Characters and cosmetic slots
 
-Every humanoid in the game (remote players, turned players, infected, AI zombies, the race ghost) is the same procedural character: original geometry built in code, no model files. Code: `apps/web/src/lib/render/character/`. The models are visual only. Hulls, eye heights and hitboxes are unchanged, and the poses are tested against them (`character.test.ts`): 72 units standing, 54 ducked, zombie and infected heads on the shared head hitbox.
+Every humanoid in the game (remote players, turned players, infected, AI zombies, the race ghost) is the same procedural character: original geometry built in code, no model files. Code: `apps/web/src/lib/render/character/`. The models are visual only. Hulls, eye heights and the hitboxes of AI zombies are unchanged, and the poses are tested against them (`character.test.ts`): 72 units standing, 54 ducked, zombie and infected heads on the shared head hitbox. In Infected the hit tests follow these characters instead ([modes.md](modes.md#infected)): a change of the skeleton, the default body, the rest poses or the motion must keep `infected-hitbox.test.ts` and `infected-motion.test.ts` green. Cosmetics never change a hitbox.
 
 | File | Covers |
 | --- | --- |
@@ -15,8 +15,10 @@ Every humanoid in the game (remote players, turned players, infected, AI zombies
 | `geometry.ts` | Merges the parts of a look into one shared, reference-counted geometry per LOD |
 | `material.ts` | One Lambert-based material per character: palette, baked shade, rim light |
 | `effects.ts` | Auras and flames of the `effect` slot |
-| `animator.ts` | Procedural animation |
-| `held.ts` | Third-person weapons (grip space) |
+| `animator.ts` | Procedural animation; the gait, lean, hips, air and arm swing formulas are shared with the server's hit tests (`packages/shared/src/body-pose.ts`) |
+| `held.ts` | Third-person weapons on the hand sockets: grip table (from the shared `PLAYER_HOLDS`), muzzle, throwing knife, muzzle flash shapes (from `render/muzzle-flash.ts`) |
+| `held-models.ts` | Their low-poly meshes (grip space), in the layout and colours of the script-built first-person guns; each gun also in parts |
+| `reload.ts` | Third-person reloads per gun and the sniper's bolt cycle: hand and part timelines |
 | `model.ts` | `CharacterModel`, `applyLoadout`, roles, persons, LOD |
 | `crowd.ts`, `motion.ts` | On-screen test and distances per frame; velocity from positions |
 | `samples.ts`, `gallery.ts` | Dev and test only, never in production builds |
@@ -116,16 +118,30 @@ Without a role, each player id has a stable person: tee and trouser tint (the ol
 
 ## Animation
 
-Computed every frame from velocity, view angles, ground and duck flags; nothing extra is networked.
+Computed every frame from velocity, view angles, ground and duck flags. Shots, swings and reloads start from mode events; nothing else is networked.
 
 - **Legs:** two-bone IK. The gait phase advances with the distance travelled, so planted feet move exactly against the body (tested at 250 u/s in five directions). The hips turn towards the direction of travel; backwards running mirrors it. Standing feet stay put until the player has turned about 45°, then step around.
 - **Crouch, air, landing:** blended; the leading leg alternates per jump, landings dip with the fall speed.
 - **Surf:** airborne players and the ghost touching a 45°+ ramp (a short hull trace in `game.ts`, `rampUnder`) take a sideways stance on the ramp plane, arms out.
-- **Aim and held items:** head, spine and arms follow the pitch. Weapons come from the mode state (Zombie Run and Infected weapons, the hide and seek seeker's knife); both hands are placed by IK. Shots and swings from `shot`/`swing` events give recoil, slashes and claw swipes (`players.act`).
+- **Aim and held items:** head, spine and arms follow the pitch. Weapons come from the mode state (Zombie Run and Infected weapons, the hide and seek seeker's knife); both hands are placed by IK. Shots and swings from `shot`/`swing` events give recoil, slashes and claw swipes (`players.act`; in Infected `players.fired`, which adds the muzzle flash).
+- **Reloads** (`players.reload(id, weapon, now, ms)`, from the Infected `reload` event): a clip per gun in `reload.ts`, run over the reload's real time. Hands follow keys on the gun or at the left hip, with the gun tipped; legs, torso and head are not touched. The magazine leaves the gun at the moment the left hand has it and goes back the same way, so nothing jumps.
+
+  | Gun | What happens (share of the reload) |
+  | --- | --- |
+  | Pistol | Old magazine drops (0.14), one from the belt (0.33), seated (0.58), slide racked over the top (0.83) |
+  | SMG | Tube forward and down off the gun (0.11), to the hip (0.41), a new one (0.46) slid back home (0.76) |
+  | LMG | Feed cover up (0.18), box and belt off (0.32), new box (0.51) on (0.69), cover down (0.86) |
+  | Sniper rifle | Right hand opens the bolt (0.17), magazine out (0.3), new one (0.485) in (0.67), bolt closed (0.92) |
+  | .50 cal rifle | Magazine out (0.18), new one (0.43) in (0.65), right hand pulls the charging handle (0.87) |
+  | Auto shotgun | Drum off below (0.18), new one (0.44) on (0.66) and pushed home (0.77) |
+
+  Progress comes from the clock (`RemotePlayers.update`), so throttled, off-screen and hidden characters are at the right moment. A swap, a shot, death, infection, a round reset and `stopReload` end it early: it blends out over 150 ms from where it was, the magazine home from half of that. It shows only while that gun is in the hands. The bolt cycle after a sniper shot (0.9 s, all modes) uses the same clips; the gun then rests on the left hand and is offset from the right one.
 
 ## Cost
 
-One draw call per character (plus the name tag, one for a held item, and two for an effect). About 7,200 / 2,700 / 1,100 triangles at LOD 0 / 1 / 2, up to 16,700 / 5,400 / 2,300 in the heaviest items (switch at about 700 and 1,950 units, closer in a crowd: `crowdScale`). Far characters animate on every 2nd to 4th frame and off-screen ones not at all. Bones are not scene objects. Geometry is shared per look and freed with its last user.
+One draw call per character (plus the name tag, one for a held item, one for a throwing knife or a muzzle flash, and two for an effect; a gun being reloaded is drawn in parts, one to three calls more). The parts of a gun are built at its first reload and shared. About 7,200 / 2,700 / 1,100 triangles at LOD 0 / 1 / 2, up to 16,700 / 5,400 / 2,300 in the heaviest items (switch at about 700 and 1,950 units, closer in a crowd: `crowdScale`). Far characters animate on every 2nd to 4th frame and off-screen ones not at all. Bones are not scene objects. Geometry is shared per look and freed with its last user.
+
+Measured for Infected on an 8-core Linux machine in a headless browser with software rendering, master without the weapon animations against this code: script time per frame with 31 bots idle 2.9 and 3.3 ms, all firing 5.4–6.0 and 13 ms (at about 8 frames a second, so roughly 6 % of a core more), all reloading 2.8–3.1 and 4.1 ms. The first-person gun takes 0.1–0.2 µs a frame on master and 4.5–7 µs at rest, 6–32 µs firing and 6–12 µs reloading here; a remote shot 0.005–0.024 ms; the first kill of a session 0.4–1.0 ms. On the server one shot into 31 moving infected in one line takes 0.3–0.7 ms. No real GPU was measured.
 
 ## Dev gallery
 

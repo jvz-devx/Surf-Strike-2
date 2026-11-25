@@ -22,8 +22,10 @@ import {
 	HNS_SPEED_LIMIT,
 	HUNT_RANGE,
 	HuntTracker,
+	INTERP_DELAY_MS,
 	overSpeedCap,
 	POINTS_SCALE,
+	SNAPSHOT_HZ,
 	Status,
 	TimeMeter,
 	type HnsGameOptions,
@@ -35,8 +37,8 @@ import { EMPTY_RECORDS } from './types.ts';
 
 /** Mode state is re-sent at least this often (ms). */
 export const HNS_STATE_MS = 1000;
-/** Client-side interpolation delay of remote players (apps/web net/interp.ts INTERP_DELAY_MS) plus half a snapshot interval. */
-export const HNS_VIEW_DELAY_MS = 100 + 16;
+/** Client-side interpolation delay of remote players (INTERP_DELAY_MS) plus half a snapshot interval, in whole ms: 100 + 16. */
+export const HNS_VIEW_DELAY_MS = INTERP_DELAY_MS + Math.round(1000 / SNAPSHOT_HZ / 2);
 /** A seeker's swings are void this long after a state packet over the speed cap. */
 export const HNS_SPEED_PENALTY_MS = 1000;
 

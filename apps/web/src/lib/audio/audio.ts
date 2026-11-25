@@ -7,26 +7,35 @@
  * Graph: each event → its gain → dry bus → master, and → reverb send →
  * ConvolverNode (measured hall IR) → master. Wind (low-passed by speed) and
  * the ramp slide are seamless loops. Master → safety limiter → destination.
+ *
+ * Combat sounds (infected, zombies) play on a fixed set of voices, each a
+ * gain → stereo panner feeding the same dry bus and reverb send. Their pools
+ * (SFX_DEFERRED) are fetched after the core set.
  */
+import { COMBAT_VOICES, INFECTED_CHIMES, INFECTED_SOUNDS, ZOMBIES_SOUNDS, combatDb, voiceKey, type CombatSound } from '#lib/audio/combat.js';
 import {
 	Cycle,
+	DEFAULT_VOLUME,
 	LAND_MIN_SPEED,
+	LIMITER_THRESHOLD_DB,
 	REVERB_SEND_DB,
 	STEP_DISTANCE,
 	STEP_MIN_SPEED,
+	VoicePool,
 	crashBuild,
 	dbToGain,
 	distanceDb,
 	eventDb,
 	landDb,
 	loopRegion,
+	panFor,
 	slideGain,
 	stepAdvance,
 	stepDb,
 	variationDb,
 	windParams
 } from '#lib/audio/mix.js';
-import { SFX_EVENTS, SFX_IR, SFX_LOOPS } from '#lib/audio/sfx.js';
+import { SFX_DEFERRED, SFX_EVENTS, SFX_IR, SFX_LOOPS } from '#lib/audio/sfx.js';
 
 const SFX_BASE = '/sfx/';
 
@@ -41,6 +50,12 @@ export interface MovementAudioState {
 
 type EventGroup = keyof typeof SFX_EVENTS;
 type LoopName = keyof typeof SFX_LOOPS;
+type Vec = { x: number; y: number; z: number };
+
+const DEFERRED: ReadonlySet<EventGroup> = new Set(SFX_DEFERRED);
+/** Fade (s) of a combat voice that a newer sound takes over. */
+const VOICE_CUT_SECONDS = 0.003;
+
 /** Loops that only play while something needs them. */
 type BuildLoop = 'roll' | 'timpani';
 
@@ -61,9 +76,17 @@ export class GameAudio {
 	private crashLoops: { src: Record<BuildLoop, AudioBufferSourceNode>; gain: Record<BuildLoop, GainNode>; filter: BiquadFilterNode } | null = null;
 	private buffers = new Map<EventGroup, (AudioBuffer | null)[]>();
 	private cycles = new Map<EventGroup, Cycle>();
-	private volume = 0.5;
+	/** Longest take of each loaded pool (s). */
+	private seconds = new Map<EventGroup, number>();
+	private volume = DEFAULT_VOLUME;
 	private stepDist = 0;
 	private loading = false;
+	private loadingDeferred = false;
+	/** Combat voices: slot i is voiceGain[i] → voicePan[i]; voiceSrc[i] is what it plays now. */
+	private readonly voices = new VoicePool(COMBAT_VOICES);
+	private voiceGain: GainNode[] = [];
+	private voicePan: (StereoPannerNode | null)[] = [];
+	private voiceSrc: (AudioBufferSourceNode | null)[] = [];
 
 	setVolume(v: number): void {
 		this.volume = Math.max(0, Math.min(1, v));
@@ -96,7 +119,7 @@ export class GameAudio {
 
 	private build(ctx: AudioContext): void {
 		const limiter = ctx.createDynamicsCompressor();
-		limiter.threshold.value = -3;
+		limiter.threshold.value = LIMITER_THRESHOLD_DB;
 		limiter.knee.value = 0;
 		limiter.ratio.value = 20;
 		limiter.attack.value = 0.002;
@@ -130,6 +153,21 @@ export class GameAudio {
 		this.slideGainNode.gain.value = 0;
 		this.slideGainNode.connect(this.dry);
 		this.slideGainNode.connect(this.send);
+
+		this.voiceGain = [];
+		this.voicePan = [];
+		this.voiceSrc = [];
+		for (let i = 0; i < COMBAT_VOICES; i++) {
+			const g = ctx.createGain();
+			// Older browsers have no StereoPannerNode: those voices stay centred.
+			const pan = typeof ctx.createStereoPanner === 'function' ? ctx.createStereoPanner() : null;
+			const out = pan ? g.connect(pan) : g;
+			out.connect(this.dry);
+			out.connect(this.send);
+			this.voiceGain.push(g);
+			this.voicePan.push(pan);
+			this.voiceSrc.push(null);
+		}
 	}
 
 	private async decode(ctx: AudioContext, file: string): Promise<AudioBuffer | null> {
@@ -152,14 +190,31 @@ export class GameAudio {
 			if (name === 'roll' || name === 'timpani') this.buildBuffers.set(name, b);
 			else this.startLoop(ctx, b, name);
 		});
-		const events = (Object.keys(SFX_EVENTS) as EventGroup[]).map(async (g) => {
-			const files = SFX_EVENTS[g];
-			const bufs = await Promise.all(files.map((f) => this.decode(ctx, f)));
-			if (this.ctx !== ctx) return;
-			this.buffers.set(g, bufs);
-			this.cycles.set(g, new Cycle(bufs.length));
-		});
+		const events = (Object.keys(SFX_EVENTS) as EventGroup[]).filter((g) => !DEFERRED.has(g)).map((g) => this.loadPool(ctx, g));
 		await Promise.all([ir, ...loops, ...events]);
+		await this.loadDeferred(ctx);
+	}
+
+	private async loadPool(ctx: AudioContext, g: EventGroup): Promise<void> {
+		const bufs = await Promise.all(SFX_EVENTS[g].map((f) => this.decode(ctx, f)));
+		if (this.ctx !== ctx) return;
+		this.buffers.set(g, bufs);
+		this.cycles.set(g, new Cycle(bufs.length));
+		this.seconds.set(g, bufs.reduce((m, b) => Math.max(m, b?.duration ?? 0), 0));
+	}
+
+	/**
+	 * The combat pools, one pool at a time in manifest order (gunshots first).
+	 * Starts when the core set has loaded, or at the first combat sound if that
+	 * comes earlier, so a race map's first sounds never wait behind them.
+	 */
+	private async loadDeferred(ctx: AudioContext): Promise<void> {
+		if (this.loadingDeferred || this.ctx !== ctx) return;
+		this.loadingDeferred = true;
+		for (const g of SFX_DEFERRED) {
+			if (this.ctx !== ctx) return;
+			await this.loadPool(ctx, g);
+		}
 	}
 
 	private startLoop(ctx: AudioContext, buffer: AudioBuffer, name: Exclude<LoopName, BuildLoop>): void {
@@ -202,6 +257,62 @@ export class GameAudio {
 		g.connect(this.dry!);
 		g.connect(this.send!);
 		src.start();
+	}
+
+	/**
+	 * Plays the next take of a combat sound on a pooled voice. Without `at` it
+	 * is your own sound: full level, centred. With `at` (and the listener's eye
+	 * and view yaw) it falls off with distance and is panned by direction.
+	 */
+	private combat(s: CombatSound, at?: Vec, listener?: Vec, yaw?: number): void {
+		if (!this.live) return;
+		const ctx = this.ctx!;
+		if (!this.loadingDeferred) void this.loadDeferred(ctx).catch(() => {});
+		const positional = at !== undefined && listener !== undefined;
+		const db = combatDb(s, positional ? Math.hypot(at.x - listener.x, at.y - listener.y, at.z - listener.z) : undefined);
+		if (db === null) return;
+		const bufs = this.buffers.get(s.pool);
+		const cycle = this.cycles.get(s.pool);
+		if (!bufs || !cycle) {
+			if (s.fallback === 'zone') this.zoneBeep();
+			return;
+		}
+		const now = ctx.currentTime;
+		// The pool's longest take bounds the voice; the source frees it when it ends.
+		const slot = this.voices.acquire(voiceKey(s, positional), s.prio, now, this.seconds.get(s.pool) ?? 0, s.voices, s.gap);
+		if (slot < 0) return;
+		const buffer = bufs[cycle.next()];
+		if (!buffer) return;
+		const gain = this.voiceGain[slot]!.gain;
+		const old = this.voiceSrc[slot];
+		let start = now;
+		if (old) {
+			// The voice is taken over: fade its sound out over a few ms (no click), then start the new one.
+			start = now + VOICE_CUT_SECONDS;
+			gain.cancelScheduledValues(now);
+			gain.setValueAtTime(gain.value, now);
+			gain.linearRampToValueAtTime(0, start);
+			old.onended = null;
+			try {
+				old.stop(start);
+			} catch {
+				// already stopped
+			}
+		}
+		const src = ctx.createBufferSource();
+		src.buffer = buffer;
+		gain.setValueAtTime(dbToGain(db + (s.vary ? variationDb() : 0)), start);
+		this.voicePan[slot]?.pan.setValueAtTime(positional && s.range !== null ? panFor(listener, at, yaw ?? 0) : 0, start);
+		src.connect(this.voiceGain[slot]!);
+		src.onended = () => {
+			src.disconnect();
+			if (this.voiceSrc[slot] === src) {
+				this.voiceSrc[slot] = null;
+				this.voices.release(slot);
+			}
+		};
+		this.voiceSrc[slot] = src;
+		src.start(start);
 	}
 
 	/** Per-frame continuous sounds and footsteps. */
@@ -248,26 +359,33 @@ export class GameAudio {
 	}
 
 	/**
-	 * Zombies sounds (docs/modes.md#zombies). Only real recordings may ship
-	 * (CREDITS.md); none are sourced for gunshots, knife, reload, zombies or
-	 * hurt yet, so those stay silent. The checkpoint reuses the zone bell.
-	 * `at`/`listener`/`yaw` are for positional playback once recordings exist.
+	 * Zombies sounds (docs/modes.md#zombies), real CC0 recordings (CREDITS.md):
+	 * gunshots, knife, reload, hit and hurt share the infected recordings
+	 * (ZOMBIES_SOUNDS). The checkpoint reuses the zone bell; the zombie groan
+	 * has no recording yet and stays silent. `at` is where another player's or
+	 * a zombie's sound happens, `listener` the camera (the eye, or the spectator camera), `yaw` the view yaw.
 	 */
-	zombies(name: string, _at?: { x: number; y: number; z: number }, _listener?: { x: number; y: number; z: number }, _yaw?: number): void {
-		if (name === 'checkpoint') this.zoneBeep();
+	zombies(name: string, at?: Vec, listener?: Vec, yaw?: number): void {
+		if (name === 'checkpoint') return this.zoneBeep();
+		const s = ZOMBIES_SOUNDS[name];
+		if (s) this.combat(s, at, listener, yaw);
 	}
 
 	/**
-	 * Infected sounds (docs/modes.md#infected). Same rule as zombies: no
-	 * synthesized audio, and no real recordings are sourced yet for guns,
-	 * knife, claws, throws, hits or hurt, so those stay silent. Round start,
-	 * Patient Zero, UAV pulses and the M.O.A.B. call and detonation reuse the
-	 * zone bell; perk unlocks and an earned M.O.A.B. reuse the record chime.
-	 * `at`/`listener`/`yaw` are for positional playback once recordings exist.
+	 * Infected sounds (docs/modes.md#infected), all real CC0 recordings
+	 * (CREDITS.md): every name of the client's InfSound plays (INFECTED_SOUNDS).
+	 * Round start, Patient Zero and UAV pulses keep the zone bell; perk unlocks
+	 * and an earned M.O.A.B. keep the record chime. Without `at` the sound is
+	 * your own (full level); with `at` (Source-space position), `listener` (the
+	 * camera: the eye, or the spectator camera) and `yaw` (view yaw, degrees) it falls off with distance and is
+	 * panned by direction.
 	 */
-	infected(name: string, _at?: { x: number; y: number; z: number }, _listener?: { x: number; y: number; z: number }, _yaw?: number): void {
-		if (name === 'round' || name === 'alpha' || name === 'uav' || name === 'moab' || name === 'moabDetonate') this.zoneBeep();
-		else if (name === 'perk' || name === 'moabReady') this.recordChime();
+	infected(name: string, at?: Vec, listener?: Vec, yaw?: number): void {
+		const chime = INFECTED_CHIMES[name];
+		if (chime === 'zone') return this.zoneBeep();
+		if (chime === 'record') return this.recordChime();
+		const s = INFECTED_SOUNDS[name];
+		if (s) this.combat(s, at, listener, yaw);
 	}
 
 	/**
@@ -378,9 +496,15 @@ export class GameAudio {
 		this.buildBuffers.clear();
 		this.buffers.clear();
 		this.cycles.clear();
+		this.seconds.clear();
+		this.voices.clear();
+		this.voiceGain = [];
+		this.voicePan = [];
+		this.voiceSrc = [];
 		void this.ctx?.close().catch(() => {});
 		this.ctx = null;
 		this.master = null;
 		this.loading = false;
+		this.loadingDeferred = false;
 	}
 }

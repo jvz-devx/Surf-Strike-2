@@ -2,24 +2,48 @@
  * Procedural character animation (docs/characters.md). Writes the flat
  * skeleton every frame from a motion state: leg IK with a distance-driven gait
  * (planted feet move exactly with the ground), crouch, air, landing, surf
- * stance, aim pitch and held items. No allocations per frame.
+ * stance, aim pitch, held items, reloads and the bolt cycle (reload.ts). No
+ * allocations per frame.
  */
+import {
+	armAngles,
+	armSwing,
+	BODY_AIR_DRIFT,
+	bodyAngles,
+	bodyGait,
+	clawAngles,
+	cycleDistance,
+	footPose,
+	GRIP_RELAX_DROP,
+	gripBobY,
+	gripBobZ,
+	gripRelax,
+	legPose,
+	newBodyAngles,
+	newLegPose,
+	PLAYER_ELBOWS,
+	PLAYER_FIST,
+	PLAYER_GRIPS,
+	resetBody,
+	shoulderRoll,
+	shoulderYaw,
+	stepBody,
+	type ArmAngles,
+	type BodyBlend,
+	type BodyExtras,
+	type BodyInput,
+	type BodyPosture,
+	type FootPose,
+	type GaitShape
+} from '@surf/shared';
 import * as THREE from 'three';
 import { HELD, type HeldItem } from './held.js';
-import { ANKLE_Y, ARM_TILT, armDir, BALL, BIND, FOREARM, HIP_Y, sideSign, THIGH, UPPER_ARM, type BoneName, type CharacterSkeleton, type Side } from './skeleton.js';
+import { BOLT_SECS, BOLTS, HandFrames, RELOADS, type Clip, type MagPlace } from './reload.js';
+import { ANKLE_Y, ARM_TILT, armDir, BIND, FOREARM, sideSign, THIGH, UPPER_ARM, type BoneName, type CharacterSkeleton, type Side } from './skeleton.js';
 
-export type Posture = 'normal' | 'infected' | 'zombie';
+export type Posture = BodyPosture;
 
-export interface MotionState {
-	/** Velocity in Source axes (u/s). */
-	vx: number;
-	vy: number;
-	vz: number;
-	/** Source view angles in degrees (pitch + = down). */
-	yaw: number;
-	pitch: number;
-	onGround: boolean;
-	ducked: boolean;
+export interface MotionState extends BodyInput {
 	/** Unit normal of the ramp being surfed (Source axes), or null. */
 	ramp: { x: number; y: number; z: number } | null;
 }
@@ -29,7 +53,6 @@ export function emptyMotion(): MotionState {
 }
 
 const DEG = Math.PI / 180;
-const TAU = Math.PI * 2;
 const V = THREE.Vector3;
 const Q = THREE.Quaternion;
 
@@ -39,41 +62,9 @@ const smooth = (a: number, b: number, x: number) => {
 	const t = clamp((x - a) / (b - a), 0, 1);
 	return t * t * (3 - 2 * t);
 };
-const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
-// Gait --------------------------------------------------------------------
-
-export interface GaitShape {
-	/** Share of the cycle a foot is planted. */
-	duty: number;
-	/** Distance a planted foot covers relative to the body. */
-	stride: number;
-	/** Swing height. */
-	lift: number;
-}
-
-/** Gait for a ground speed (u/s); `duck` 0..1 shortens the steps. */
-export function gaitShape(speed: number, duck: number, out: GaitShape = { duty: 0, stride: 0, lift: 0 }): GaitShape {
-	const r = clamp(speed / 250, 0, 1);
-	out.duty = lerp(lerp(0.62, 0.32, smooth(0.15, 1, r)), 0.55, duck * 0.8);
-	out.stride = lerp(lerp(13, 30, smooth(0, 1, r)), lerp(12, 24, r), duck);
-	out.lift = lerp(lerp(2.5, 8.5, r), 4.5, duck);
-	return out;
-}
-
-/** Distance the body travels in one full cycle: planted feet then cancel the body's motion exactly. */
-export function cycleDistance(g: GaitShape): number {
-	return g.stride / g.duty;
-}
-
-/** Offset of a foot along the direction of travel at `phase` (0..1). */
-export function footOffset(g: GaitShape, phase: number): number {
-	if (phase < g.duty) return g.stride * (0.5 - phase / g.duty);
-	const w = (phase - g.duty) / (1 - g.duty);
-	// Cubic swing that leaves and meets the ground at part of the ground speed (no skid on contact).
-	const m = (-0.5 * (1 - g.duty)) / g.duty;
-	return g.stride * (w * w * (3 - 2 * w) - 0.5 + m * (w * (w - 1) * (w - 1) + w * w * (w - 1)));
-}
+// The gait, the lean and the foot and arm swings are shared with the server's hit tests.
+export { cycleDistance, footOffset, gaitShape, type GaitShape } from '@surf/shared';
 
 // Scratch -------------------------------------------------------------------
 
@@ -137,6 +128,15 @@ const HAND_INV: Record<Side, THREE.Quaternion> = {
 	R: handBasis(new Q(), new V(...armDir('R')), FWD).invert()
 };
 
+/** Turn of the hand sockets from their bone (skeleton.ts). */
+const HAND_BIND: Record<Side, THREE.Quaternion> = { L: HAND_INV.L.clone().invert(), R: HAND_INV.R.clone().invert() };
+
+// Reload scratch
+const frames = new HandFrames();
+const tip = new Float64Array(6);
+const fistP = new V();
+const fistQ = new Q();
+
 const SIDES: readonly Side[] = ['L', 'R'];
 const N = Object.fromEntries(
 	SIDES.map((s) => [
@@ -160,15 +160,38 @@ const N = Object.fromEntries(
 	])
 ) as unknown as Record<Side, Record<'clav' | 'upperH' | 'upper' | 'foreH' | 'fore' | 'hand' | 'fingers' | 'tips' | 'thighH' | 'thigh' | 'shinH' | 'shin' | 'foot' | 'toe', BoneName>>;
 
-interface FootTarget {
-	ankle: THREE.Vector3;
-	yaw: number;
-	pitch: number;
-	/** 0: the toe stays flat on the ground, 1: it follows the foot. */
-	toe: number;
+/** A clip comes in and is cut short over this long (s). */
+export const CLIP_IN_SECS = 0.1;
+export const CLIP_OUT_SECS = 0.15;
+/** Distance a hand on its way to the belt keeps from the middle of the torso, and the side it passes on. */
+const BODY_CLEAR = 10.5;
+const OFF_BODY = new V(0.6, 0, -0.8);
+/** Ducked it keeps this much higher. */
+const OVER_THIGH = 5;
+/** Acceleration of a dropped magazine (u/s²). */
+const FALL = 800;
+
+/** Where the parts of the held gun are (model space), while a clip runs. */
+export interface PartsPose {
+	/** A clip is showing: the gun is drawn in parts. */
+	on: boolean;
+	mag: MagPlace;
+	magP: THREE.Vector3;
+	magQ: THREE.Quaternion;
+	/** A dropped magazine is falling. */
+	falling: boolean;
+	fallP: THREE.Vector3;
+	fallQ: THREE.Quaternion;
+	/** Moving part, from its place on the gun. */
+	actP: THREE.Vector3;
+	actQ: THREE.Quaternion;
+	/** The gun off the right hand (a hand on the bolt): its place in the `handR` socket. */
+	off: boolean;
+	offP: THREE.Vector3;
+	offQ: THREE.Quaternion;
 }
 
-export class CharacterAnimator {
+export class CharacterAnimator implements BodyBlend {
 	posture: Posture = 'normal';
 	held: HeldItem | null = null;
 	/** AI zombie winding up an attack: leans in, arms high. */
@@ -178,46 +201,60 @@ export class CharacterAnimator {
 	/** Model-space height of the crown after the last update. */
 	headTop = 72;
 
-	// Blends
-	private duck = 0;
-	private ground = 1;
-	private move = 0;
+	// Blends (shared body-pose.ts steps them)
+	duck = 0;
+	ground = 1;
+	move = 0;
 	private surf = 0;
 	private hold = 0;
 	private shownHeld: HeldItem | null = null;
-	private speed = 0;
+	speed = 0;
 	private phase = 0;
-	/** Direction of travel in the facing frame (f, r), smoothed. */
-	private dirF = 1;
-	private dirR = 0;
-	/** Lower body yaw relative to the facing (left +). */
-	private hip = 0;
-	private turning = false;
-	private turnLift = 0;
-	private back = false;
-	private lastYaw = NaN;
+	dirF = 1;
+	dirR = 0;
+	hip = 0;
+	turning = false;
+	turnLift = 0;
+	back = false;
+	lastYaw = NaN;
 	private time = Math.random() * 20;
-	private airTime = 0;
-	private lead: 1 | -1 = 1;
-	private lastVz = 0;
-	private land = 0;
-	private landV = 0;
-	private vzS = 0;
-	private accF = 0;
-	private accR = 0;
-	private lastF = 0;
-	private lastR = 0;
-	private aim = 0;
+	airTime = 0;
+	lead: 1 | -1 = 1;
+	lastVz = 0;
+	land = 0;
+	landV = 0;
+	vzS = 0;
+	accF = 0;
+	accR = 0;
+	lastF = 0;
+	lastR = 0;
+	aim = 0;
 	private rampN = new V(0, 1, 0);
 	private rampDrop = 0;
 	private lunge = 0;
 	private action = 0;
 	private actionKind: 'fire' | 'swing' = 'fire';
+
+	// Reload and bolt cycle
+	private reloadItem: HeldItem | null = null;
+	private reloadP = 1;
+	private reloadMs = 0;
+	private boltItem: HeldItem | null = null;
+	private boltT = BOLT_SECS;
+	/** The clip in the arms, where it is and how much of it shows (0..1). */
+	private clip: Clip | null = null;
+	private clipP = 0;
+	private clipW = 0;
+	readonly parts: PartsPose = { on: false, mag: 'gun', magP: new V(), magQ: new Q(), falling: false, fallP: new V(), fallQ: new Q(), actP: new V(), actQ: new Q(), off: false, offP: new V(), offQ: new Q() };
 	private readonly gait: GaitShape = { duty: 0.5, stride: 10, lift: 2 };
-	private readonly feet: Record<Side, FootTarget> = {
-		L: { ankle: new V(), yaw: 0, pitch: 0, toe: 0 },
-		R: { ankle: new V(), yaw: 0, pitch: 0, toe: 0 }
+	private readonly feet: Record<Side, FootPose> = {
+		L: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, toe: 0 },
+		R: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, toe: 0 }
 	};
+	private readonly angles = newBodyAngles();
+	private readonly leg = newLegPose();
+	private readonly extras: BodyExtras = { time: 0, surf: 0, rampDrop: 0, lunge: 0 };
+	private readonly arm: ArmAngles = { fwd: 0, out: 0, bend: 0, inward: 0, curl: 0 };
 	private readonly rampQ = new Q();
 	private readonly fkUpper = new Q();
 	private readonly fkFore = new Q();
@@ -226,16 +263,57 @@ export class CharacterAnimator {
 
 	/** Snap every blend (spawn, teleport). */
 	reset(): void {
-		this.lastYaw = NaN;
-		this.hip = 0;
-		this.land = this.landV = 0;
-		this.accF = this.accR = 0;
+		resetBody(this);
+		this.clip = null;
+		this.clipW = 0;
+		this.boltT = BOLT_SECS;
 	}
 
-	/** Recoil or knife / claw swing. */
+	/** Recoil or knife / claw swing; a bolt-action rifle then works its bolt. */
 	act(kind: 'fire' | 'swing'): void {
 		this.action = 1;
 		this.actionKind = kind;
+		if (kind !== 'fire' || !this.held || !BOLTS[this.held]) return;
+		this.boltItem = this.held;
+		this.boltT = 0;
+	}
+
+	/**
+	 * Where the reload of `item` is (0..1, of `ms`); null: none, a running one
+	 * blends out. Set from the clock before every update, so a character that
+	 * was not animated for a while is where it should be.
+	 */
+	reload(item: HeldItem | null, p = 1, ms = 0): void {
+		this.reloadItem = item && RELOADS[item] ? item : null;
+		this.reloadP = p;
+		this.reloadMs = ms;
+	}
+
+	/** The clip that should show now: its weapon is in the hands and stays there. */
+	private wanted(): Clip | null {
+		const item = this.shownHeld;
+		if (!item || item !== this.held) return null;
+		if (this.reloadItem === item && this.reloadP < 1) return RELOADS[item]!;
+		return this.boltItem === item && this.boltT < BOLT_SECS ? BOLTS[item]! : null;
+	}
+
+	/** Advance the running clip; one that ended early, or starts over, blends out first. */
+	private stepClip(dt: number): void {
+		this.boltT += dt;
+		const want = this.wanted();
+		const p = want === null ? 1 : want === RELOADS[want.item] ? this.reloadP : this.boltT / BOLT_SECS;
+		// The gun it belongs to is gone (the swap is at the bottom of its dip).
+		if (this.clip && this.clip.item !== this.shownHeld) this.clip = null;
+		if (this.clip && (this.clip !== want || p < this.clipP - 1e-3)) {
+			this.clipW -= dt / CLIP_OUT_SECS;
+			if (this.clipW > 0) return;
+			this.clip = null;
+		}
+		if (!want) return;
+		if (!this.clip) this.clipW = 0;
+		this.clip = want;
+		this.clipP = p;
+		this.clipW = Math.min(1, this.clipW + dt / CLIP_IN_SECS);
 	}
 
 	update(dtSec: number, s: MotionState): void {
@@ -248,65 +326,13 @@ export class CharacterAnimator {
 		const yaw = s.yaw * DEG;
 		const cy = Math.cos(yaw);
 		const sy = Math.sin(yaw);
-		const f = cy * s.vx + sy * s.vy;
-		const r = sy * s.vx - cy * s.vy;
-		const speed = Math.hypot(f, r);
+		const speed = Math.hypot(cy * s.vx + sy * s.vy, sy * s.vx - cy * s.vy);
 		const first = Number.isNaN(this.lastYaw);
-		const dYaw = first ? 0 : wrap(yaw - this.lastYaw);
-		this.lastYaw = yaw;
 		const ramp = !s.onGround ? s.ramp : null;
-
-		if (s.onGround) {
-			if (this.airTime > 0.06) {
-				// Landing: dip with the fall speed.
-				this.landV -= clamp(-this.lastVz / 420, 0, 1.3) * 60;
-			}
-			this.airTime = 0;
-		} else {
-			if (this.airTime === 0) this.lead = this.lead > 0 ? -1 : 1;
-			this.airTime += dt;
-			this.lastVz = s.vz;
-		}
-		if (first) {
-			this.duck = s.ducked ? 1 : 0;
-			this.ground = s.onGround ? 1 : 0;
-			this.speed = speed;
-			this.aim = s.pitch * DEG;
-			this.airTime = 0;
-			this.lastF = f;
-			this.lastR = r;
-			this.surf = ramp ? 1 : 0;
-		}
-		this.duck += ((s.ducked ? 1 : 0) - this.duck) * k(13);
-		// Short hops over steps keep the ground pose.
-		this.ground += ((s.onGround || this.airTime < 0.05 ? 1 : 0) - this.ground) * k(s.onGround ? 18 : 11);
+		if (first) this.surf = ramp ? 1 : 0;
+		// A reversal mirrors the stride.
+		if (stepBody(this, dt, s, ramp ? -0.75 * Math.sign(this.rampN.z || 1) : 0)) this.phase = (this.gait.duty - this.phase + 1) % 1;
 		this.surf += ((ramp ? 1 : 0) - this.surf) * k(ramp ? 9 : 5);
-		this.speed += (speed - this.speed) * k(14);
-		this.move += (smooth(12, 70, speed) - this.move) * k(12);
-		this.vzS += (s.vz - this.vzS) * k(10);
-		this.aim += (clamp(s.pitch, -80, 80) * DEG - this.aim) * k(22);
-		if (dt > 0) {
-			this.accF += (clamp((f - this.lastF) / dt, -2500, 2500) - this.accF) * k(6);
-			this.accR += (clamp((r - this.lastR) / dt, -2500, 2500) - this.accR) * k(6);
-		}
-		this.lastF = f;
-		this.lastR = r;
-		if (speed > 8) {
-			// Turn towards the new direction of travel (at once from a standstill).
-			const now = Math.atan2(r, f);
-			let was = Math.atan2(this.dirR, this.dirF);
-			if (this.move >= 0.1 && Math.abs(wrap(now - was)) > 1.75) {
-				// Reversal: mirror the stride in time instead of swinging the feet around.
-				was += Math.PI;
-				this.phase = (this.gait.duty - this.phase + 1) % 1;
-			}
-			const a = this.move < 0.1 ? now : was + wrap(now - was) * k(16);
-			this.dirF = Math.cos(a);
-			this.dirR = Math.sin(a);
-		}
-		// Landing spring.
-		this.landV += (-this.land * 260 - this.landV * 22) * dt;
-		this.land = clamp(this.land + this.landV * dt, -7, 1.5);
 		// Held item changes dip through the unarmed pose.
 		if (this.held !== this.shownHeld) {
 			this.hold += (0 - this.hold) * k(26);
@@ -314,54 +340,19 @@ export class CharacterAnimator {
 		} else this.hold += ((this.held ? 1 : 0) - this.hold) * k(14);
 		this.lunge += ((this.lunging ? 1 : 0) - this.lunge) * k(16);
 		this.action = Math.max(0, this.action - dt / (this.actionKind === 'swing' ? 0.34 : 0.14));
+		// The whole time passed, also for a character that was off screen.
+		this.stepClip(dtSec);
 
-		const duck = this.duck;
 		const g = this.ground;
-		const air = 1 - g;
 		const surf = this.surf;
-		const move = this.move * g;
-		const run = clamp(this.speed / 250, 0, 1);
-
-		// ---- Hips -----------------------------------------------------------------
-		let hipTarget: number;
-		if (this.move > 0.15 && g > 0.3) {
-			const c = this.dirF;
-			this.back = this.back ? c < 0.1 : c < -0.25;
-			const a = Math.atan2(this.back ? -this.dirR : this.dirR, this.back ? -this.dirF : this.dirF);
-			hipTarget = -clamp(a, -1.25, 1.25);
-			this.hip += (hipTarget - this.hip) * k(11);
-			this.turning = false;
-			this.turnLift += (0 - this.turnLift) * k(10);
-		} else if (g > 0.5) {
-			// Standing: the feet stay where they are until the turn is too far, then step around.
-			this.hip = clamp(this.hip - dYaw, -1.1, 1.1);
-			if (Math.abs(this.hip) > 0.75) this.turning = true;
-			if (this.turning) {
-				this.hip += (0 - this.hip) * k(9);
-				if (Math.abs(this.hip) < 0.06) this.turning = false;
-			}
-			this.turnLift += ((this.turning ? Math.min(1, Math.abs(this.hip) * 1.6) : 0) - this.turnLift) * k(14);
-		} else {
-			this.hip += ((ramp ? -0.75 * Math.sign(this.rampN.z || 1) : 0) - this.hip) * k(8);
-			this.turnLift = 0;
-		}
 		const hip = this.hip;
-		const ch = Math.cos(hip);
-		const sh = Math.sin(hip);
-		// Travel direction in the hip frame.
-		const hx = this.dirF * ch - this.dirR * sh;
-		const hz = this.dirF * sh + this.dirR * ch;
 
 		// ---- Gait phase ------------------------------------------------------------
-		const gait = gaitShape(this.speed, duck, this.gait);
-		if (this.posture !== 'normal') gait.stride *= 0.82; // shorter shamble, hips stay up: the head keeps to its hitbox
+		const gait = bodyGait(this.speed, this.duck, this.posture, this.gait);
 		const dist = cycleDistance(gait);
 		if (g > 0.2) this.phase = (this.phase + (speed * dt) / dist) % 1;
 		const phL = this.phase;
 		const phR = (this.phase + 0.5) % 1;
-		// Lowest in mid-stance.
-		const step = Math.cos((phL - gait.duty / 2) * TAU * 2);
-		const swing = Math.cos(phL * TAU); // +1: left foot forward
 
 		// ---- Ramp --------------------------------------------------------------------
 		if (ramp) {
@@ -375,40 +366,15 @@ export class CharacterAnimator {
 
 		// ---- Pelvis ---------------------------------------------------------------------
 		const posture = this.posture;
-		const hunch = posture === 'normal' ? 0 : 0.25;
-		const crouch = duck * (1 - surf * 0.5);
-		const breath = Math.sin(t * 1.7);
-		const idle = (1 - move) * g;
-		let py = HIP_Y + 1 - 0.4 * g;
-		py -= move * (1.4 + 2.6 * run) * (1 - crouch * 0.7) * (posture === 'normal' ? 1 : 0.3);
-		py -= move * run * Math.abs(hz) * 2.4 * (1 - crouch);
-		py -= move * step * 1.25 * run * (1 - crouch * 0.6);
-		py -= crouch * lerp(16, 14.8, move) * lerp(1, 0.94, air);
-		py += idle * breath * 0.18;
-		py += this.land * g * (1 - crouch * 0.6);
-		py -= air * (1 - surf) * (1.5 - clamp(this.vzS / 300, -1, 1) * 1.2);
-		py += surf * (this.rampDrop * 0.55 - 7);
-		const leanAmt = move * (0.05 + 0.13 * run) * (1 - crouch * 0.4) * (posture === 'normal' ? 1 : 0.35);
-		const accLean = 0.00012 * g;
-		let leanF = this.dirF * leanAmt + clamp(this.accF * accLean, -0.14, 0.16) + hunch * 0.4;
-		let leanR = this.dirR * leanAmt * 0.8 + clamp(this.accR * accLean, -0.14, 0.14);
-		leanF *= 1 - surf;
-		leanR *= 1 - surf;
-		// In the air the body trails the sideways acceleration a little (strafing).
-		const strafe = clamp(this.accR / 2600, -1, 1) * air * (1 - surf);
-		const airPitch = air * (1 - surf) * clamp(this.vzS / 900, -0.12, 0.14);
-
+		const x = this.extras;
+		x.time = t;
+		x.surf = surf;
+		x.rampDrop = this.rampDrop;
+		x.lunge = this.lunge;
+		const a = bodyAngles(this, phL, gait.duty, posture, this.hold, this.shownHeld ? PLAYER_GRIPS[HELD[this.shownHeld].hold].chestYaw : 0, x, this.angles);
 		const pelvis = this.sk.bones.pelvis;
-		const sway = move * run * Math.sin((phL - gait.duty / 2) * TAU) * 0.7 + idle * Math.sin(t * 0.55) * 0.35;
-		const px = -crouch * 2.2 * (1 - move * 0.5) - hunch * 4;
-		pelvis.position.set(px * ch + sway * sh, py, -px * sh + sway * ch);
-		const twist = swing * 0.13 * move * run;
-		ypr(
-			pelvis.quaternion,
-			hip - twist * Math.sign(hx || 1),
-			leanF * 0.55 + crouch * lerp(0.28, 0.34, move) + airPitch + surf * 0.16 + hunch * 0.25,
-			leanR * 0.6 + move * run * Math.sin((phL - gait.duty / 2) * TAU) * 0.05 + strafe * 0.12
-		);
+		pelvis.position.set(a.px, a.py, a.pz);
+		ypr(pelvis.quaternion, a.pelvisYaw, a.pelvisPitch, a.pelvisRoll);
 		if (surf > 0.01) {
 			// Balance: the body leans into the ramp, part of the way to its normal.
 			v1.set(n.x * 0.5, 1, n.z * 0.5).normalize();
@@ -420,15 +386,8 @@ export class CharacterAnimator {
 		}
 
 		// ---- Spine, chest, neck, head ------------------------------------------------------
-		const aim = this.aim;
-		const armed = this.hold;
-		const aimTorso = aim * lerp(0.22, 0.42, armed) * (1 - surf * 0.4);
-		const cp = leanF + crouch * lerp(0.5, 0.56, move) + aimTorso * 0.85 + airPitch * 0.5 + hunch * 0.95 + surf * 0.3 + this.lunge * 0.25 + idle * breath * 0.012;
-		const zsway = posture === 'zombie' ? Math.sin(t * 6) * 0.06 : 0;
-		const cr = leanR + strafe * 0.22 + zsway;
-		const cyaw = twist * 1.1 * Math.sign(hx || 1) - armed * (this.shownHeld && HELD[this.shownHeld].hold === 'long' ? 0.16 : 0) + hip * surf * 0.4;
 		const chest = this.sk.bones.chest;
-		ypr(chest.quaternion, cyaw, cp, cr);
+		ypr(chest.quaternion, a.chestYaw, a.chestPitch, a.chestRoll);
 		if (surf > 0.01) {
 			q1.identity().slerp(this.rampQ, surf * 0.5);
 			chest.quaternion.premultiply(q1);
@@ -438,9 +397,7 @@ export class CharacterAnimator {
 		this.child('chest', 'spine');
 		// The head looks where the player aims, kept level over a leaning torso.
 		const head = this.sk.bones.head;
-		const headPitch = clamp(aim * 0.95, -1.1, 1.05) * (posture === 'normal' ? 1 : 0.6) + (posture === 'zombie' ? 0.1 : 0);
-		const tilt = posture === 'zombie' ? 0.16 + Math.sin(t * 2.1) * 0.05 : 0;
-		ypr(head.quaternion, 0, headPitch + cp * 0.12, cr * 0.4 + tilt);
+		ypr(head.quaternion, 0, a.headPitch, a.headRoll);
 		const neck = this.sk.bones.neck;
 		this.child('neck', 'chest');
 		neck.quaternion.slerpQuaternions(chest.quaternion, head.quaternion, 0.5);
@@ -448,12 +405,12 @@ export class CharacterAnimator {
 		this.headTop = head.position.y + 11;
 
 		// ---- Legs ---------------------------------------------------------------------------
-		for (const side of SIDES) this.placeFoot(side, side === 'L' ? phL : phR, hx, hz, gait, move, crouch, air, surf, run);
+		for (const side of SIDES) this.placeFoot(side, side === 'L' ? phL : phR, surf);
 		for (const side of SIDES) this.solveLeg(side);
 
 		// ---- Arms ---------------------------------------------------------------------------
-		for (const side of SIDES) this.poseArm(side, swing, move, run, idle, crouch, air, surf, strafe);
-		if (this.hold > 0.01 && this.shownHeld) this.holdItem(this.shownHeld, this.hold, move, run);
+		for (const side of SIDES) this.poseArm(side, surf);
+		if (this.hold > 0.01 && this.shownHeld) this.holdItem(this.shownHeld, this.hold, a.move, a.run);
 		for (const side of SIDES) this.finishArm(side);
 	}
 
@@ -462,69 +419,24 @@ export class CharacterAnimator {
 		return this.shownHeld;
 	}
 
+	/** The held gun is drawn in parts this frame. */
+	get partsOn(): boolean {
+		return this.parts.on && this.clip !== null;
+	}
+
 	/** Position a child bone rigidly on its parent. */
 	private child(c: BoneName, p: BoneName): void {
 		const b = this.sk.bones;
 		b[c].position.copy(bindV[c]).sub(bindV[p]).applyQuaternion(b[p].quaternion).add(b[p].position);
 	}
 
-	private placeFoot(side: Side, ph: number, hx: number, hz: number, gait: GaitShape, move: number, crouch: number, air: number, surf: number, run: number): void {
+	private placeFoot(side: Side, ph: number, surf: number): void {
 		const z = sideSign(side);
 		const ft = this.feet[side];
 		const hip = this.hip;
 
-		// Ground: ball-of-foot target in the hip frame.
-		const along = footOffset(gait, ph);
-		const planted = ph < gait.duty;
-		const w = planted ? 0 : (ph - gait.duty) / (1 - gait.duty);
-		const u = planted ? ph / gait.duty : 1;
-		let lift = planted ? 0 : Math.sin(Math.PI * Math.pow(w, 0.8)) * gait.lift;
-		// Heel-off, kick, toes up before contact.
-		const off = 0.75 * lerp(0.45, 1, run);
-		let fp = planted ? -off * smooth(0.45, 1, u) + 0.2 * run * (1 - smooth(0, 0.16, u)) : lerp(-off * 1.2 * (1 - smooth(0.25, 0.75, w)), 0.2 * run, smooth(0.6, 1, w));
-		fp *= lerp(1, 0.55, crouch);
-		const fwd = hx >= 0 ? 1 : 0.45;
-		fp *= lerp(0.4, 1, Math.abs(hx)) * fwd;
-		const track = lerp(1, 0.62, run * Math.abs(hx)); // feet land closer to the midline when running
-		const stanceX = side === 'L' ? lerp(1.2, 5.5, crouch) : lerp(-1.0, -5.5, crouch);
 		const turn = this.turnLift * (Math.sin(this.time * 14 + (z > 0 ? Math.PI : 0)) > 0 ? 1 : 0);
-		const bx = stanceX * (1 - move) + along * hx * move + BALL[0] - 0.6;
-		const bz = z * (4.3 + (1 - move) * lerp(0.9, 1.5, crouch)) * lerp(1, track, move) + along * hz * move;
-		lift = lift * move + turn * 2.6;
-		// Crouched and still: the back foot rests on its ball.
-		const crouchHeel = side === 'R' ? -0.75 : -0.12;
-		let pitch = fp * move + crouchHeel * crouch * (1 - move);
-		let toe = planted ? 0 : smooth(0, 0.3, w) * (1 - smooth(0.7, 1, w));
-		const toeOut = z * -0.13 * lerp(1, 0.35, move);
-		this.ankleFromBall(ft.ankle, bx, lift, bz, pitch, toeOut);
-		let yaw = toeOut;
-
-		// Air: relative to the pelvis.
-		if (air > 0.01) {
-			const lead = z === this.lead ? 1 : 0;
-			const up = clamp(this.vzS / 260, -1, 1) * 0.5 + 0.5; // 1 rising, 0 falling
-			const hipY = this.sk.bones.pelvis.position.y - 1;
-			const tuck = Math.max(crouch, 0);
-			const ax1 = lerp(lead ? 3.2 : -2.2, lead ? 5.5 : -7, up);
-			const drop = lerp(lead ? 27.5 : 29, lead ? 22.5 : 26, up) - tuck * 9;
-			const ap = lerp(lead ? -0.3 : -0.5, lead ? -0.2 : -0.95, up);
-			v1.set(ax1 + Math.sin(this.time * 5 + z) * 0.6, Math.max(ANKLE_Y - 0.5, hipY - drop), z * 4.6);
-			ft.ankle.lerp(v1, air);
-			pitch = lerp(pitch, ap, air);
-			toe = lerp(toe, 1, air);
-			yaw = lerp(yaw, 0, air);
-		}
-
-		// Out of the hip frame.
-		const x = ft.ankle.x;
-		const zz = ft.ankle.z;
-		const c = Math.cos(hip);
-		const s = Math.sin(hip);
-		ft.ankle.x = x * c + zz * s;
-		ft.ankle.z = -x * s + zz * c;
-		ft.yaw = yaw + hip;
-		ft.pitch = pitch;
-		ft.toe = toe;
+		footPose(this, this.angles, this.gait, z, ph, z === this.lead, turn, Math.sin(this.time * 5 + z) * BODY_AIR_DRIFT, ft);
 
 		// Surf: feet apart along the board line, on the ramp plane.
 		if (surf > 0.01) {
@@ -533,20 +445,13 @@ export class CharacterAnimator {
 			const sx = front * 9.5;
 			const sz = -n.z * 7 + z * 1.2;
 			const y = clamp(this.rampDrop - (n.x * sx + n.z * sz) / Math.max(0.35, n.y), -15, 14);
-			v1.set(sx, y + ANKLE_Y * n.y + 0.4, sz);
-			ft.ankle.lerp(v1, surf);
+			ft.x = lerp(ft.x, sx, surf);
+			ft.y = lerp(ft.y, y + ANKLE_Y * n.y + 0.4, surf);
+			ft.z = lerp(ft.z, sz, surf);
 			ft.yaw = lerp(ft.yaw, hip * 1.15, surf);
 			ft.pitch = lerp(ft.pitch, 0, surf);
 			ft.toe = lerp(ft.toe, 1, surf);
 		}
-	}
-
-	/** Ankle of a foot whose ball is at (x, y, z) with a given pitch and yaw. */
-	private ankleFromBall(out: THREE.Vector3, x: number, y: number, z: number, pitch: number, yaw: number): void {
-		ypr(q1, yaw, -pitch, 0);
-		v2.set(BALL[0], BALL[1], BALL[2]).applyQuaternion(q1);
-		const ballY = ANKLE_Y + BALL[1];
-		out.set(x - v2.x, y + ballY - v2.y, z - v2.z);
 	}
 
 	private solveLeg(side: Side): void {
@@ -556,30 +461,13 @@ export class CharacterAnimator {
 		const z = sideSign(side);
 		this.child(nm.thigh, 'pelvis');
 		const hipP = b[nm.thigh].position;
-		const A = ft.ankle;
-		// Knee direction: where the foot points, slightly outwards, tipped with the pelvis.
-		v1.set(Math.cos(ft.yaw), 0.15, -Math.sin(ft.yaw));
-		const splay = z * lerp(0.1, 0.28, this.duck);
-		v1.x += Math.sin(ft.yaw) * splay;
-		v1.z += Math.cos(ft.yaw) * splay;
-		v2.copy(A).sub(hipP);
-		let len = v2.length();
-		const max = (THIGH + SHIN_LEN) * 0.996;
-		if (len > max) {
-			v2.multiplyScalar(max / len);
-			len = max;
-			A.copy(hipP).add(v2);
-		}
-		len = Math.max(len, 7);
-		v2.normalize();
-		v1.addScaledVector(v2, -v1.dot(v2)).normalize();
-		const cosA = clamp((THIGH * THIGH + len * len - SHIN_LEN * SHIN_LEN) / (2 * THIGH * len), -1, 1);
-		const sinA = Math.sqrt(1 - cosA * cosA);
-		// Thigh direction.
-		v3.copy(v2).multiplyScalar(cosA).addScaledVector(v1, sinA);
-		const knee = b[nm.shin].position.copy(hipP).addScaledVector(v3, THIGH);
+		const leg = legPose(hipP.x, hipP.y, hipP.z, ft, z, this.duck, this.leg);
+		// Thigh direction, and the way the knee points.
+		v3.set(leg.tx, leg.ty, leg.tz);
+		v1.set(leg.nx, leg.ny, leg.nz);
+		const knee = b[nm.shin].position.set(leg.kneeX, leg.kneeY, leg.kneeZ);
 		b[nm.thigh].quaternion.copy(basis(q1, v3, v1)).multiply(THIGH_INV);
-		v4.copy(A).sub(knee).normalize();
+		v4.set(leg.ankleX, leg.ankleY, leg.ankleZ).sub(knee).normalize();
 		b[nm.shin].quaternion.copy(basis(q1, v4, v1)).multiply(SHIN_INV);
 		b[nm.thighH].position.copy(hipP);
 		b[nm.thighH].quaternion.slerpQuaternions(b.pelvis.quaternion, b[nm.thigh].quaternion, 0.5);
@@ -587,7 +475,7 @@ export class CharacterAnimator {
 		b[nm.shinH].quaternion.slerpQuaternions(b[nm.thigh].quaternion, b[nm.shin].quaternion, 0.5);
 		// Foot and toe.
 		const foot = b[nm.foot];
-		foot.position.copy(knee).addScaledVector(v4, SHIN_LEN);
+		foot.position.set(leg.ankleX, leg.ankleY, leg.ankleZ);
 		ypr(foot.quaternion, ft.yaw, -ft.pitch, 0);
 		const toe = b[nm.toe];
 		ypr(toe.quaternion, ft.yaw, -ft.pitch * ft.toe, 0);
@@ -601,28 +489,13 @@ export class CharacterAnimator {
 	}
 
 	/** Forward-kinematic arm relative to the chest. */
-	private poseArm(side: Side, swing: number, move: number, run: number, idle: number, crouch: number, air: number, surf: number, strafe: number): void {
+	private poseArm(side: Side, surf: number): void {
 		const b = this.sk.bones;
 		const nm = N[side];
 		const z = sideSign(side);
 		const chest = b.chest.quaternion;
-		// Opposite to the leg of the same side.
-		const sw = swing * z * Math.sign(this.dirF >= -0.2 ? 1 : -1);
-		const breath = Math.sin(this.time * 1.7 + 0.6);
-		let fwd = idle * (0.04 + breath * 0.015) + move * (sw * lerp(0.35, 0.78, run) + 0.02) + crouch * 0.3;
-		let out = 0.13 + move * 0.06 + breath * idle * 0.012;
-		let bend = idle * 0.3 + move * (lerp(0.45, 1.45, run) + sw * 0.28 * run) + crouch * 0.5 * (1 - move);
-		let inward = 0.15 + move * 0.4 * run + Math.max(0, sw) * 0.2 * run;
-		let curl = lerp(0.45, 1.1, move * run);
-		if (air > 0.01) {
-			const a = air * (1 - surf);
-			const up = clamp(this.vzS / 260, -1, 1) * 0.5 + 0.5;
-			fwd = lerp(fwd, (z === this.lead ? -0.3 : 0.42) * lerp(0.6, 1, up), a);
-			out = lerp(out, lerp(0.75, 0.4, up) + strafe * z * 0.35, a);
-			bend = lerp(bend, lerp(0.8, 1.2, up), a);
-			inward = lerp(inward, 0.25, a);
-			curl = lerp(curl, 0.35, a);
-		}
+		const arm = armAngles(this, this.angles, z, z === this.lead, Math.sin(this.time * 1.7 + 0.6), surf, this.arm);
+		let { fwd, out, bend, inward, curl } = arm;
 		if (surf > 0.01) {
 			// Balancing: arms out, the one over the drop higher.
 			const high = z * this.rampN.z > 0 ? 1 : 0;
@@ -634,17 +507,14 @@ export class CharacterAnimator {
 		}
 		if (this.posture === 'zombie') {
 			const a = Math.sin(this.time * 3.1 + z * 1.3) * 0.08;
-			fwd = 1.42 + this.lunge * 0.5 + a + sw * move * 0.16 + this.aim * 0.1;
+			fwd = 1.42 + this.lunge * 0.5 + a + armSwing(this, this.angles, z) * this.angles.move * 0.16 + this.aim * 0.1;
 			out = 0.02 + Math.sin(this.time * 2.3 + z) * 0.04;
 			bend = 0.28 + a;
 			inward = 0.1;
 			curl = 0.75;
 		} else if (this.posture === 'infected' && (this.claws || this.hold < 0.5)) {
-			fwd = lerp(0.62, fwd * 0.5 + 0.35, move * 0.5) + Math.sin(this.time * 2.4 + z) * 0.04;
-			out = 0.5 + crouch * 0.05;
-			bend = 1.15 - sw * move * 0.15;
-			inward = 0.5;
-			curl = 0.75;
+			arm.fwd = fwd;
+			({ fwd, out, bend, inward, curl } = clawAngles(this, this.angles, z, Math.sin(this.time * 2.4 + z) * 0.04, arm));
 		}
 		if (this.action > 0 && this.actionKind === 'swing' && this.hold < 0.5 && z > 0) {
 			// Claw slash with the right hand.
@@ -656,7 +526,7 @@ export class CharacterAnimator {
 		// Shoulder: lifts and reaches with the arm.
 		const clav = b[nm.clav];
 		this.child(nm.clav, 'chest');
-		ypr(q1, z * clamp(fwd, -0.6, 1.3) * 0.12, 0, z * -clamp(out - 0.3, 0, 1.2) * 0.22);
+		ypr(q1, shoulderYaw(z, fwd), 0, shoulderRoll(z, out));
 		clav.quaternion.copy(chest).multiply(q1);
 		this.child(nm.upper, nm.clav);
 		// chest · swing(Z) · abduct(X) · twist(Y) · hang
@@ -688,6 +558,8 @@ export class CharacterAnimator {
 	/** Blend the arms onto a held item. */
 	private holdItem(id: HeldItem, w: number, move: number, run: number): void {
 		const def = HELD[id];
+		// The grip is shared with the server's hit tests (zombies/hitbox.ts).
+		const g = PLAYER_GRIPS[def.hold];
 		const b = this.sk.bones;
 		const chest = b.chest;
 		const swinging = this.action > 0 && this.actionKind === 'swing';
@@ -695,18 +567,24 @@ export class CharacterAnimator {
 		// Aim frame: at the shoulder line, turned to the view pitch.
 		const pivot = v4.set(0, 7, 0).applyQuaternion(chest.quaternion).add(chest.position);
 		const bob = move * run;
-		const ph = this.phase * TAU * 2;
-		const relax = bob * (def.hold === 'one' ? 0.1 : 0.12);
-		ypr(q2, 0, this.aim * (def.hold === 'one' ? 0.75 : 0.95) + relax - kick * 0.12, 0);
+		const relax = gripRelax(g.relax, this.angles);
+		ypr(q2, 0, this.aim * g.follow + relax - kick * 0.12, 0);
 		const grip = gripP.set(def.at[0], def.at[1], def.at[2]);
-		grip.y += Math.sin(ph) * 0.45 * bob - relax * 6;
-		grip.z += Math.cos(ph / 2) * 0.5 * bob;
+		grip.y += gripBobY(this.phase) * bob - relax * GRIP_RELAX_DROP;
+		grip.z += gripBobZ(this.phase) * bob;
 		grip.x -= kick * 1.5;
-		const d = dirA.set(1, 0, 0);
+		const clip = this.clip;
+		const cw = clip ? smooth(0, 1, this.clipW) : 0;
+		if (clip) {
+			clip.gunAt(this.clipP, tip);
+			grip.x += tip[3]! * cw;
+			grip.y += tip[4]! * cw;
+			grip.z += tip[5]! * cw;
+		}
+		const d = dirA.set(g.right[0], g.right[1], g.right[2]);
 		const th = dirB.set(0, 1, 0);
 		if (def.hold === 'one') {
 			// Knife: guard in front of the body, slash across on a swing.
-			d.set(0.86, -0.12, -0.5);
 			th.set(0.5, 0.82, 0.3);
 			if (swinging) {
 				const u = 1 - this.action;
@@ -722,37 +600,130 @@ export class CharacterAnimator {
 		d.applyQuaternion(q2);
 		th.applyQuaternion(q2);
 		handBasis(gripQ, d, th); // grip space in model space
-		// Right wrist: 3 behind the fist along the fingers.
-		wrist.set(-3, 0, 0).applyQuaternion(gripQ).add(grip);
-		this.armIK('R', wrist, v3.set(-0.35, -1, 0.75), w);
+		if (clip) gripQ.multiply(ypr(q1, tip[2]! * cw, -tip[0]! * cw, tip[1]! * cw));
+		// Right wrist: behind the fist along the fingers.
+		wrist.set(-PLAYER_FIST, 0, 0).applyQuaternion(gripQ).add(grip);
+		this.armIK('R', wrist, v3.set(...PLAYER_ELBOWS.R), w);
 		q1.copy(gripQ).multiply(HAND_INV.R);
 		const hr = b[N.R.hand];
 		hr.quaternion.slerp(q1, w);
 		this.curlTo('R', 1.35, 1.5, w);
 
-		if (def.hold === 'one') return;
+		this.parts.on = false;
+		this.parts.off = false;
+		if (!g.left) return;
 		// Left hand from the actual right grip, so it never slides on the item.
 		grip.set(0, 0, 0);
 		wrist.set(def.fore[0], def.fore[1], def.fore[2]);
-		if (def.hold === 'pistol') {
-			d.set(0.82, 0.1, 0.56);
-			th.set(0.25, 0.95, -0.1);
-		} else {
-			d.set(0.62, 0.3, 0.72);
-			th.set(0.72, 0.25, -0.64);
-		}
+		d.set(g.left[0], g.left[1], g.left[2]);
+		if (def.hold === 'pistol') th.set(0.25, 0.95, -0.1);
+		else th.set(0.72, 0.25, -0.64);
 		// Socket position of the right hand.
-		v1.set(3, 0, 0).applyQuaternion(gripQ).add(hr.position);
+		v1.set(PLAYER_FIST, 0, 0).applyQuaternion(gripQ).add(hr.position);
 		wrist.applyQuaternion(gripQ).add(v1);
 		d.applyQuaternion(gripQ);
 		th.applyQuaternion(gripQ);
 		handBasis(q2, d, th);
-		v1.set(-3, 0, 0).applyQuaternion(q2);
+		const rest = def.hold === 'pistol' ? 1.3 : 1.1;
+		const bend = clip ? this.clipHands(clip, cw, wrist, q2, rest, w) : rest;
+		v1.set(-PLAYER_FIST, 0, 0).applyQuaternion(q2);
 		wrist.add(v1);
-		this.armIK('L', wrist, v3.set(-0.2, -1, -0.55), w);
+		this.armIK('L', wrist, v3.set(...PLAYER_ELBOWS.L), w);
 		q1.copy(q2).multiply(HAND_INV.L);
 		b[N.L.hand].quaternion.slerp(q1, w);
-		this.curlTo('L', def.hold === 'pistol' ? 1.3 : 1.1, 1.3, w);
+		this.curlTo('L', bend, 1.3, w);
+		if (clip) this.clipParts(clip, cw);
+	}
+
+	/**
+	 * Hands of a running clip: the left fist (in and out: its rest centre `p` and
+	 * turn `q`) and, for a bolt, the right arm, which leaves the gun where it is.
+	 * Returns the bend of the left fingers.
+	 */
+	private clipHands(clip: Clip, cw: number, p: THREE.Vector3, q: THREE.Quaternion, rest: number, w: number): number {
+		const b = this.sk.bones;
+		const hr = b[N.R.hand];
+		const f = frames;
+		f.gunQ.copy(hr.quaternion).multiply(HAND_BIND.R);
+		f.gunP.set(PLAYER_FIST, 0, 0).applyQuaternion(f.gunQ).add(hr.position);
+		f.beltP.copy(b.pelvis.position);
+		f.beltQ.copy(b.pelvis.quaternion);
+		if (clip.right) {
+			f.restP.copy(f.gunP);
+			f.restQ.copy(f.gunQ);
+			f.restCurl = 1.35;
+			const bend = clip.right.at(this.clipP, f, fistP, fistQ);
+			fistP.lerpVectors(f.gunP, fistP, cw);
+			fistQ.slerpQuaternions(f.gunQ, fistQ, cw);
+			v2.set(-PLAYER_FIST, 0, 0).applyQuaternion(fistQ).add(fistP);
+			this.armIK('R', v2, v3.set(...PLAYER_ELBOWS.R), w);
+			q1.copy(fistQ).multiply(HAND_INV.R);
+			hr.quaternion.slerp(q1, w);
+			this.curlTo('R', lerp(1.35, bend, cw), 1.5, w);
+			// The gun stays: its place in the socket of the hand that moved.
+			const o = this.parts;
+			o.off = true;
+			fistQ.copy(hr.quaternion).multiply(HAND_BIND.R);
+			fistP.set(PLAYER_FIST, 0, 0).applyQuaternion(fistQ).add(hr.position);
+			fistQ.invert();
+			o.offP.copy(f.gunP).sub(fistP).applyQuaternion(fistQ);
+			o.offQ.copy(fistQ).multiply(f.gunQ);
+		}
+		if (!clip.left) return rest;
+		f.restP.copy(p);
+		f.restQ.copy(q);
+		f.restCurl = rest;
+		const bend = clip.left.at(this.clipP, f, fistP, fistQ);
+		if (clip.left.free > 0) this.aroundBody(fistP, clip.left.free);
+		p.lerpVectors(f.restP, fistP, cw);
+		q.slerpQuaternions(f.restQ, fistQ, cw);
+		return lerp(rest, bend, cw);
+	}
+
+	/** Keep a travelling fist off the torso (gun pointed down), and ducked over and beside the raised left thigh. */
+	private aroundBody(p: THREE.Vector3, share: number): void {
+		const b = this.sk.bones;
+		p.y += OVER_THIGH * this.duck * share;
+		p.z -= OVER_THIGH * 0.6 * this.duck * share;
+		this.around(p, b.pelvis.position, b.neck.position, BODY_CLEAR, OFF_BODY, share);
+	}
+
+	/** Push `p` out to `clear` from the segment `lo` to `hi`; a path through its middle goes past on the side `by`. */
+	private around(p: THREE.Vector3, lo: THREE.Vector3, hi: THREE.Vector3, clear: number, by: THREE.Vector3, share: number): void {
+		v1.copy(hi).sub(lo);
+		const t = clamp(v2.copy(p).sub(lo).dot(v1) / v1.lengthSq(), 0, 1);
+		v2.copy(lo).addScaledVector(v1, t);
+		v1.copy(p).sub(v2);
+		const d = v1.length();
+		if (d >= clear) return;
+		v1.addScaledVector(by, clear - d).setLength(clear).add(v2);
+		p.lerp(v1, share);
+	}
+
+	/** Parts of the gun of a running clip; cut short, they are home from half of the blend on. */
+	private clipParts(clip: Clip, cw: number): void {
+		const o = this.parts;
+		const home = this.clip !== this.wanted() && this.clipW < 0.5;
+		const f = frames;
+		o.on = true;
+		clip.actAt(this.clipP, cw, o.actP, o.actQ);
+		o.mag = home ? 'gun' : clip.magAt(this.clipP);
+		if (o.mag === 'hand') {
+			const hl = this.sk.bones[N.L.hand];
+			fistQ.copy(hl.quaternion).multiply(HAND_BIND.L);
+			o.magP.copy(clip.inHandP);
+			o.magP.x += PLAYER_FIST;
+			o.magP.applyQuaternion(fistQ).add(hl.position);
+			o.magQ.copy(fistQ).multiply(clip.inHandQ);
+		} else {
+			o.magP.copy(f.gunP);
+			o.magQ.copy(f.gunQ);
+		}
+		const fall = home ? -1 : clip.fallen(this.clipP, this.reloadMs);
+		o.fallP.copy(f.gunP);
+		o.fallQ.copy(f.gunQ);
+		o.fallP.y -= (FALL / 2) * fall * fall;
+		o.falling = fall >= 0 && o.fallP.y > 4;
 	}
 
 	private curlTo(side: Side, a: number, tip: number, w: number): void {

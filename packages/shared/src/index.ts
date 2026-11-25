@@ -15,6 +15,8 @@ export * from './run-tracker.ts';
 export * from './ghost.ts';
 export * from './rotation-impl.ts';
 export * from './maps/index.ts';
+export * from './body-pose.ts';
+export * from './body-motion.ts';
 export * from './modes/index.ts';
 export * from './economy.ts';
 export * from './modes/hunt.ts';
