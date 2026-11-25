@@ -15,6 +15,7 @@ import {
 	buildCollisionWorld,
 	buildSight,
 	FLAG_DUCKED,
+	FLAG_TELEPORTED,
 	formatTenths,
 	HNS_PAY,
 	HNS_MAX_REWIND_MS,
@@ -132,7 +133,7 @@ export class HnsMode implements ServerMode {
 
 	state(p: ModePlayer, s: NetState): void {
 		const now = this.host.now();
-		this.game.setPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0 }, now);
+		this.game.setPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0 }, now, (s.flags & FLAG_TELEPORTED) !== 0);
 		if (overSpeedCap(s.vx, s.vy)) {
 			const prev = this.overCap.get(p.id) ?? -Infinity;
 			if (now - prev > 5000) this.host.log(`hns: #${p.id} ${p.name} over the ${HNS_SPEED_LIMIT} u/s limit (${Math.round(Math.hypot(s.vx, s.vy))})`);
