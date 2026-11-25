@@ -9,7 +9,7 @@ import type { BrushDef } from '../maps/types.ts';
 import type { Vec3 } from '../types.ts';
 import { TICK_INTERVAL, TICK_RATE } from '../units.ts';
 import { DUCK_HULL_MAX, HULL_MAX, IN_DUCK, IN_JUMP, type PlayerState, type SubtickMove, type UserCmd } from './api.ts';
-import { createPlayer, eyeHeight, playerMaxs, playerMove } from './gamemovement.ts';
+import { createPlayer, eyeHeight, playerMaxs, playerMove, playerRest } from './gamemovement.ts';
 
 const TICK = TICK_INTERVAL;
 const v3 = (x = 0, y = 0, z = 0): Vec3 => ({ x, y, z });
@@ -34,6 +34,21 @@ describe('gamemovement (CS2, 64 tick)', () => {
 	it('runs at 64 tick', () => {
 		expect(TICK_RATE).toBe(64);
 		expect(TICK).toBe(0.015625);
+	});
+
+	it('a tick without movement ends the jump and the landing of the tick before', () => {
+		const w = world(FLOOR);
+		const p = settled(w, v3(0, 0, 0.25));
+		playerMove(w, p, cmd({ buttons: IN_JUMP }), SURF_CVARS);
+		expect(p.jumped).toBe(true);
+		const { origin, velocity } = clone(p);
+		playerRest(p);
+		expect(p.jumped).toBe(false);
+		expect([p.origin, p.velocity]).toEqual([origin, velocity]);
+		while (!p.onGround) playerMove(w, p, cmd(), SURF_CVARS);
+		expect(p.landedSpeed).toBeGreaterThan(0);
+		playerRest(p);
+		expect(p.landedSpeed).toBe(0);
 	});
 
 	it('runs forward on flat ground and settles at 250 u/s (sv_accelerate 6.5, sv_friction 5.2)', () => {

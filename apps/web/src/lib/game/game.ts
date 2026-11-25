@@ -32,6 +32,7 @@ import {
 	PROTOCOL_VERSION,
 	passwordError,
 	playerMove,
+	playerRest,
 	usernameError,
 	mapTitle,
 	sanitizeLoadout,
@@ -1229,6 +1230,7 @@ export class Game implements CommandContext {
 			c.yaw = this.yaw;
 			const sv = this.client.moveCvars ? this.client.moveCvars(end) : this.sv;
 			if (sv) playerMove(this.world, p, c, sv, TICK_INTERVAL);
+			else playerRest(p);
 			this.client.tick(now, end);
 			if (p.jumped) this.audio.jump();
 			if (p.landedSpeed > 0) this.audio.land(p.landedSpeed);
