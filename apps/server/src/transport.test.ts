@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { WebSocket } from 'ws';
-import { UNRELIABLE_BACKLOG_MIN, UNRELIABLE_BACKLOG_MULT, WsClientTransport } from './transport.ts';
+import { PROTOCOL_VERSION, type ServerMessage } from '@surf/shared';
+import { Db } from './db.ts';
+import { Lobby } from './lobby.ts';
+import { testMap } from './test-helpers.ts';
+import { UNRELIABLE_BACKLOG_MIN, UNRELIABLE_BACKLOG_MULT, WsClientTransport, type ClientTransport } from './transport.ts';
 
 function fakeSocket(bufferedAmount = 0) {
 	const sent: Array<string | Uint8Array> = [];
@@ -50,5 +54,75 @@ describe('WsClientTransport', () => {
 		t.sendReliable('{"type":"chat"}');
 		t.sendReliable(new Uint8Array(500));
 		assert.equal(sent.length, 4);
+	});
+});
+
+class MemoryTransport implements ClientTransport {
+	open = true;
+	bufferedAmount = 0;
+	droppedUnreliable = 0;
+	readonly messages: ServerMessage[] = [];
+	readonly binaries: Uint8Array[] = [];
+	private onMsg: ((data: Buffer, isBinary: boolean) => void) | null = null;
+	private onCls: (() => void) | null = null;
+
+	sendReliable(data: string | Uint8Array): void {
+		if (!this.open) return;
+		if (typeof data === 'string') this.messages.push(JSON.parse(data) as ServerMessage);
+		else this.binaries.push(data);
+	}
+	sendUnreliable(data: Uint8Array): boolean {
+		if (!this.open) return false;
+		this.binaries.push(data);
+		return true;
+	}
+	onMessage(cb: (data: Buffer, isBinary: boolean) => void): void {
+		this.onMsg = cb;
+	}
+	onClose(cb: () => void): void {
+		this.onCls = cb;
+	}
+	onError(): void {}
+	close(): void {
+		if (!this.open) return;
+		this.open = false;
+		this.onCls?.();
+	}
+	terminate(): void {
+		this.close();
+	}
+	receiveJson(msg: unknown): void {
+		this.onMsg?.(Buffer.from(JSON.stringify(msg), 'utf8'), false);
+	}
+}
+
+describe('Lobby transport seam and clock sync', () => {
+	it('accepts a custom ClientTransport, advertises snapshotHz, and answers client ping with serverTime', () => {
+		let clock = 12_345.5;
+		const db = new Db(':memory:');
+		const lobby = new Lobby({
+			maps: [testMap()],
+			db,
+			timers: false,
+			snapshotHz: 64,
+			playClock: () => clock,
+			log: () => {}
+		});
+		const t = new MemoryTransport();
+		lobby.handleConnection(t);
+		t.receiveJson({ type: 'hello', playerId: 'player-transport-1', name: 'Alice', version: PROTOCOL_VERSION });
+
+		const welcome = t.messages.find((m) => m.type === 'welcome');
+		assert.ok(welcome && welcome.type === 'welcome');
+		assert.equal(welcome.snapshotHz, 64);
+		assert.equal(welcome.serverTime, 12_345.5);
+
+		clock = 13_000.25;
+		t.receiveJson({ type: 'ping', t: 999.5 });
+		const pong = t.messages.find((m) => m.type === 'pong');
+		assert.deepEqual(pong, { type: 'pong', t: 999.5, serverTime: 13_000.25 });
+
+		lobby.close();
+		db.close();
 	});
 });

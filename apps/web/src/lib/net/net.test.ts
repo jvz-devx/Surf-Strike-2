@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { withTeleportSeq, type NetState } from '@surf/shared';
+import { encodeSnapshot, withTeleportSeq, type NetState, type ServerMessage, type SnapshotFrame } from '@surf/shared';
+import { NetClient } from './client.js';
 import { parseDiscovery, serverOverride, toWsUrl } from './discovery.js';
 import { emptySample, lerpAngle, MAX_EXTRAP_MS, SnapshotBuffer } from './interp.js';
+import type { NetTransport, NetTransportHandlers } from './transport.js';
 
 describe('discovery URLs', () => {
 	it('converts http(s) to ws(s) and appends /ws', () => {
@@ -130,5 +132,71 @@ describe('snapshot interpolation', () => {
 		}
 		expect(b.sourceIdle).toBe(true);
 		expect(b.lastArrival).toBeCloseTo(9062.5 + 7 * 31.25);
+	});
+});
+
+describe('NetClient transport seam', () => {
+	it('routes JSON messages, v2 binary snapshots, traffic accounting, and close codes via injected NetTransport', () => {
+		let hooks!: NetTransportHandlers;
+		const sentText: string[] = [];
+		const sentBin: ArrayBuffer[] = [];
+		let open = true;
+		const fake: NetTransport = {
+			get isOpen() {
+				return open;
+			},
+			sendText: (s) => void sentText.push(s),
+			sendBinary: (b) => void sentBin.push(b),
+			close: () => {
+				open = false;
+			}
+		};
+
+		let opened = false;
+		let closedCode = -1;
+		const msgs: ServerMessage[] = [];
+		const snaps: SnapshotFrame[] = [];
+		let bytesIn = 0;
+		let bytesOut = 0;
+
+		const client = new NetClient(
+			'wss://example.invalid/ws',
+			{
+				open: () => (opened = true),
+				message: (m) => msgs.push(m),
+				snapshot: (f) => snaps.push(f),
+				traffic: (dir, bytes) => {
+					if (dir === 'in') bytesIn += bytes;
+					else bytesOut += bytes;
+				},
+				close: (_wasOpen, code) => (closedCode = code)
+			},
+			(_url, h) => {
+				hooks = h;
+				return fake;
+			}
+		);
+
+		hooks.open();
+		expect(opened).toBe(true);
+		expect(client.isOpen).toBe(true);
+
+		client.send({ type: 'ping', t: 10 });
+		client.sendBinary(new ArrayBuffer(44));
+		expect(sentText.length).toBe(1);
+		expect(sentBin.length).toBe(1);
+		expect(bytesOut).toBeGreaterThan(44);
+
+		hooks.text(JSON.stringify({ type: 'pong', t: 10, serverTime: 500 }), 120);
+		hooks.binary(encodeSnapshot([{ id: 2, ...st(40) }], 500, 7), 125);
+		expect(msgs).toEqual([{ type: 'pong', t: 10, serverTime: 500 }]);
+		expect(snaps.length).toBe(1);
+		expect(snaps[0]!.seq).toBe(7);
+		expect(snaps[0]!.serverTimeMs).toBe(500);
+		expect(bytesIn).toBeGreaterThan(0);
+
+		hooks.close(1000);
+		expect(closedCode).toBe(1000);
+		expect(client.isOpen).toBe(false);
 	});
 });
