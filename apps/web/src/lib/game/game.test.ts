@@ -128,7 +128,7 @@ interface Inside {
 }
 interface Handlers {
 	message(m: ServerMessage): void;
-	snapshot(entries: object[], arrival: number): void;
+	snapshot(frame: { seq: number; serverTimeMs: number; entries: object[] }, arrival: number): void;
 	closed(wasOpen: boolean, url: string, code: number): void;
 }
 
@@ -168,7 +168,14 @@ function setup() {
 			} as unknown as ServerMessage);
 		},
 		snapshot(): void {
-			conn.snapshot([2, 3].map((id) => ({ id, tick: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, pitch: 0, yaw: 0, flags: 0, status: Status.Runner, stage: 0, runTicks: 0 })), clock);
+			conn.snapshot(
+				{
+					seq: 1,
+					serverTimeMs: clock,
+					entries: [2, 3].map((id) => ({ id, tick: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, pitch: 0, yaw: 0, flags: 0, status: Status.Runner, stage: 0, runTicks: 0 }))
+				},
+				clock
+			);
 		}
 	};
 }

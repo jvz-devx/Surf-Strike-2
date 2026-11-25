@@ -1,7 +1,7 @@
 /** Abuse detection (docs/economy.md#abuse-and-collusion): the strike engine, simulated normal and collusive play, the ban end to end. */
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { ABUSE, type AbuseSignal, HNS_PAY, HuntTracker, pts, TAG_PAY, TimeMeter, type HuntBody, type MapDef } from '@surf/shared';
+import { ABUSE, type AbuseSignal, HNS_PAY, HuntTracker, PROTOCOL_VERSION, pts, TAG_PAY, TimeMeter, type HuntBody, type MapDef } from '@surf/shared';
 import { AbuseEngine } from './abuse.ts';
 import { world, type SimPlayer } from './economy-helpers.ts';
 import { startServer, type GameServer } from './server.ts';
@@ -522,7 +522,7 @@ describe('automatic ban (real server)', () => {
 		for (const t of [token, undefined]) {
 			const c = connect();
 			await c.open();
-			c.send({ type: 'hello', playerId: key, name: 'Bob', version: 1, ...(t ? { token: t } : {}) });
+			c.send({ type: 'hello', playerId: key, name: 'Bob', version: PROTOCOL_VERSION, ...(t ? { token: t } : {}) });
 			await c.until(() => c.closed, 3000);
 			assert.equal(c.of('banned')[0]!.seconds, 240);
 		}
@@ -538,7 +538,7 @@ describe('automatic ban (real server)', () => {
 		assert.equal((await tim.waitFor('adminResult', () => true, m)).ok, true);
 		const c2 = connect();
 		await c2.open();
-		c2.send({ type: 'hello', playerId: key, name: 'Bob', version: 1, token });
+		c2.send({ type: 'hello', playerId: key, name: 'Bob', version: PROTOCOL_VERSION, token });
 		await c2.until(() => c2.closed, 3000);
 		assert.equal(c2.of('banned')[0]!.seconds, undefined, 'permanent bans have no time');
 		assert.equal(c2.of('banned')[0]!.reason, 'really');

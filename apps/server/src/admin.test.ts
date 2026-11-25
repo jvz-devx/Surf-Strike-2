@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join as pathJoin } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import type { AdminAction } from '@surf/shared';
-import { ADMIN_COINS_MAX, ADMIN_EXTEND, CLOSE_IP_LIMIT, RTV_BLOCK } from '@surf/shared';
+import { ADMIN_COINS_MAX, ADMIN_EXTEND, CLOSE_IP_LIMIT, PROTOCOL_VERSION, RTV_BLOCK } from '@surf/shared';
 import { clientIp, ipKey, parseAdminUsernames } from './admin.ts';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
@@ -60,7 +60,7 @@ async function adminState(c: TestClient, from = 0) {
 async function bannedHello(name: string, opts: { playerId?: string; token?: string; headers?: Record<string, string> } = {}) {
 	const c = client(opts.headers);
 	await c.open();
-	c.send({ type: 'hello', playerId: opts.playerId ?? crypto.randomUUID(), name, version: 1, ...(opts.token ? { token: opts.token } : {}) });
+	c.send({ type: 'hello', playerId: opts.playerId ?? crypto.randomUUID(), name, version: PROTOCOL_VERSION, ...(opts.token ? { token: opts.token } : {}) });
 	await c.until(() => c.closed, 3000);
 	return c;
 }

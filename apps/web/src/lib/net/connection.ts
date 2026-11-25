@@ -2,7 +2,7 @@
  * Connection manager: discovery, connect, retry every 10 s while offline,
  * manual `connect <url>` / `disconnect` (docs/architecture.md#client-connect-flow).
  */
-import type { GhostFrame, ServerMessage, SnapshotEntry, ZombieFrame } from '@surf/shared';
+import type { GhostFrame, ServerMessage, SnapshotFrame, ZombieFrame } from '@surf/shared';
 import { NetClient } from './client.js';
 import { DEV_FALLBACK_URL, discover, RETRY_MS, toWsUrl } from './discovery.js';
 
@@ -10,7 +10,7 @@ export interface ConnectionHandlers {
 	connecting(url: string): void;
 	open(client: NetClient): void;
 	message(msg: ServerMessage): void;
-	snapshot(entries: SnapshotEntry[], arrivalMs: number): void;
+	snapshot(frame: SnapshotFrame, arrivalMs: number): void;
 	/** BIN_GHOST frame (docs/gameplay.md#ghosts). */
 	ghost?(frame: GhostFrame): void;
 	/** BIN_ZOMBIES frame (docs/modes.md#zombies). */

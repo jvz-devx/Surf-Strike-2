@@ -43,6 +43,7 @@ import {
 	TICK_INTERVAL,
 	TICK_RATE,
 	VIEW_HEIGHT,
+	withTeleportSeq,
 	type AdminAction,
 	type ClientMessage,
 	type CollisionWorld,
@@ -57,7 +58,7 @@ import {
 	type RotationEvent,
 	type ScoreRow,
 	type ServerMessage,
-	type SnapshotEntry,
+	type SnapshotFrame,
 	type UserCmd,
 	type Vec3,
 	type VoteOption
@@ -223,6 +224,7 @@ export class Game implements CommandContext {
 	/** The newest tick moved the player (false: frozen or down, no movement sounds). */
 	private moves = true;
 	private teleported = true;
+	private tpSeq = 0;
 	private snapPending = false;
 	private mouse = { dx: 0, dy: 0 };
 
@@ -1274,7 +1276,11 @@ export class Game implements CommandContext {
 		s.vz = p.velocity.z;
 		s.pitch = this.pitch;
 		s.yaw = this.yaw;
-		s.flags = (p.ducked ? FLAG_DUCKED : 0) | (p.onGround ? FLAG_ON_GROUND : 0) | (this.teleported ? FLAG_TELEPORTED : 0);
+		if (this.teleported) this.tpSeq = (this.tpSeq + 1) & 3;
+		s.flags = withTeleportSeq(
+			(p.ducked ? FLAG_DUCKED : 0) | (p.onGround ? FLAG_ON_GROUND : 0) | (this.teleported ? FLAG_TELEPORTED : 0),
+			this.tpSeq
+		);
 		this.client.netState(s);
 		if (this.spec) s.status = Status.Spectating;
 		this.net.sendBinary(encodeState(s));
@@ -2073,10 +2079,15 @@ export class Game implements CommandContext {
 		this.print(`Connected to ${client.url}`);
 	}
 
-	private onSnapshot(entries: SnapshotEntry[], arrival: number): void {
+	private onSnapshot(frame: SnapshotFrame, arrival: number): void {
 		if (this.mode !== 'online') return;
-		this.netStats.recordSnapshot(arrival, { selfId: this.selfId, entries });
-		for (const e of entries) {
+		this.netStats.recordSnapshot(arrival, {
+			serverTimeMs: frame.serverTimeMs,
+			seq: frame.seq,
+			selfId: this.selfId,
+			entries: frame.entries
+		});
+		for (const e of frame.entries) {
 			if (e.id === this.selfId) continue;
 			this.remote(e.id).buf.push(e, arrival);
 		}

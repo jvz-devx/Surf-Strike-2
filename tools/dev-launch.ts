@@ -33,6 +33,7 @@ import {
 	Status,
 	tagSpawns,
 	WEAPONS,
+	withTeleportSeq,
 	type GameModeId,
 	type MapDef,
 	type ServerMessage,
@@ -417,6 +418,7 @@ export class Bot {
 	private t0 = performance.now();
 	private anchorAt = performance.now();
 	private teleported = true;
+	private tpSeq = 0;
 	private zombieTick = 0;
 	private closed = false;
 	/** When the bot last switched weapons itself (the server enforces a draw time from then). */
@@ -563,7 +565,8 @@ export class Bot {
 		if (this.ws.readyState !== WebSocket.OPEN || this.spectating) return;
 		const now = performance.now();
 		const p = this.pose(now);
-		const flags = FLAG_ON_GROUND | (this.teleported ? FLAG_TELEPORTED : 0);
+		if (this.teleported) this.tpSeq = (this.tpSeq + 1) & 3;
+		const flags = withTeleportSeq(FLAG_ON_GROUND | (this.teleported ? FLAG_TELEPORTED : 0), this.tpSeq);
 		this.teleported = false;
 		this.ws.send(
 			encodeState({

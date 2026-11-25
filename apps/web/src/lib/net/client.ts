@@ -10,13 +10,13 @@ import {
 	type ClientMessage,
 	type GhostFrame,
 	type ServerMessage,
-	type SnapshotEntry
+	type SnapshotFrame
 } from '@surf/shared';
 
 export interface NetClientHandlers {
 	open(): void;
 	message(msg: ServerMessage): void;
-	snapshot(entries: SnapshotEntry[], arrivalMs: number): void;
+	snapshot(frame: SnapshotFrame, arrivalMs: number): void;
 	/** BIN_GHOST frame: a map's record ghost, or "none" (docs/gameplay.md#ghosts). */
 	ghost?(frame: GhostFrame): void;
 	/** BIN_ZOMBIES frame (zombies maps, docs/modes.md#zombies). */
@@ -91,8 +91,8 @@ export class NetClient {
 					return;
 				}
 				if (kind !== BIN_SNAPSHOT) return;
-				const entries = decodeSnapshot(data);
-				if (entries) this.h.snapshot(entries, now);
+				const frame = decodeSnapshot(data);
+				if (frame) this.h.snapshot(frame, now);
 			}
 		};
 		ws.onclose = (ev) => this.finish(ev.code);

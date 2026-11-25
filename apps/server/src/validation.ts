@@ -5,7 +5,7 @@
  * event with the server wall-clock time; it returns a verdict on `end`.
  */
 import type { MapDef, NetState, Spawn, Vec3 } from '@surf/shared';
-import { DUCK_HULL_MAX, FLAG_DUCKED, FLAG_TELEPORTED, HULL_MAX, HULL_MIN, MAX_VELOCITY_HARD, SURF_CVARS, TICK_RATE } from '@surf/shared';
+import { DUCK_HULL_MAX, FLAG_DUCKED, FLAG_TELEPORTED, HULL_MAX, HULL_MIN, MAX_VELOCITY_HARD, SURF_CVARS, teleportSeq, TICK_RATE } from '@surf/shared';
 
 /** Allowed relative error between run ticks and wall-clock time. */
 export const TIME_TOLERANCE = 0.05;
@@ -92,7 +92,7 @@ export class RunValidator {
 		if (!prev) return;
 		const dt = s.tick - prev.tick;
 		const d = Math.hypot(s.x - prev.x, s.y - prev.y, s.z - prev.z);
-		if (s.flags & FLAG_TELEPORTED) {
+		if ((s.flags & FLAG_TELEPORTED) !== 0 || teleportSeq(s.flags) !== teleportSeq(prev.flags)) {
 			if (this.nearRespawn(s)) return;
 		}
 		if (dt <= 0) {

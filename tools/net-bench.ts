@@ -20,10 +20,10 @@ import {
 	SNAPSHOT_HZ,
 	Status,
 	TICK_RATE,
+	withTeleportSeq,
 	type MapDef,
 	type NetState,
-	type ServerMessage,
-	type SnapshotEntry
+	type ServerMessage
 } from '../packages/shared/src/index.ts';
 import { startServer } from '../apps/server/src/server.ts';
 import { FixedStep } from '../apps/web/src/lib/game/loop.ts';
@@ -540,14 +540,19 @@ async function runScenario(def: ScenarioDef, durationSec: number): Promise<Scena
 			}
 			const ab = data as ArrayBuffer;
 			if (ab.byteLength < 1 || new Uint8Array(ab, 0, 1)[0] !== BIN_SNAPSHOT) return;
-			const entries = decodeSnapshot(ab) as SnapshotEntry[] | null;
-			if (!entries) return;
+			const frame = decodeSnapshot(ab);
+			if (!frame) return;
 			totalSnapBytes += ab.byteLength;
 			snapCount++;
 			if (Number.isFinite(lastSnapArr)) gaps.push(arr - lastSnapArr);
 			lastSnapArr = arr;
-			stats.recordSnapshot(arr, { selfId: observer.selfId, entries });
-			const te = entries.find((e) => e.id === target.selfId);
+			stats.recordSnapshot(arr, {
+				serverTimeMs: frame.serverTimeMs,
+				seq: frame.seq,
+				selfId: observer.selfId,
+				entries: frame.entries
+			});
+			const te = frame.entries.find((e) => e.id === target.selfId);
 			if (te) buf.push(te, arr);
 		});
 
@@ -557,6 +562,7 @@ async function runScenario(def: ScenarioDef, durationSec: number): Promise<Scena
 		const startMs = performance.now();
 		const step = new FixedStep(TICK_RATE, 8);
 		let targetTick = 1;
+		let targetTpSeq = 0;
 		let prevElapsed = -1;
 		let lastTargetFrame = startMs;
 
@@ -571,7 +577,8 @@ async function runScenario(def: ScenarioDef, durationSec: number): Promise<Scena
 				const elapsedSec = Math.max(0, (tickEnd - startMs) / 1000);
 				const p = evalTrajectory(def.trajectory, elapsedSec, prevElapsed);
 				prevElapsed = elapsedSec;
-				const flags = FLAG_ON_GROUND | (p.teleported ? FLAG_TELEPORTED : 0);
+				if (p.teleported) targetTpSeq = (targetTpSeq + 1) & 3;
+				const flags = withTeleportSeq(FLAG_ON_GROUND | (p.teleported ? FLAG_TELEPORTED : 0), targetTpSeq);
 				if (target.ws.readyState === WebSocket.OPEN) {
 					target.ws.send(
 						encodeState({

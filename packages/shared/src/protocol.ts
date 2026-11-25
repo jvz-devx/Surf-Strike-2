@@ -15,7 +15,7 @@ import type { WeaponId } from './modes/zombies/weapons.ts';
 import type { Vec3 } from './types.ts';
 import { TICK_RATE } from './units.ts';
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const MAX_PLAYERS = 32;
 /** Close code: too many clients from this IP address (docs/architecture.md#connection-limit). */
 export const CLOSE_IP_LIMIT = 4010;
@@ -60,6 +60,21 @@ export const FLAG_DUCKED = 1;
 export const FLAG_ON_GROUND = 2;
 /** Set on the first state packet after a teleport (restart, !back, trigger). */
 export const FLAG_TELEPORTED = 4;
+/**
+ * 2-bit wrapping teleport counter in bits 3..4 (0..3). Incremented by the
+ * sender on every teleport so the change survives 64->32 Hz server relay
+ * overwriting and dropped snapshots.
+ */
+export const FLAG_TELEPORT_SEQ_SHIFT = 3;
+export const FLAG_TELEPORT_SEQ_MASK = 0x3 << FLAG_TELEPORT_SEQ_SHIFT;
+
+export function teleportSeq(flags: number): number {
+	return (flags & FLAG_TELEPORT_SEQ_MASK) >>> FLAG_TELEPORT_SEQ_SHIFT;
+}
+
+export function withTeleportSeq(flags: number, seq: number): number {
+	return (flags & ~FLAG_TELEPORT_SEQ_MASK) | ((seq & 3) << FLAG_TELEPORT_SEQ_SHIFT);
+}
 
 export type VoteOption = { kind: 'map'; mapId: string } | { kind: 'extend' };
 
@@ -551,32 +566,59 @@ export interface NetState {
 const STATE_BODY = 4 + 4 * 8 + 1 + 1 + 1 + 4; // 43
 export const STATE_SIZE = 1 + STATE_BODY;
 
+/** Snapshot v2 position quantisation: int24 at 1/8 unit (±1,048,576 u covers all maps). */
+export const SNAP_POS_SCALE = 8;
+const I24_MIN = -8388608;
+const I24_MAX = 8388607;
+export const SNAP_POS_MIN = I24_MIN / SNAP_POS_SCALE;
+export const SNAP_POS_MAX = I24_MAX / SNAP_POS_SCALE;
+export const SNAP_VEL_MIN = -32768;
+export const SNAP_VEL_MAX = 32767;
+/** u24 runTicks covers 72.8 hours at 64 Hz. */
+export const SNAP_RUN_TICKS_MAX = 0xffffff;
+const SNAP_ANGLE_SCALE = 65536 / 360;
+
+/** Snapshot header flag: entries include race `stage` (u8) + `runTicks` (u24). */
+export const SNAP_FLAG_RACE = 1;
+/** Snapshot v2 header: u8 kind, u8 flags, u8 count, u16 seq, f64 serverTimeMs. */
+export const SNAPSHOT_HEADER_SIZE = 13;
+/** Per-entry bytes without race fields: u16 id, u32 tick, 3×i24 pos, 3×i16 vel, 2×u16 ang, u8 flags, u8 status. */
+export const SNAPSHOT_ENTRY_BASE = 27;
+/** Per-entry bytes with race fields (+ u8 stage, u24 runTicks). */
+export const SNAPSHOT_ENTRY_RACE = 31;
+
+function toDataView(buf: ArrayBuffer | Uint8Array): DataView {
+	return buf instanceof Uint8Array ? new DataView(buf.buffer, buf.byteOffset, buf.byteLength) : new DataView(buf);
+}
+
 function writeBody(v: DataView, o: number, s: NetState): number {
 	v.setUint32(o, s.tick >>> 0, true);
-	o += 4;
-	for (const n of [s.x, s.y, s.z, s.vx, s.vy, s.vz, s.pitch, s.yaw]) {
-		v.setFloat32(o, n, true);
-		o += 4;
-	}
-	v.setUint8(o++, s.flags);
-	v.setUint8(o++, s.status);
-	v.setUint8(o++, s.stage);
-	v.setUint32(o, s.runTicks >>> 0, true);
-	return o + 4;
+	v.setFloat32(o + 4, s.x, true);
+	v.setFloat32(o + 8, s.y, true);
+	v.setFloat32(o + 12, s.z, true);
+	v.setFloat32(o + 16, s.vx, true);
+	v.setFloat32(o + 20, s.vy, true);
+	v.setFloat32(o + 24, s.vz, true);
+	v.setFloat32(o + 28, s.pitch, true);
+	v.setFloat32(o + 32, s.yaw, true);
+	v.setUint8(o + 36, s.flags & 0xff);
+	v.setUint8(o + 37, s.status & 0xff);
+	v.setUint8(o + 38, s.stage & 0xff);
+	v.setUint32(o + 39, s.runTicks >>> 0, true);
+	return o + STATE_BODY;
 }
 
 function readBody(v: DataView, o: number): NetState {
-	const f = (i: number) => v.getFloat32(o + 4 + i * 4, true);
 	return {
 		tick: v.getUint32(o, true),
-		x: f(0),
-		y: f(1),
-		z: f(2),
-		vx: f(3),
-		vy: f(4),
-		vz: f(5),
-		pitch: f(6),
-		yaw: f(7),
+		x: v.getFloat32(o + 4, true),
+		y: v.getFloat32(o + 8, true),
+		z: v.getFloat32(o + 12, true),
+		vx: v.getFloat32(o + 16, true),
+		vy: v.getFloat32(o + 20, true),
+		vz: v.getFloat32(o + 24, true),
+		pitch: v.getFloat32(o + 28, true),
+		yaw: v.getFloat32(o + 32, true),
 		flags: v.getUint8(o + 36),
 		status: v.getUint8(o + 37) as Status,
 		stage: v.getUint8(o + 38),
@@ -592,12 +634,23 @@ export function encodeState(s: NetState): ArrayBuffer {
 	return buf;
 }
 
-export function decodeState(buf: ArrayBuffer): NetState | null {
+export function decodeState(buf: ArrayBuffer | Uint8Array): NetState | null {
 	if (buf.byteLength !== STATE_SIZE) return null;
-	const v = new DataView(buf);
+	const v = toDataView(buf);
 	if (v.getUint8(0) !== BIN_STATE) return null;
 	const s = readBody(v, 1);
-	for (const n of [s.x, s.y, s.z, s.vx, s.vy, s.vz, s.pitch, s.yaw]) if (!Number.isFinite(n)) return null;
+	if (
+		!Number.isFinite(s.x) ||
+		!Number.isFinite(s.y) ||
+		!Number.isFinite(s.z) ||
+		!Number.isFinite(s.vx) ||
+		!Number.isFinite(s.vy) ||
+		!Number.isFinite(s.vz) ||
+		!Number.isFinite(s.pitch) ||
+		!Number.isFinite(s.yaw)
+	) {
+		return null;
+	}
 	return s;
 }
 
@@ -605,32 +658,139 @@ export interface SnapshotEntry extends NetState {
 	id: number;
 }
 
-export function encodeSnapshot(entries: SnapshotEntry[]): ArrayBuffer {
-	const buf = new ArrayBuffer(2 + entries.length * (2 + STATE_BODY));
+export interface SnapshotFrame {
+	/** 16-bit wrapping snapshot sequence number (0..65535). */
+	seq: number;
+	/** Server monotonic timestamp (ms) when this snapshot was built. */
+	serverTimeMs: number;
+	entries: SnapshotEntry[];
+}
+
+function writeI24(v: DataView, o: number, units: number): void {
+	let n = Math.round(units * SNAP_POS_SCALE);
+	if (n < I24_MIN) n = I24_MIN;
+	else if (n > I24_MAX) n = I24_MAX;
+	v.setUint8(o, n & 0xff);
+	v.setUint8(o + 1, (n >> 8) & 0xff);
+	v.setUint8(o + 2, (n >> 16) & 0xff);
+}
+
+function readI24(v: DataView, o: number): number {
+	const u = v.getUint8(o) | (v.getUint8(o + 1) << 8) | (v.getUint8(o + 2) << 16);
+	return ((u << 8) >> 8) / SNAP_POS_SCALE;
+}
+
+function writeI16Clamped(v: DataView, o: number, val: number): void {
+	let n = Math.round(val);
+	if (n < SNAP_VEL_MIN) n = SNAP_VEL_MIN;
+	else if (n > SNAP_VEL_MAX) n = SNAP_VEL_MAX;
+	v.setInt16(o, n, true);
+}
+
+function writeU24Clamped(v: DataView, o: number, val: number): void {
+	let n = Math.round(val);
+	if (n < 0) n = 0;
+	else if (n > SNAP_RUN_TICKS_MAX) n = SNAP_RUN_TICKS_MAX;
+	v.setUint8(o, n & 0xff);
+	v.setUint8(o + 1, (n >>> 8) & 0xff);
+	v.setUint8(o + 2, (n >>> 16) & 0xff);
+}
+
+function readU24(v: DataView, o: number): number {
+	return v.getUint8(o) | (v.getUint8(o + 1) << 8) | (v.getUint8(o + 2) << 16);
+}
+
+function packSnapAngle(deg: number): number {
+	return Math.round(deg * SNAP_ANGLE_SCALE) & 0xffff;
+}
+
+function unpackSnapAngle(q: number): number {
+	const d = q / SNAP_ANGLE_SCALE;
+	return d > 180 ? d - 360 : d;
+}
+
+/**
+ * Encode a v2 binary snapshot. At 32 players this is 877 B (non-race) or
+ * 1005 B (race), fitting inside a single TCP segment and a single ~1150 B
+ * QUIC/WebTransport datagram.
+ */
+export function encodeSnapshot(entries: readonly SnapshotEntry[], serverTimeMs = 0, seq = 0): ArrayBuffer {
+	const count = Math.min(255, entries.length);
+	let hasRace = false;
+	for (let i = 0; i < count; i++) {
+		const e = entries[i]!;
+		if (e.stage !== 0 || e.runTicks !== 0) {
+			hasRace = true;
+			break;
+		}
+	}
+	const stride = hasRace ? SNAPSHOT_ENTRY_RACE : SNAPSHOT_ENTRY_BASE;
+	const buf = new ArrayBuffer(SNAPSHOT_HEADER_SIZE + count * stride);
 	const v = new DataView(buf);
 	v.setUint8(0, BIN_SNAPSHOT);
-	v.setUint8(1, entries.length);
-	let o = 2;
-	for (const e of entries) {
-		v.setUint16(o, e.id, true);
-		o = writeBody(v, o + 2, e);
+	v.setUint8(1, hasRace ? SNAP_FLAG_RACE : 0);
+	v.setUint8(2, count);
+	v.setUint16(3, seq & 0xffff, true);
+	v.setFloat64(5, serverTimeMs, true);
+	let o = SNAPSHOT_HEADER_SIZE;
+	for (let i = 0; i < count; i++) {
+		const e = entries[i]!;
+		v.setUint16(o, e.id & 0xffff, true);
+		v.setUint32(o + 2, e.tick >>> 0, true);
+		writeI24(v, o + 6, e.x);
+		writeI24(v, o + 9, e.y);
+		writeI24(v, o + 12, e.z);
+		writeI16Clamped(v, o + 15, e.vx);
+		writeI16Clamped(v, o + 17, e.vy);
+		writeI16Clamped(v, o + 19, e.vz);
+		v.setUint16(o + 21, packSnapAngle(e.pitch), true);
+		v.setUint16(o + 23, packSnapAngle(e.yaw), true);
+		v.setUint8(o + 25, e.flags & 0xff);
+		v.setUint8(o + 26, e.status & 0xff);
+		if (hasRace) {
+			v.setUint8(o + 27, e.stage & 0xff);
+			writeU24Clamped(v, o + 28, e.runTicks);
+		}
+		o += stride;
 	}
 	return buf;
 }
 
-export function decodeSnapshot(buf: ArrayBuffer): SnapshotEntry[] | null {
-	const v = new DataView(buf);
-	if (buf.byteLength < 2 || v.getUint8(0) !== BIN_SNAPSHOT) return null;
-	const n = v.getUint8(1);
-	if (buf.byteLength !== 2 + n * (2 + STATE_BODY)) return null;
-	const out: SnapshotEntry[] = [];
-	let o = 2;
+export function decodeSnapshot(buf: ArrayBuffer | Uint8Array): SnapshotFrame | null {
+	if (buf.byteLength < SNAPSHOT_HEADER_SIZE) return null;
+	const v = toDataView(buf);
+	if (v.getUint8(0) !== BIN_SNAPSHOT) return null;
+	const snapFlags = v.getUint8(1);
+	if ((snapFlags & ~SNAP_FLAG_RACE) !== 0) return null;
+	const hasRace = (snapFlags & SNAP_FLAG_RACE) !== 0;
+	const n = v.getUint8(2);
+	const stride = hasRace ? SNAPSHOT_ENTRY_RACE : SNAPSHOT_ENTRY_BASE;
+	if (buf.byteLength !== SNAPSHOT_HEADER_SIZE + n * stride) return null;
+	const seq = v.getUint16(3, true);
+	const serverTimeMs = v.getFloat64(5, true);
+	if (!Number.isFinite(serverTimeMs)) return null;
+	const entries: SnapshotEntry[] = new Array(n);
+	let o = SNAPSHOT_HEADER_SIZE;
 	for (let i = 0; i < n; i++) {
-		const id = v.getUint16(o, true);
-		out.push({ id, ...readBody(v, o + 2) });
-		o += 2 + STATE_BODY;
+		entries[i] = {
+			id: v.getUint16(o, true),
+			tick: v.getUint32(o + 2, true),
+			x: readI24(v, o + 6),
+			y: readI24(v, o + 9),
+			z: readI24(v, o + 12),
+			vx: v.getInt16(o + 15, true),
+			vy: v.getInt16(o + 17, true),
+			vz: v.getInt16(o + 19, true),
+			pitch: unpackSnapAngle(v.getUint16(o + 21, true)),
+			yaw: unpackSnapAngle(v.getUint16(o + 23, true)),
+			flags: v.getUint8(o + 25),
+			status: v.getUint8(o + 26) as Status,
+			stage: hasRace ? v.getUint8(o + 27) : 0,
+			runTicks: hasRace ? readU24(v, o + 28) : 0
+		};
+		o += stride;
 	}
-	return out;
+	return { seq, serverTimeMs, entries };
 }
 
 /** Format ticks as mm:ss.mmm. */

@@ -159,6 +159,9 @@ export class Lobby {
 	private readonly maps: Map<string, MapDef>;
 	private readonly db: Db;
 	private readonly now: () => number;
+	/** Monotonic server clock (ms) stamped into snapshots (injectable via playClock/now for tests). */
+	private readonly serverClock: () => number;
+	private snapshotSeq = 0;
 	private readonly maxPlayers: number;
 	private readonly maxPerIp: number;
 	private readonly log: (msg: string) => void;
@@ -200,6 +203,7 @@ export class Lobby {
 		this.modeOptions = opts.modes ?? {};
 		this.admin = this.createAdmin(opts.adminUsernames ?? parseAdminUsernames(undefined));
 		const clock = opts.playClock ?? opts.now ?? (() => performance.now());
+		this.serverClock = clock;
 		this.economy = this.createEconomy(clock);
 		this.shop = new Shop<Client>({
 			db: this.db,
@@ -500,8 +504,7 @@ export class Lobby {
 			const n = c.rate.state.hit(t);
 			if (n > RATE.state.kick) return this.kick(c, 'state flood');
 			if (n > RATE.state.limit || !c.helloed || c.spectating) return;
-			const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
-			const s = decodeState(ab);
+			const s = decodeState(data);
 			if (!s) return;
 			c.state = s;
 			this.economy.state(c, s);
@@ -1086,7 +1089,8 @@ export class Lobby {
 			if (c.helloed && !c.spectating && c.state) entries.push({ id: c.id, ...c.state });
 		}
 		if (entries.length === 0) return;
-		const buf = Buffer.from(encodeSnapshot(entries));
+		this.snapshotSeq = (this.snapshotSeq + 1) & 0xffff;
+		const buf = Buffer.from(encodeSnapshot(entries, this.serverClock(), this.snapshotSeq));
 		for (const c of this.clients) if (c.helloed) this.sendRaw(c, buf);
 	}
 

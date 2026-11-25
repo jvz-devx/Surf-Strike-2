@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { Worker } from 'node:worker_threads';
-import { COSMETIC_SLOTS, cosmeticPrice, emptyLoadout, getCosmetic, LOOTBOX, lootItems, pts, shopItems } from '@surf/shared';
+import { COSMETIC_SLOTS, cosmeticPrice, emptyLoadout, getCosmetic, LOOTBOX, lootItems, PROTOCOL_VERSION, pts, shopItems } from '@surf/shared';
 import { Db } from './db.ts';
 import { world } from './economy-helpers.ts';
 import type { GameServer } from './server.ts';
@@ -310,7 +310,7 @@ describe('shop on the server', () => {
 		const second = new TestClient(server.port);
 		clients.push(second);
 		await second.open();
-		second.send({ type: 'hello', playerId: crypto.randomUUID(), name: 'y', version: 1, token });
+		second.send({ type: 'hello', playerId: crypto.randomUUID(), name: 'y', version: PROTOCOL_VERSION, token });
 		for (const x of [c, second]) x.send({ type: 'shopBuy', item: 'bottom_cargo' });
 		await second.waitFor('shopResult');
 		assert.equal(server.db.accountStats(accountId).pointsBalance, PRICE * 4);
