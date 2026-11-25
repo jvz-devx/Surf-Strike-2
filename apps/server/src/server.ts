@@ -70,6 +70,8 @@ export interface GameServer {
 	lobby: Lobby;
 	db: Db;
 	metrics: ServerMetrics;
+	/** Fail readiness and reject upgrades while the listener remains open. */
+	beginDrain(): void;
 	close(): Promise<void>;
 }
 
@@ -248,10 +250,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 			? startBackupSchedule(db, { dir: backupDir, intervalMs: backupIntervalMs, keep: backupKeep, log: opts.log })
 			: null;
 
+	const beginDrain = () => {
+		draining = true;
+	};
 	let closing: Promise<void> | null = null;
 	const close = (): Promise<void> => {
 		if (closing) return closing;
-		draining = true;
+		beginDrain();
 		closing = (async () => {
 			// Stop timers, flush playtime/economy, and send WebSocket close 1001 to every client.
 			lobby.close();
@@ -307,6 +312,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 		lobby,
 		db,
 		metrics,
+		beginDrain,
 		close
 	};
 }

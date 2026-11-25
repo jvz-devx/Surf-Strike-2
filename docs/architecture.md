@@ -42,7 +42,7 @@ Run `./start.sh` from the repo root to host for the public Vercel site. It loads
 2. Spawn `cloudflared tunnel --url http://localhost:27015` and parse the `https://*.trycloudflare.com` URL from its output.
 3. `POST` that URL to `https://<vercel-app>/api/server` with header `Authorization: Bearer <HOST_SECRET>`. The API keeps `{ url, startedAt, lastSeen }` in the Vercel Runtime Cache for 3 minutes.
 4. Every 60 s, re-post as a heartbeat (`lastSeen`), refusing to overwrite a fixed non-`trycloudflare.com` server in discovery.
-5. On shutdown (SIGINT/SIGTERM), post `{ url: null, expectedUrl }` only if discovery still points to this tunnel, so a local host never clears a fixed self-hosted server.
+5. On shutdown (SIGINT/SIGTERM), reject new upgrades and return HTTP 503 on `/health`. Post `{ url: null, expectedUrl }` only if discovery still points to this tunnel, so a local host never clears a fixed self-hosted server. Then close the game server and stop the tunnel.
 
 Before starting, `./start.sh` and `pnpm host` also check `FIXED_SERVER_URL` (if configured) and `GET /api/server`, refusing to run when a fixed self-hosted server answers healthy.
 

@@ -54,11 +54,13 @@ const tunnel: ChildProcess = spawn(bin, ['tunnel', '--no-autoupdate', '--url', `
 
 let publicUrl: string | null = null;
 let heartbeat: NodeJS.Timeout | null = null;
+let publishing: Promise<boolean> | null = null;
 let stopping = false;
 
 async function publish(url: string): Promise<boolean> {
 	try {
 		const current = await fetchPublishedUrl(env);
+		if (stopping) return false;
 		if (current && current !== url && !isQuickTunnelUrl(current)) {
 			console.error(`host: discovery now points to fixed server ${current}; not overwriting`);
 			return false;
@@ -84,11 +86,17 @@ async function clearDiscovery(ownUrl: string): Promise<void> {
 async function shutdown(code = 0): Promise<void> {
 	if (stopping) return;
 	stopping = true;
+	server.beginDrain();
 	console.log('host: shutting down');
+	clearTimeout(tunnelTimeout);
 	if (heartbeat) clearInterval(heartbeat);
+	await publishing;
 	if (publicUrl) await clearDiscovery(publicUrl);
-	if (tunnel.exitCode === null) tunnel.kill('SIGTERM');
-	await server.close();
+	try {
+		await server.close();
+	} finally {
+		if (tunnel.exitCode === null) tunnel.kill('SIGTERM');
+	}
 	process.exit(code);
 }
 
@@ -100,16 +108,19 @@ const tunnelTimeout = setTimeout(() => {
 }, TUNNEL_TIMEOUT_MS);
 
 function onOutput(chunk: Buffer): void {
-	if (publicUrl) return;
+	if (stopping || publicUrl) return;
 	const url = parseTunnelUrl(chunk.toString('utf8'));
 	if (!url) return;
 	publicUrl = url;
 	clearTimeout(tunnelTimeout);
 	console.log(`host: tunnel up at ${url} (ws: ${url.replace(/^https/, 'wss')}/ws)`);
-	void publish(url).then((ok) => {
+	publishing = publish(url);
+	void publishing.then((ok) => {
 		if (ok) console.log(`host: published to ${env.discoveryUrl}/api/server`);
 	});
-	heartbeat = setInterval(() => void publish(url), HEARTBEAT_MS);
+	heartbeat = setInterval(() => {
+		publishing = publish(url);
+	}, HEARTBEAT_MS);
 }
 
 tunnel.stdout?.on('data', onOutput);
