@@ -1489,7 +1489,7 @@ export class InfectedGame {
 			this.step(now);
 		}
 		// Each catch-up step sees the same client state. Record it once, at observation time.
-		if (this.tick !== previousTick) this.recordHistory(now);
+		if (this.tick !== previousTick) this.recordHistory(now, previousTick + 1);
 
 		if (this.phase === 'playing') {
 			const surv = this.livingSurvivors();
@@ -1855,9 +1855,9 @@ export class InfectedGame {
 	}
 
 	/** One pose sample per living player, stamped with the time of this update (lagcomp.ts). */
-	private recordHistory(now: number): void {
+	private recordHistory(now: number, firstTick: number): void {
 		for (const p of this.players.values()) {
-			if (p.alive && p.pos) p.hist.record(now, this.tick, this.poseOf(p, p.pos, this.scratch));
+			if (p.alive && p.pos) p.hist.record(now, firstTick, this.poseOf(p, p.pos, this.scratch));
 		}
 	}
 

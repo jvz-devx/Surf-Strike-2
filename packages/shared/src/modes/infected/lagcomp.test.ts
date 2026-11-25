@@ -201,6 +201,18 @@ describe('lag compensation in the game', () => {
 		}
 	});
 
+	it('uses the observed pose for the first tick of a two-tick update', () => {
+		const { g, leg } = crossing();
+		g.put(1, { x: 0, y: 600 });
+		g.advance(INF_STEP_MS);
+		const tick = g.game.tick + 1;
+		g.put(1, { x: 60, y: 600 });
+		g.advance(2 * INF_STEP_MS, 2 * INF_STEP_MS);
+		expect(g.game.tick).toBe(tick + 1);
+		g.put(2, { x: 60, y: 350 });
+		expect(hits(g.fireAt(2, leg(60), { tick }))).toBe(1);
+	});
+
 	it('records each player once per observation, even when eight sim ticks catch up', () => {
 		const c = crossing(INF_STEP_MS * 2);
 		const record = vi.spyOn(PoseHistory.prototype, 'record');
@@ -361,3 +373,4 @@ describe('lag compensation in the game', () => {
 		expect(c.g.of('infect').at(-1)).toMatchObject({ id: 2, by: 1, method: 'claws' });
 	});
 });
+
