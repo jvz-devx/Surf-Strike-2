@@ -2003,9 +2003,12 @@ export class Game implements CommandContext {
 			case 'hns':
 				if (m.ev.e === 'spawn' && m.ev.id === this.selfId && m.spawnSeq !== undefined) {
 					const step = (m.spawnSeq - this.spawnSeq) & 0xffff;
-					if (step === 0 || step >= 0x8000) break;
-					this.client.message?.(m, now);
-					this.spawnSeq = m.spawnSeq;
+					if (step >= 0x8000 || m.spawnSeq === 0) break;
+					if (step !== 0) {
+						this.client.message?.(m, now);
+						this.spawnSeq = m.spawnSeq;
+					}
+					this.send({ type: 'spawnAck', seq: this.spawnSeq });
 					break;
 				}
 				this.client.message?.(m, now);

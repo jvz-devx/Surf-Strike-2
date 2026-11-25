@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import type { ServerMessage, Vec3, ZmEvent } from '@surf/shared';
-import { getMap, headCentre, Status, VIEW_HEIGHT, ZM_PLAYER_HP } from '@surf/shared';
+import { FLAG_TELEPORTED, getMap, headCentre, Status, VIEW_HEIGHT, ZM_PLAYER_HP } from '@surf/shared';
+import { RATE } from './lobby.ts';
 import type { ZombiesMode } from './modes/zombies.ts';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
@@ -119,6 +120,49 @@ describe('zombies mode', () => {
 		await moveTo(b, w.selfId, msg.ev);
 		b.close();
 		await a.waitFor('leave', (m) => m.id === w.selfId);
+	});
+
+	it('accepts a spawn ack when the near-spawn states are rate-limited', async () => {
+		const b = new TestClient(server.port);
+		clients.push(b);
+		let token = 0;
+		const barrier = async () => {
+			const t = ++token;
+			b.send({ type: 'ping', t });
+			await b.waitFor('pong', (m) => m.t === t);
+		};
+		const { selfId } = await b.hello('Ack');
+		const msg = await b.waitFor('zm', (m) => m.ev.e === 'spawn');
+		assert.equal(msg.ev.e, 'spawn');
+		assert.ok(msg.spawnSeq);
+		const { x, y, z } = msg.ev;
+		const peer = [...server.lobby.clients].find((p) => p.id === selfId)!;
+
+		// Exhaust the state window with old in-flight packets before the spawn arrives.
+		for (let i = 0; i < RATE.state.limit; i++) b.sendState(netState(i, x, { y, z, spawnSeq: 0 }));
+		b.sendState(netState(100, x, { y, z }));
+		b.send({ type: 'spawnAck', seq: msg.spawnSeq - 1 });
+		await barrier();
+		assert.equal(peer.state?.tick, undefined);
+		assert.ok(peer.spawnFrame, 'a stale ack leaves the retry active');
+
+		const resendFrom = b.messages.length;
+		b.send({ type: 'spawnAck', seq: msg.spawnSeq });
+		await barrier();
+		assert.equal(peer.spawnFrame, null);
+		clock += 251;
+		server.lobby.sendSnapshot();
+		await barrier();
+		assert.equal(b.messages.slice(resendFrom).some((m) => m.type === 'zm' && m.spawnSeq === msg.spawnSeq), false);
+
+		// Once the window has cleared, the player has moved beyond the old 64-unit radius.
+		await sleep(1000);
+		b.sendState(netState(101, x + 128, { y, z }));
+		await barrier();
+		assert.equal(peer.state?.tick, 101);
+		assert.ok((peer.state?.flags ?? 0) & FLAG_TELEPORTED);
+		b.close();
+		await a.waitFor('leave', (m) => m.id === selfId);
 	});
 
 	it('pistol: 4 body hits kill (hit markers, kill feed), a headshot kills at once', async () => {

@@ -202,6 +202,18 @@ it.each([null, 1, 2])('stays solo and backs off on a welcome with version %s', (
 	game.destroy();
 });
 
+it('acknowledges each delivery of the applied spawn and applies it once', () => {
+	const { game, conn, online, sent } = setup();
+	online();
+	const spawn = { type: 'zm', ev: { e: 'spawn', id: 7 }, spawnSeq: 2 } as Extract<ServerMessage, { type: 'zm' }>;
+	conn.message(spawn);
+	conn.message(spawn);
+	conn.message({ ...spawn, spawnSeq: 1 });
+	expect(mode().calls.filter(([name]) => name === 'message')).toHaveLength(1);
+	expect(sent.slice(1)).toEqual([{ type: 'spawnAck', seq: 2 }, { type: 'spawnAck', seq: 2 }]);
+	game.destroy();
+});
+
 it('sends a login token in hello only for its identified session scope', () => {
 	const { inside, conn, online } = setup();
 	inside.store = memoryStore({

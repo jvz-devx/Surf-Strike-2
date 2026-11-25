@@ -84,6 +84,7 @@ export function parseSnapshotHz(raw: string | number | undefined): number {
 /** Per-second limits: above `limit` messages are dropped, above `kick` the client is kicked. */
 export const RATE = {
 	state: { limit: 70, kick: 250 },
+	spawnAck: { limit: 12, kick: 40 },
 	chat: { limit: 2, kick: 20 },
 	json: { limit: 60, kick: 300 },
 	shop: { limit: 8, kick: 100 },
@@ -177,7 +178,7 @@ interface Client {
 	rtt: PeerRtt;
 	/** Worn cosmetics (docs/economy.md#shop); the default look for guests. */
 	loadout: Loadout;
-	rate: { state: Window; chat: Window; json: Window; shop: Window; casino: Window };
+	rate: { state: Window; spawnAck: Window; chat: Window; json: Window; shop: Window; casino: Window };
 	helloTimer: NodeJS.Timeout | null;
 	closed: boolean;
 }
@@ -571,7 +572,7 @@ export class Lobby {
 			},
 			rtt: new PeerRtt(),
 			loadout: emptyLoadout(),
-			rate: { state: new Window(), chat: new Window(), json: new Window(), shop: new Window(), casino: new Window() },
+			rate: { state: new Window(), spawnAck: new Window(), chat: new Window(), json: new Window(), shop: new Window(), casino: new Window() },
 			helloTimer: null,
 			closed: false
 		};
@@ -658,6 +659,12 @@ export class Lobby {
 			return;
 		}
 		switch (msg.type) {
+			case 'spawnAck': {
+				const k = c.rate.spawnAck.hit(t);
+				if (k > RATE.spawnAck.kick) return this.kick(c, 'spawn ack flood');
+				if (k <= RATE.spawnAck.limit && c.spawnFrame && msg.seq === c.spawnSeq) c.spawnFrame = null;
+				return;
+			}
 			case 'zone':
 				return this.onZone(c, msg);
 			case 'chat': {
@@ -1048,7 +1055,8 @@ export class Lobby {
 		const clientSeq = teleportSeq(state.flags);
 		let teleported = false;
 		if (c.pendingSpawn) {
-			if (!nearPose(state, c.pendingSpawn, SPAWN_ACK_RADIUS)) return null;
+			// The first state after an ack still starts a new relay teleport generation.
+			if (c.spawnFrame && !nearPose(state, c.pendingSpawn, SPAWN_ACK_RADIUS)) return null;
 			c.pendingSpawn = null;
 			c.spawnFrame = null;
 			teleported = true;

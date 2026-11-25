@@ -221,6 +221,7 @@ export type ClientMessage =
 	 * `dir` a unit vector, `tick` the zombie sim tick the shooter was looking at
 	 * (from BIN_ZOMBIES, interpolated) for lag compensation.
 	 */
+	| { type: 'spawnAck'; seq: number }
 	| { type: 'fire'; weapon: WeaponId; origin: Vec3; dir: Vec3; tick: number; renderServerTimeMs?: number }
 	| { type: 'reload' }
 	/** Zombies: pick the weapon for this life (only while the loadout window is open). */
