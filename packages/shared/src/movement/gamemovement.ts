@@ -146,6 +146,13 @@ const sQMins: Vec3 = { x: 0, y: 0, z: 0 };
 const sQMaxs: Vec3 = { x: 0, y: 0, z: 0 };
 const sPlanes: Vec3[] = Array.from({ length: MAX_CLIP_PLANES }, () => ({ x: 0, y: 0, z: 0 }));
 
+/** A tick without movement (frozen, down): the jump, landing and surfing of the last moved tick are over. */
+export function playerRest(p: PlayerState): void {
+	p.jumped = false;
+	p.landedSpeed = 0;
+	p.surfing = false;
+}
+
 /**
  * Advance one tick (`dt` seconds). Mutates `p`. The tick is split at every `cmd.subtick` event;
  * each piece runs the whole move with its own share of `dt`.
@@ -155,9 +162,7 @@ export function playerMove(world: CollisionWorld, p: PlayerState, cmd: UserCmd, 
 	P = p;
 	C = cvars;
 	TICK_DT = dt;
-	p.jumped = false;
-	p.landedSpeed = 0;
-	p.surfing = false;
+	playerRest(p);
 	frictionStash = -1;
 	setupAngles(cmd);
 

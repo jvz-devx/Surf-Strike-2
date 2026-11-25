@@ -1,6 +1,6 @@
 # Gamemodes
 
-Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old name). There are five modes:
+Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old name). There are six modes:
 
 | Mode | Family | Rules | Default cvars | Min players | Scoreboard (plus the totals) |
 | --- | --- | --- | --- | --- | --- |
@@ -27,11 +27,17 @@ apps/server/src/modes/
   tag.ts     TagMode: runs TagGame on the latest state packets, chat announcements, modeState
   hns.ts     HnsMode: runs HnsGame, knife messages, event routing, announcements, speed-cap check
   index.ts   createServerMode(host): picks the module by GAME_MODES[kind].family
+apps/web/src/lib/game/modes/
+  types.ts   ClientMode interface, ClientModeHost
+  race.ts    RaceMode: RunTracker, splits, solo PBs, ghosts
+  tag.ts     TagMode: tag state and HUD view
+  zombies.ts, infected.ts, hns.ts   adapters around ZombiesClient, InfectedClient, HnsClient
+  index.ts   createClientMode(host), startSpawn(map): pick the module by GAME_MODES[kind].family
 ```
 
 - **Registry.** `GAME_MODES[id]` gives a mode's `label`, `family` (`race` or its own), `cvars` profile, `minPlayers` and `score` (see [Score display](#score-display)). `mapCvars(map)` is the mode profile plus the map's `cvars` overrides; the server sends it in `welcome` and `mapChange`.
 - **Server.** The lobby has no mode logic. It owns one `ServerMode` per map and replaces it on map change. It forwards these calls: `join` (after `welcome`/`mapChange`), `leave`, `spectate`, `state` (each state packet), `zone`, `command` (`!top`, `!pb`), `scoreRows`, `records` and `tick`. `tick` runs at `MODE_TICK_HZ` (32 Hz).
-- **Client.** `game.ts` reads `modeOf(map)`. In race modes `RunTracker` runs every tick, as before. In other modes the tracker is skipped: teleport zones respawn the player at a random map spawn, and the race HUD (timer, splits) is hidden. `hud.gameMode`, `hud.modeFamily` and `hud.tag` drive the UI. The scoreboard and the score panel render `GAME_MODES[mode].score`.
+- **Client.** `game.ts` has no mode branches either (records, PBs and the stage count of race maps are still there). It owns one `ClientMode` per map (`modes/types.ts`) and replaces it on a map change, and on a disconnect unless the mode has `offline()` (a race run goes on, tag goes back to free roam). It asks the mode for the physics cvars of a tick (or none: no movement), the state packet's status, the camera effects, the looks of remote players and the solo row; it forwards buttons, number keys, `R`, `!r`, the mode's server messages and binary frames; `tick` runs after the movement of every tick and `frame` once per frame, where the mode publishes its HUD view. Race modes run `RunTracker` every tick. In tag, hide and seek and infected without a round, teleport zones respawn the player at a spawn of the mode. The race HUD (timer, splits) shows in race modes only. `hud.gameMode`, `hud.modeFamily` and the mode's own HUD field drive the UI. The scoreboard and the score panel render `GAME_MODES[mode].score`.
 - **Protocol.** These changes are additive. `welcome` and `mapChange` carry `mode`. Non-race modes send `modeState` messages; race modes never do. `ScoreRow` has optional mode fields (`score`, `it`, `kills`, `deaths`) and optional account totals (`pointsTotal`, `playtimeSecs`, `coins`), which the lobby adds to every mode's rows. `Status` has new `Tagger` and `Runner` values.
 
 ### Score display
@@ -58,7 +64,7 @@ apps/server/src/modes/
 2. Put its pure rules in `packages/shared/src/modes/<mode>.ts`, with vitest tests on a fake clock.
 3. Add `apps/server/src/modes/<mode>.ts` implementing `ServerMode`, and a case in `createServerMode`.
 4. Add a `ModeState` variant to `protocol.ts` (keep the `{ type: 'modeState', mode }` shape).
-5. Client: handle the mode in `game.ts` (`isRace()` branches, `onModeState`), add HUD fields in `contract.ts` and a HUD component.
+5. Client: add `apps/web/src/lib/game/modes/<mode>.ts` implementing `ClientMode` and its entry in `modes/index.ts`, HUD fields in `contract.ts` and a HUD component. A new server message type also goes into `ModeServerMessage`, a new mode command into `ModeCommand`; `game.ts` only forwards them.
 6. Give its maps `kind: '<mode>'`, and add map checks in `maps/maps.test.ts`.
 
 ## Tag
@@ -224,7 +230,7 @@ Mode id `hns` (family `hns`), label "Hide and Seek". Built like the CS:GO commun
 - **Freeze is server-enforced.** A frozen player whose position is more than 48 units from their freeze spawn is teleported back (`spawn` event, at most every 0.5 s); the client also skips movement while frozen.
 - **Cash bag.** Once per round, halfway through the seeking phase (`HNS_BAG_AT`), with 5 or more active players, a bag with 4–10 coins appears at `MapDef.hns.cashBag`. Announced in chat and on the HUD with its place; the first living hider to touch it gets it, seekers cannot. It stays until taken or the round ends ("Nobody took the cash bag."); late joiners get it with `modeState`. All payouts of this mode: [economy.md](economy.md#hide-and-seek).
 - **`!r` / `!back`** respawn (hiders at a hider spawn, seekers at a seeker spawn) only outside a round. Fall-out teleport zones respawn by role; teleport zones with `dest` move the player to that point (secret passages).
-- **Name tags.** Only within 600 units and in line of sight (`HNS_NAMETAG_RANGE`); seekers never see hiders' tags (no wallhack through tags). Seekers are drawn red with a red `SEEKER · name` tag.
+- **Name tags.** Only within 600 units and in line of sight (`HNS_NAMETAG_RANGE`); seekers never see hiders' tags (no wallhack through tags), and during a round spectators do not either, since they come back as seekers. Seekers are drawn red with a red `SEEKER · name` tag.
 - **Physics.** `HNS_CVARS` = surf profile (CS2 accelerate 6.5, friction 5.2, 250 run speed, legacy full-height jump), autobhop on, and the same soft bhop cap as Zombie Run and Infected: `sv_enablebunnyhopping 0` (each jump trims the speed to 286 u/s) with `sv_airaccelerate 30`. Strafing gains some back in the air: about 300 u/s on average, up to about 340. The server logs state packets above 600 u/s (`HNS_SPEED_LIMIT`) and ignores that player's knife swings for 1 s after one.
 - **Messages.** C→S `knife { origin, dir }`. S→C `hns { ev }` with `ev.e` = `spawn` (teleport + freeze, to that player only), `swing` (to the others), `waiting`, `starting`, `roundStart`, `release`, `found`, `newSeeker`, `lastHider`, `warn`, `bag { pos, place }`, `bagTaken { by, coins, paid }`, `end`. `modeState { mode: 'hns', phase, round, timeLeft, seekers[], hiders[], winner, players[{ id, role, finds, survived, frozen }], bag? }` (`bag`: `pending { secs }`, `out { pos, place }`, `taken { by, coins }` or null) on every change and once a second. Scoreboard rows: `status` Hider/Seeker, `kills` = finds, `score` = seconds survived.
 
