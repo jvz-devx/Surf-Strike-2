@@ -240,7 +240,8 @@ export function parseAllowedOrigins(raw: string | undefined): AllowedOrigins | n
 /** True when the upgrade request's `Origin` header is accepted by `allowed`. */
 export function isOriginAllowed(
 	req: Pick<IncomingMessage, 'headers'> & Partial<Pick<IncomingMessage, 'socket'>>,
-	allowed: AllowedOrigins | null
+	allowed: AllowedOrigins | null,
+	publicOrigin?: string
 ): boolean {
 	if (!allowed) return true;
 	const raw = firstHeader(req.headers.origin);
@@ -254,6 +255,7 @@ export function isOriginAllowed(
 	if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
 	if (allowed.origins.has(u.origin.toLowerCase())) return true;
 	if (allowed.sameOrigin) {
+		if (publicOrigin !== undefined) return u.origin === publicOrigin;
 		const host = firstHeader(req.headers.host);
 		const protocol = req.socket instanceof TLSSocket && req.socket.encrypted ? 'https' : 'http';
 		try {

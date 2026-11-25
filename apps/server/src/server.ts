@@ -113,6 +113,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 				: opts.allowedOrigins;
 	const publicLimits = opts.publicHost || process.env.NODE_ENV === 'production';
 	const maxPerIp =
+	const rawOrigin = process.env.ORIGIN?.trim();
+	const publicOrigin = allowedOrigins?.sameOrigin && rawOrigin ? URL.parse(rawOrigin) : undefined;
+	if (publicOrigin === null || (publicOrigin && publicOrigin.protocol !== 'http:' && publicOrigin.protocol !== 'https:')) {
+		throw new Error('ORIGIN must be a valid HTTP or HTTPS URL');
+	}
 		opts.maxPerIp ??
 		parseOptionalInt(process.env.MAX_PER_IP, 'MAX_PER_IP', 0) ??
 		(publicLimits ? DEFAULT_PROD_MAX_PER_IP : 0);
@@ -214,7 +219,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 		if (draining) return reject(503);
 		const path = (req.url ?? '/').split('?')[0];
 		if (path !== '/ws') return reject(404);
-		if (!isOriginAllowed(req, allowedOrigins)) return reject(403);
+		if (!isOriginAllowed(req, allowedOrigins, publicOrigin?.origin)) return reject(403);
 		const ip = clientIp(req, trustProxy);
 		const peer = normalizeIp(req.socket.remoteAddress);
 		if (trustProxy.requireVisitorIp && peer && trustProxy.isTrusted(peer) && ip === null) return reject(403);
