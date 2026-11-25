@@ -104,6 +104,416 @@
 			"fadeIn": 0.002,
 			"fadeOut": 0.1
 		},
+		"shotPistol": {
+			"src": "377786",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 18.69, "dur": 0.6 },
+				{ "start": 22.22, "dur": 0.6 },
+				{ "start": 27.21, "dur": 0.6 },
+				{ "start": 39.685, "dur": 0.6 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.3
+		},
+		"shotSmg": {
+			"src": "377786",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 96.785, "dur": 0.45 },
+				{ "start": 104.37, "dur": 0.45 },
+				{ "start": 113.72, "dur": 0.45 },
+				{ "start": 121.575, "dur": 0.45 },
+				{ "start": 126.325, "dur": 0.45 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.25
+		},
+		"shotLmg": {
+			"src": "402791",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 17.305, "dur": 0.9 },
+				{ "start": 25.625, "dur": 0.9 },
+				{ "start": 40.385, "dur": 0.9 },
+				{ "start": 52.925, "dur": 0.9 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.45
+		},
+		"shotSniper": {
+			"src": "438583",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 2.505, "dur": 1.6 },
+				{ "start": 10.21, "dur": 1.6 },
+				{ "start": 17.92, "dur": 1.6 },
+				{ "start": 25.635, "dur": 1.6 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.9
+		},
+		"shotBarrett": {
+			"src": "486079",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 0.415, "dur": 1.3 },
+				{ "start": 2.54, "dur": 1.3 },
+				{ "start": 6.4, "dur": 1.3 },
+				{ "start": 14.125, "dur": 1.3 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.7
+		},
+		"shotStriker": {
+			"src": "438567",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 4.93, "dur": 0.9 },
+				{ "start": 9.295, "dur": 0.9 },
+				{ "start": 13.445, "dur": 0.9 },
+				{ "start": 17.6, "dur": 0.9 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.5
+		},
+		"reload": {
+			"src": "854460",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 0.25, "dur": 1.9 },
+				{ "start": 3.48, "dur": 1.55 },
+				{ "start": 6.36, "dur": 1.94 }
+			],
+			"fadeIn": 0.005,
+			"fadeOut": 0.15
+		},
+		"magOut": {
+			"src": "854460",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 0.25, "dur": 0.32 },
+				{ "start": 3.48, "dur": 0.3 },
+				{ "start": 6.36, "dur": 0.55 }
+			],
+			"fadeIn": 0.005,
+			"fadeOut": 0.08
+		},
+		"magIn": {
+			"src": "854460",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 1.83, "dur": 0.34 },
+				{ "start": 4.76, "dur": 0.27 },
+				{ "start": 8.01, "dur": 0.29 }
+			],
+			"fadeIn": 0.005,
+			"fadeOut": 0.08
+		},
+		"casing": {
+			"src": "318964",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 2.47, "dur": 0.66 },
+				{ "start": 6.82, "dur": 0.68 },
+				{ "start": 15.25, "dur": 0.62 },
+				{ "start": 30.36, "dur": 0.62 },
+				{ "start": 34.21, "dur": 0.56 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.12
+		},
+		"shell": {
+			"src": "147261",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 18.18, "dur": 0.66 },
+				{ "start": 20.15, "dur": 0.56 },
+				{ "start": 24.05, "dur": 0.3 },
+				{ "start": 26.77, "dur": 0.54 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.12
+		},
+		"reloadDone": {
+			"src": "370345",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 0.815, "dur": 0.6 },
+				{ "start": 6.43, "dur": 0.6 },
+				{ "start": 8.3, "dur": 0.6 },
+				{ "start": 12.205, "dur": 0.72 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.08
+		},
+		"dryfire": {
+			"src": "540066",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 0.05, "dur": 0.45 },
+				{ "start": 1.04, "dur": 0.45 },
+				{ "start": 2.105, "dur": 0.47 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.1
+		},
+		"draw": {
+			"src": "701049",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 21.07, "dur": 0.5 },
+				{ "start": 22.995, "dur": 0.65 },
+				{ "start": 30.375, "dur": 0.55 },
+				{ "start": 32.385, "dur": 0.7 }
+			],
+			"fadeIn": 0.01,
+			"fadeOut": 0.12
+		},
+		"scope": {
+			"src": "701049",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 57.785, "dur": 0.4 },
+				{ "start": 58.915, "dur": 0.5 },
+				{ "start": 60.745, "dur": 0.55 }
+			],
+			"fadeIn": 0.01,
+			"fadeOut": 0.12
+		},
+		"throw": {
+			"src": "427979",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 6.87, "dur": 0.34 },
+				{ "start": 8.02, "dur": 0.34 },
+				{ "start": 10.27, "dur": 0.34 },
+				{ "start": 12.485, "dur": 0.34 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.004,
+			"fadeOut": 0.08
+		},
+		"knifeBounce": {
+			"src": "154634",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 1.05, "dur": 0.6 },
+				{ "start": 3.78, "dur": 0.6 },
+				{ "start": 6.945, "dur": 0.6 },
+				{ "start": 9.86, "dur": 0.6 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.2
+		},
+		"knifeStick": {
+			"src": "531877",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 0.11, "dur": 0.45 },
+				{ "start": 0.67, "dur": 0.45 },
+				{ "start": 1.785, "dur": 0.5 },
+				{ "start": 2.98, "dur": 0.5 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.12
+		},
+		"knifePickup": {
+			"src": "625622",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 0.27, "dur": 0.45 },
+				{ "start": 2.495, "dur": 0.45 },
+				{ "start": 4.44, "dur": 0.45 },
+				{ "start": 6.565, "dur": 0.45 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.003,
+			"fadeOut": 0.15
+		},
+		"impact": {
+			"src": "319214",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 0.265, "dur": 0.16 },
+				{ "start": 2.065, "dur": 0.16 },
+				{ "start": 3.75, "dur": 0.16 },
+				{ "start": 5.48, "dur": 0.16 },
+				{ "start": 8.715, "dur": 0.16 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.06
+		},
+		"hitBody": {
+			"src": "545523",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 1.215, "dur": 0.22 },
+				{ "start": 2.05, "dur": 0.22 },
+				{ "start": 5.47, "dur": 0.22 },
+				{ "start": 6.26, "dur": 0.22 },
+				{ "start": 7.01, "dur": 0.22 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.08
+		},
+		"hitHead": {
+			"src": "176227",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 0.055, "dur": 0.5 },
+				{ "start": 3.685, "dur": 0.5 },
+				{ "start": 7.325, "dur": 0.5 },
+				{ "start": 12.15, "dur": 0.5 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.25
+		},
+		"hitKill": {
+			"src": "717564",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 3.715, "dur": 0.9 },
+				{ "start": 17.62, "dur": 0.9 },
+				{ "start": 34.625, "dur": 0.9 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.5
+		},
+		"hurt": {
+			"src": "853588",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 0.975, "dur": 0.3 },
+				{ "start": 3.27, "dur": 0.3 },
+				{ "start": 8.415, "dur": 0.3 },
+				{ "start": 10.75, "dur": 0.3 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.1
+		},
+		"death": {
+			"src": "438309",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 2, "dur": 1.1 },
+				{ "start": 8.325, "dur": 1.1 },
+				{ "start": 12.535, "dur": 1.1 }
+			],
+			"snapDb": -12,
+			"fadeIn": 0.002,
+			"fadeOut": 0.4
+		},
+		"infect": {
+			"src": "769200",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 2.25, "dur": 1.5 },
+				{ "start": 8.78, "dur": 1.45 },
+				{ "start": 11.84, "dur": 1.4 }
+			],
+			"fadeIn": 0.02,
+			"fadeOut": 0.25
+		},
+		"beacon": {
+			"src": "487086",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 10.79, "dur": 0.5 },
+				{ "start": 14.87, "dur": 0.55 },
+				{ "start": 17.245, "dur": 0.6 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.2
+		},
+		"beaconSmash": {
+			"src": "623592",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 0, "dur": 0.6 },
+				{ "start": 0.65, "dur": 0.6 },
+				{ "start": 1.335, "dur": 0.55 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 0.15
+		},
+		"beaconUse": {
+			"src": "396470",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [
+				{ "start": 2.12, "dur": 0.6 },
+				{ "start": 5.195, "dur": 0.85 },
+				{ "start": 8.23, "dur": 0.45 }
+			],
+			"snapDb": -20,
+			"fadeIn": 0.003,
+			"fadeOut": 0.12
+		},
+		"moab": {
+			"src": "382611",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [{ "start": 0.9, "dur": 4.6 }],
+			"fadeIn": 0.05,
+			"fadeOut": 2
+		},
+		"moabDetonate": {
+			"src": "251401",
+			"tier": "deferred",
+			"bitrate": "64k",
+			"takes": [{ "start": 0.03, "dur": 4 }],
+			"snapDb": -20,
+			"fadeIn": 0.002,
+			"fadeOut": 2
+		},
 		"crash": {
 			"src": "45102",
 			"takes": [{ "start": 0.0, "dur": 3.2 }],

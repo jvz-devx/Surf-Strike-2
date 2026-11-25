@@ -3,19 +3,27 @@
 
 Usage (run from the repo root; raw files are untrusted data, only ffmpeg reads them):
 
-    python3 -I tools/audio/process.py <raw_dir> [--ab <ab_dir>]
+    python3 -I tools/audio/process.py <raw_dir> [--ab <ab_dir>] [--only <group>,<group>,…]
 
 <raw_dir> holds the Freesound HQ preview MP3s named <freesound id>.mp3 (see
 CREDITS.md). Writes apps/web/static/sfx/*.m4a (AAC, 48 kHz) and the generated
 apps/web/src/lib/audio/sfx.ts. With --ab, the abOnly entries of the manifest
 are rendered into <ab_dir> for listening tests.
 
+With --only, just the named event groups are cut and encoded. Every other
+shipped file stays byte-identical (AAC output differs between ffmpeg versions):
+it is only measured again for sfx.ts, so <raw_dir> needs the originals of the
+named groups alone. Use it to add or redo pools.
+
 Processing (manifest.json holds every number):
 - events: cut the take (start snapped to its transient), mono downmix, 30 Hz
   high-pass, short fade-in, sine fade-out; every take of a group is matched to
   one loudness (eventTargetLufs, measured with 1 s of padding), lowered for the
   whole group as needed so no take exceeds truePeakCeiling. Event levels in the
-  mix are then set in code (apps/web/src/lib/audio/mix.ts).
+  mix are then set in code (apps/web/src/lib/audio/mix.ts). A take may name
+  its own "src" (pools drawn from several recordings); a group may set
+  "bitrate" (default 96k) and "tier": "deferred" (listed in SFX_DEFERRED: the
+  game fetches those pools after the core set).
 - loops: cut len + xfade seconds and fold the last xfade seconds over the start
   with an equal-power crossfade, so the file loops seamlessly; normalised to
   loopTargetLufs.
@@ -44,7 +52,10 @@ def ffmpeg(args: list[str], data: bytes | None = None) -> bytes:
 
 
 def decode(path: str, start: float, dur: float, ch: int, sr: int) -> array.array:
-	raw = ffmpeg(['-ss', f'{max(0.0, start):.4f}', '-t', f'{dur:.4f}', '-i', path, '-ac', str(ch), '-ar', str(sr), '-f', 'f32le', '-'])
+	# -ss after -i: decode from the file start and drop samples up to `start`. Seeking the
+	# MP3 input instead restarts the decoder without its bit reservoir, which can mute
+	# the first frame after the seek point, exactly where a snapped transient sits.
+	raw = ffmpeg(['-i', path, '-ss', f'{max(0.0, start):.4f}', '-t', f'{dur:.4f}', '-ac', str(ch), '-ar', str(sr), '-f', 'f32le', '-'])
 	a = array.array('f')
 	a.frombytes(raw)
 	return a
@@ -114,11 +125,16 @@ def cut_take(raw: str, g: dict, take: dict, sr: int) -> array.array:
 	return x
 
 
+def group_files(name: str, g: dict) -> list[str]:
+	n = len(g['takes'])
+	return [f'{name}-{k + 1}.m4a' if n > 1 else f'{name}.m4a' for k in range(n)]
+
+
 def process_group(name: str, g: dict, raw_dir: str, out_dir: str, tmp: str, m: dict) -> list[dict]:
 	sr = m['sampleRate']
-	raw = os.path.join(raw_dir, g['src'] + '.mp3')
 	wavs = []
 	for k, take in enumerate(g['takes']):
+		raw = os.path.join(raw_dir, take.get('src', g.get('src', '')) + '.mp3')
 		wav = os.path.join(tmp, f'{name}-{k + 1}.wav')
 		write_wav(wav, cut_take(raw, g, take, sr), 1, sr)
 		wavs.append((wav, *measure(wav, pad=True)))
@@ -128,11 +144,36 @@ def process_group(name: str, g: dict, raw_dir: str, out_dir: str, tmp: str, m: d
 	target = min(m['eventTargetLufs'], *(li + ceil - tp for _w, li, tp in wavs))
 	files = []
 	for k, (wav, li, _tp) in enumerate(wavs):
-		fname = f'{name}-{k + 1}.m4a' if len(wavs) > 1 else f'{name}.m4a'
+		fname = group_files(name, g)[k]
 		out = os.path.join(out_dir, fname)
-		gdb, i, tp = encode(wav, out, target - li, 1, '96k', True, m['truePeakCeiling'])
+		gdb, i, tp = encode(wav, out, target - li, 1, g.get('bitrate', '96k'), True, m['truePeakCeiling'])
 		files.append({'file': fname, 'start': g['takes'][k]['_snapped'], 'dur': g['takes'][k]['dur'], 'gainDb': round(gdb, 2), 'lufs': i, 'truePeak': tp, 'bytes': os.path.getsize(out)})
 	return files
+
+
+def shipped_group(name: str, g: dict, out_dir: str) -> list[dict]:
+	"""--only: a group that is not being redone. Its shipped files are measured, not written."""
+	files = []
+	for fname in group_files(name, g):
+		out = os.path.join(out_dir, fname)
+		i, tp = measure(out, pad=True)
+		files.append({'file': fname, 'lufs': i, 'truePeak': tp, 'bytes': os.path.getsize(out), 'kept': True})
+	return files
+
+
+def shipped_loop(name: str, lp: dict, out_dir: str, m: dict) -> dict:
+	out = os.path.join(out_dir, f'{name}.m4a')
+	i, tp = measure(out, pad=False)
+	return {'file': f'{name}.m4a', 'loopSeconds': int(lp['len'] * m['sampleRate']) / m['sampleRate'], 'lufs': i, 'truePeak': tp, 'bytes': os.path.getsize(out), 'kept': True}
+
+
+def shipped_ir(ir: dict, out_dir: str) -> dict:
+	"""--only: the IR gain cannot be measured from the file, so it is read back from the generated sfx.ts."""
+	with open(TS_OUT) as f:
+		gdb = float(re.search(r"SFX_IR = \{ file: '[^']+', gainDb: (-?[\d.]+)", f.read()).group(1))
+	out = os.path.join(out_dir, ir['out'] + '.m4a')
+	_i, tp = measure(out, pad=True)
+	return {'file': ir['out'] + '.m4a', 'gainDb': gdb, 'truePeak': tp, 'bytes': os.path.getsize(out), 'kept': True}
 
 
 def process_loop(name: str, lp: dict, raw_dir: str, out_dir: str, tmp: str, m: dict) -> dict:
@@ -204,6 +245,12 @@ def write_ts(report: dict) -> None:
 		f"export const SFX_IR = {{ file: '{ir['file']}', gainDb: {ir['gainDb']} }} as const;",
 		'',
 	]
+	if report['deferred']:
+		lines += [
+			'/** Pools fetched after the core set above has loaded (manifest tier: deferred). */',
+			f"export const SFX_DEFERRED: readonly (keyof typeof SFX_EVENTS)[] = [{', '.join(repr(n) for n in report['deferred'])}];",
+			'',
+		]
 	with open(TS_OUT, 'w') as f:
 		f.write('\n'.join(lines).replace('"', "'"))
 
@@ -216,12 +263,17 @@ def main() -> None:
 	tmp = os.path.join(raw_dir, '..', 'work')
 	os.makedirs(tmp, exist_ok=True)
 	os.makedirs(OUT, exist_ok=True)
+	only = set(sys.argv[sys.argv.index('--only') + 1].split(',')) if '--only' in sys.argv else None
+	if only is not None and only - set(m['groups']):
+		raise SystemExit(f'--only: no such group: {sorted(only - set(m["groups"]))}')
 	report = {'groups': {}, 'loops': {}}
 	for name, g in m['groups'].items():
-		report['groups'][name] = process_group(name, g, raw_dir, OUT, tmp, m)
+		redo = only is None or name in only
+		report['groups'][name] = process_group(name, g, raw_dir, OUT, tmp, m) if redo else shipped_group(name, g, OUT)
 	for name, lp in m['loops'].items():
-		report['loops'][name] = process_loop(name, lp, raw_dir, OUT, tmp, m)
-	report['ir'] = process_ir(m['ir']['out'], m['ir'], raw_dir, OUT, tmp, m)
+		report['loops'][name] = process_loop(name, lp, raw_dir, OUT, tmp, m) if only is None else shipped_loop(name, lp, OUT, m)
+	report['ir'] = process_ir(m['ir']['out'], m['ir'], raw_dir, OUT, tmp, m) if only is None else shipped_ir(m['ir'], OUT)
+	report['deferred'] = [name for name, g in m['groups'].items() if g.get('tier') == 'deferred']
 	write_ts(report)
 	if ab_dir:
 		os.makedirs(ab_dir, exist_ok=True)

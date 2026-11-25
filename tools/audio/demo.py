@@ -32,6 +32,8 @@ DUR = 12.0
 
 # Mirrors apps/web/src/lib/audio/mix.ts and sfx.ts.
 MIX = dict(wind=-20, slideMin=-26, slideMax=-20, step=-28, jump=-33, landMin=-33, landMax=-21, zone=-29, record=-24, vote=-27, click=-31, swing=-30, hit=-24)
+# Combat levels (infected, zombies); not part of the demo sequence.
+MIX.update(shotBarrett=-15.5, shotSniper=-17, shotStriker=-18, shotLmg=-20.5, shotPistol=-23.5, shotSmg=-25, reload=-31, reloadDone=-31, dryfire=-33, draw=-33, scope=-37, claws=-28, throw=-29, knifeBounce=-31, knifeStick=-30, knifePickup=-33, impact=-31, hitBody=-24.5, hitHead=-22, hitKill=-21, hurt=-26, death=-27, infect=-26, beacon=-28, beaconSmash=-26, beaconUse=-28, moab=-22, moabDetonate=-19.5)
 VARIATION_DB = 1.5
 STEP_DISTANCE, STEP_MIN_SPEED, STEP_MAX_SPEED, LAND_MIN_SPEED = 76, 90, 320, 120
 
