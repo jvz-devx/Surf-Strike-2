@@ -1,6 +1,9 @@
 # Architecture
 
-The static client is on Vercel. The lobby runs as one Node process on the host's PC, exposed as `wss://` through a Cloudflare quick tunnel. The tunnel URL is published to the Vercel Runtime Cache every time the server starts.
+Surf Strike 2 supports two deployment modes:
+
+1. **Vercel + local host (`./start.sh`)**: the static client runs on Vercel, and the lobby runs as one Node process on a host PC behind a Cloudflare quick tunnel whose URL is published to the Vercel Runtime Cache.
+2. **Self-hosted container ([hosting.md](hosting.md))**: a single Docker image (`node:24-trixie-slim`) bundles the Node 24 game server with the SvelteKit `@sveltejs/adapter-node` client on one port (`8080`). The client connects directly to `wss://<host>/ws` without `/api/server`.
 
 ```
  Friends' browsers                    Vercel                         Host PC
@@ -38,16 +41,18 @@ Run `./start.sh` from the repo root to host for the public Vercel site. It loads
 1. Start the game server on `localhost:27015`.
 2. Spawn `cloudflared tunnel --url http://localhost:27015` and parse the `https://*.trycloudflare.com` URL from its output.
 3. `POST` that URL to `https://<vercel-app>/api/server` with header `Authorization: Bearer <HOST_SECRET>`. The API keeps `{ url, startedAt, lastSeen }` in the Vercel Runtime Cache for 3 minutes.
-4. Every 60 s, re-post as a heartbeat (`lastSeen`).
-5. On shutdown (SIGINT/SIGTERM), post `{ url: null }` so clients skip the connection attempt.
+4. Every 60 s, re-post as a heartbeat (`lastSeen`), refusing to overwrite a fixed non-`trycloudflare.com` server in discovery.
+5. On shutdown (SIGINT/SIGTERM), post `{ url: null, expectedUrl }` only if discovery still points to this tunnel, so a local host never clears a fixed self-hosted server.
+
+Before starting, `./start.sh` and `pnpm host` also check `FIXED_SERVER_URL` (if configured) and `GET /api/server`, refusing to run when a fixed self-hosted server answers healthy.
 
 ## Client connect flow
 
 1. Load the page and immediately start solo mode on the current default map.
-2. `GET /api/server`. If `url` is null or `lastSeen` is older than 3 minutes, stay solo and show "Offline — solo" in the HUD.
-3. Otherwise open `wss://<tunnel>/ws`. On success, switch to the server's current map and state.
-4. On disconnect, fall back to solo on the same map. Retry discovery every 10 s.
-5. A `?server=<url>` query parameter overrides discovery, for local testing.
+2. Check `?server=<url>`. If set, connect directly to that WebSocket URL.
+3. In a self-hosted build (`SURF_ADAPTER=node`), connect directly to `wss://<host>/ws` (or `ws://` on HTTP) on the same origin without calling `/api/server`.
+4. Otherwise (`adapter-vercel`), `GET /api/server`. If `url` is null or `lastSeen` is older than 3 minutes, stay solo and show "Offline — solo" in the HUD. If present, open `wss://<tunnel>/ws`.
+5. On disconnect, fall back to solo on the same map. Retry discovery every 10 s.
 
 ## One-time setup
 
@@ -73,7 +78,8 @@ Each client simulates its own movement with zero input lag. The server trusts po
   - horizontal speed never exceeded `sv_maxvelocity`;
   - no position jumps larger than speed allows (teleport detection), except server-known teleport triggers.
   A run failing any check is not saved, and the player gets a chat notice.
-- **Close codes:** 4000 no hello within 10 s, 4001 bad player id, 4002 same player id or same account connected again (old socket; that client stops auto-reconnecting until reload), 4003 server full, 4008 rate-limit kick, 4009 banned (sent after a `banned { reason, seconds? }` message; the client shows the ban screen and stops auto-reconnecting until reload, or with `seconds` until the ban lifts; see [Admin and bans](#admin-and-bans)), 4010 too many clients from this IP address ([connection limit](#connection-limit); the client stops auto-reconnecting until reload).
+- **Close codes:** 1001 server shutting down, 4000 no hello within 5 s (`HELLO_TIMEOUT_MS`), 4001 bad player id, 4002 same player id or same account connected again (old socket; that client stops auto-reconnecting until reload), 4003 server full or pre-hello connection cap reached, 4008 rate-limit kick, 4009 banned (sent after a `banned { reason, seconds? }` message; the client shows the ban screen and stops auto-reconnecting until reload, or with `seconds` until the ban lifts; see [Admin and bans](#admin-and-bans)), 4010 too many clients from this IP address ([connection limit](#connection-limit); the client stops auto-reconnecting until reload).
+- **Hardening and metrics:** pre-hello sockets use a separate cap (`MAX_PENDING_CONNECTIONS`, default 16) so unauthenticated sockets cannot take up the 32 player slots. Optional `ALLOWED_ORIGINS` enforces a WebSocket `Origin` allow-list. `/health` stays lightweight for probes, and `/metrics` serves Prometheus gauges and counters (players, event-loop delay p50/p99/max, snapshot and mode tick lateness, bytes/s, max socket `bufferedAmount`, process RSS). See [hosting.md](hosting.md).
 - **Security:** friends-only by design. Chat is HTML-escaped, names are limited to 24 chars, and each client is rate-limited (state 70 msg/s, chat 2 msg/s). No anti-cheat beyond run validation. Accounts: see below. Admin rights come only from the logged-in account (`ADMIN_USERNAMES`), never from a display name, and guests cannot use a registered username as their name ([Admin and bans](#admin-and-bans)).
 
 ## Protocol sketch
@@ -152,7 +158,7 @@ Username + password, no email or verification ([gameplay.md](gameplay.md#account
 
 ## Connection limit
 
-The public host (`pnpm host`, so `./start.sh`) accepts at most 3 connected clients per IP address (`maxPerIp`, close 4010), so one person cannot fill the lobby with bots to raise the [player multiplier](economy.md#player-multiplier). IPv6 is counted per /64. A reload, or the same account in another tab, replaces the old connection first and does not count twice. Clients with an unknown address (loopback, local dev) are never limited, and the dev server (`pnpm server`) has no limit.
+The public host (`pnpm host`, `./start.sh`) and production self-hosted servers (`NODE_ENV=production`) accept at most 3 connected clients per IP address (`maxPerIp` / `MAX_PER_IP`, close 4010), plus a per-IP cap on concurrent pre-hello sockets, so one person cannot fill the lobby or pending queue. IPv6 is counted per /64. A reload, or the same account in another tab, replaces the old connection first and does not count twice. Clients with an unknown address (loopback, local dev) are never limited, and the dev server (`pnpm server`) has no limit.
 
 ## Admin and bans
 
@@ -162,7 +168,7 @@ A small admin menu (Esc menu › Admin, [ui.md](ui.md#admin)) for the host. Code
 - **Rate limit and audit.** 30 admin actions per minute per connection. Every action is printed to the server console (`admin <name> (account <id>) <action> <target>`) and stored in `admin_log`; passwords, tokens and IPs are never logged.
 - **Maps.** Disabled maps (`map_settings`) are left out of vote options, RTV nominations, random picks (`MapRotation` takes a live `isEnabled` filter) and the lone-player Change map; at least one map always stays enabled. Disabling the current map does not end it. `forceMap` changes to any map (disabled ones too) at once for everyone, through `MapRotation.forceMap` and the normal `mapChange` broadcast; `extend` adds 10 minutes (not during a vote or pending change).
 - **Bans.** Targets: a connected player (by lobby id) or an account by username (offline ban). An account ban stores the account id (plus the player key of a connected target): all of its connections are kicked (`banned`, close 4009), and hello-token auto-login and `login` are refused. A guest ban stores the player key and, when known, the client IP: hellos with that key or IP are refused unless the hello token logs in an admin account. Admin accounts cannot be banned (nor ban themselves). Unban deletes the row. Bans by the abuse detection ([economy.md](economy.md#abuse-and-collusion)) have `created_by = auto` and an `expires_at`: expired ones no longer count and are deleted later. An admin can still ban such an account permanently.
-- **Client IP.** Tunnel connections arrive from cloudflared on loopback, so the IP is the `CF-Connecting-IP` header; it is only trusted on loopback connections. Direct connections use the socket address. A loopback address is never stored (it would ban everyone on the tunnel).
+- **Client IP.** Controlled by `TRUST_PROXY` ([hosting.md](hosting.md#trust_proxy)). Default `loopback` trusts `CF-Connecting-IP` and `X-Forwarded-For` only on loopback connections (local `cloudflared`). Set `TRUST_PROXY=private`, `cf`, or explicit CIDRs behind an in-cluster tunnel or reverse proxy so guest bans target the visitor IP rather than the proxy pod. Loopback and trusted proxy addresses are never stored.
 
 | Table | Columns |
 | --- | --- |

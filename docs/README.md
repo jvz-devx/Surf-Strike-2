@@ -44,6 +44,7 @@ Weapon models: `tools/models/procedural/build.sh [id…]` rebuilds the script-bu
 | File | Covers |
 | --- | --- |
 | [architecture.md](architecture.md) | Hosting, Cloudflare tunnel, server discovery, netcode, repo layout |
+| [hosting.md](hosting.md) | Self-hosted Docker image, env vars, hardening, `/metrics`, SQLite backups |
 | [physics.md](physics.md) | Source movement port, cvars, collision and traces |
 | [gameplay.md](gameplay.md) | Timer, zones, stages, leaderboards, chat, spectate, map vote, lobby, accounts |
 | [modes.md](modes.md) | Gamemode framework (surf, bhop, tag, infected, Zombie Run, hide and seek), how to add a mode, per-mode rules |
