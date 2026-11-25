@@ -94,6 +94,7 @@ describe('TRUST_PROXY and clientIp', () => {
 		assert.equal(clientIp(fakeReq('10.52.0.9', { 'x-forwarded-for': '203.0.113.7' }), tp), null);
 		assert.throws(() => parseTrustProxy('cf:10.52.0.0/'), /Invalid TRUST_PROXY/);
 		assert.throws(() => parseTrustProxy('cf:private'), /Invalid TRUST_PROXY/);
+		assert.throws(() => parseTrustProxy('cf'), /TRUST_PROXY/);
 	});
 
 	it('rejects missing or invalid visitor headers from trusted Cloudflare peers before upgrade', async () => {
@@ -130,7 +131,6 @@ describe('TRUST_PROXY and clientIp', () => {
 });
 
 describe('ALLOWED_ORIGINS', () => {
-	it('parses allow-list and checks origins including same-origin', () => {
 	it('uses ORIGIN for same-origin upgrades behind TLS termination', async (t) => {
 		const original = process.env.ORIGIN;
 		process.env.ORIGIN = 'https://public.example';
@@ -157,6 +157,7 @@ describe('ALLOWED_ORIGINS', () => {
 		}
 	});
 
+	it('parses allow-list and checks origins including same-origin', () => {
 		assert.equal(parseAllowedOrigins(undefined), null);
 		assert.equal(isOriginAllowed({ headers: {} }, null), true);
 
@@ -244,7 +245,6 @@ describe('pre-hello caps, hello timeout, metrics, web handler, and graceful shut
 		}
 	});
 
-	it('public defaults admit 12 players from one IP and cap pending peers separately', async () => {
 	it('sends full and closes with 4003 at the player cap while keeping pending caps', async () => {
 		const server = await startServer({ ...LOCAL_SERVER, maxPlayers: 1, maxPending: 2, maxPendingPerIp: 1 });
 		try {
@@ -273,6 +273,7 @@ describe('pre-hello caps, hello timeout, metrics, web handler, and graceful shut
 		}
 	});
 
+	it('public defaults admit 12 players from one IP and cap pending peers separately', async () => {
 		const server = await startServer({ ...LOCAL_SERVER, publicHost: true });
 		const ip = { 'cf-connecting-ip': '198.51.100.10' };
 		try {
