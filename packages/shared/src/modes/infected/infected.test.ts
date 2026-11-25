@@ -23,7 +23,6 @@ import {
 	INF_SECONDARY,
 	INF_SLEIGHT_RELOAD_FACTOR,
 	INF_SPECIALIST_CADENCE_FACTOR,
-	INF_SPECIALIST_HP,
 	INF_SPECIALIST_KNOCKBACK_FACTOR,
 	INF_STEADY_SPEED_FACTOR,
 	INF_SCORE_INFECT,
@@ -34,6 +33,7 @@ import {
 	INF_SCORE_SURVIVE_TICK,
 	INF_SCORE_SURVIVE_WIN,
 	INF_STEP_MS,
+	INF_SURVIVOR_HP,
 	InfectedGame,
 	infEventRoute,
 	infLoadout,
@@ -354,7 +354,7 @@ describe('Patient Zero', () => {
 		expect(gun).toMatchObject({ ok: false, reason: 'wrong weapon' });
 	});
 
-	it('a specialist survivor (6 HP) is infected by one swipe too', () => {
+	it('a specialist survivor is infected by one swipe too', () => {
 		const g = playing([1, 2, 3], LMG);
 		g.put(3, 1000, 1000);
 		g.put(2, -600, 600);
@@ -364,7 +364,7 @@ describe('Patient Zero', () => {
 			g.advance(200);
 			g.shoot(2, { x: -600, y: 300, z: 0 }, true);
 		}
-		expect(g.game.playerView(2)).toMatchObject({ hp: INF_SPECIALIST_HP, team: 'survivor' });
+		expect(g.game.playerView(2)).toMatchObject({ hp: INF_SURVIVOR_HP, streak: INF_PERK_KILLS.specialist, team: 'survivor' });
 		while (!g.game.playerView(1)!.alive) g.advance(INF_STEP_MS);
 		g.claw(1, 2);
 		expect(g.of('infect')).toEqual([{ e: 'infect', id: 2, by: 1, method: 'claws', timeAdded: INF_INFECTION_BONUS_SECS }]);
@@ -1815,7 +1815,7 @@ describe('kill streak perks and the M.O.A.B.', () => {
 		expect(g.game.secondaryOf(3)!.reserve).toBe(WEAPONS.pistol.reserve);
 	});
 
-	it('5 kills: steady aim (+12 % speed); 7 kills: specialist bonus (cadence, knockback, 6 HP, +250); infection resets it all', () => {
+	it('5 kills: steady aim (+12 % speed); 7 kills: specialist bonus (cadence, knockback, +250, no extra HP); infection resets it all', () => {
 		const g = streakGame();
 		for (let i = 0; i < 4; i++) killOne(g);
 		expect(g.game.moveSpeed(3)).toBe(WEAPONS.lmg.moveSpeed);
@@ -1825,7 +1825,7 @@ describe('kill streak perks and the M.O.A.B.', () => {
 		const before = g.game.playerView(3)!.score;
 		const seventh = killOne(g);
 		expect(perkEvents(seventh)).toEqual([{ e: 'perk', id: 3, perk: 'specialist', streak: 7 }]);
-		expect(g.game.playerView(3)).toMatchObject({ streak: 7, hp: INF_SPECIALIST_HP, kills: 7, perks: ['hardline', 'sleight', 'scavenger', 'steady', 'specialist'] });
+		expect(g.game.playerView(3)).toMatchObject({ streak: 7, hp: INF_SURVIVOR_HP, kills: 7, perks: ['hardline', 'sleight', 'scavenger', 'steady', 'specialist'] });
 		expect(g.game.playerView(3)!.score - before).toBe(INF_SCORE_KILL + INF_SCORE_SPECIALIST);
 		// Stronger knockback on a body hit that does not kill.
 		const v = [1, 2].find((id) => g.game.playerView(id)!.alive) ?? (g.advanceUntil('spawn', 4000), [1, 2].find((id) => g.game.playerView(id)!.alive)!);

@@ -114,7 +114,7 @@ export const INF_ROUND_SECS = 120;
 export const INF_INFECTION_BONUS_SECS = 20;
 export const INF_END_SECS = 7;
 export const INF_INFECTED_HP = 5;
-/** Survivor HP (claws and knives infect outright, so nothing lowers it). */
+/** Survivor HP, sent but not shown: claws and knives infect outright, so nothing lowers it. */
 export const INF_SURVIVOR_HP = 5;
 export const INF_RESPAWN_SECS = 3;
 /** Infected speed with claws; holding a gun uses WEAPONS[weapon].moveSpeed. */
@@ -160,8 +160,6 @@ export const INF_PERK_KILLS: Readonly<Record<InfPerkId, number>> = Object.freeze
 	specialist: 7
 });
 const PERK_ORDER: readonly InfPerkId[] = ['hardline', 'sleight', 'scavenger', 'steady', 'specialist'];
-/** Survivor HP after the specialist unlock (instant heal). */
-export const INF_SPECIALIST_HP = 6;
 export const INF_SCORE_SPECIALIST = 250;
 /** Sleight of hand: reload duration factor. */
 export const INF_SLEIGHT_RELOAD_FACTOR = 0.5;
@@ -1393,10 +1391,7 @@ export class InfectedGame {
 		for (const perk of PERK_ORDER) {
 			const at = INF_PERK_KILLS[perk];
 			if (at === 0 || prev >= at || by.streak < at) continue;
-			if (perk === 'specialist') {
-				by.hp = Math.max(by.hp, INF_SPECIALIST_HP);
-				by.score += INF_SCORE_SPECIALIST;
-			}
+			if (perk === 'specialist') by.score += INF_SCORE_SPECIALIST;
 			this.pending.push({ e: 'perk', id: by.id, perk, streak: by.streak });
 		}
 		const scav = this.hasPerk(by, 'scavenger');

@@ -40,7 +40,6 @@ import {
 	INF_SECONDARY,
 	INF_SLEIGHT_RELOAD_FACTOR,
 	INF_SPECIALIST_CADENCE_FACTOR,
-	INF_SPECIALIST_HP,
 	INF_STEADY_SPEED_FACTOR,
 	INF_STEADY_SPREAD_FACTOR,
 	INF_SURVIVOR_HP,
@@ -187,10 +186,9 @@ export const INF_PERK_INFO: Readonly<Record<InfPerkId, { name: string; toast: st
 	specialist: { name: 'Specialist', toast: 'SPECIALIST BONUS! All Perks Active +250' }
 });
 
-/** Max HP: the specialist unlock raises a survivor to INF_SPECIALIST_HP. */
-export function infMaxHp(team: InfTeam, perks: readonly InfPerkId[]): number {
-	if (team === 'infected') return INF_INFECTED_HP;
-	return perks.includes('specialist') ? INF_SPECIALIST_HP : INF_SURVIVOR_HP;
+/** Full HP of a team (the HUD shows it for infected only: one hit infects a survivor). */
+export function infMaxHp(team: InfTeam): number {
+	return team === 'infected' ? INF_INFECTED_HP : INF_SURVIVOR_HP;
 }
 
 /** Cosmetic tracers per trigger pull: 1, or 5-8 for a shotgun. */
@@ -1464,10 +1462,7 @@ export class InfectedClient {
 				}
 				this.streak = Math.max(this.streak, ev.streak);
 				this.perks = infPerksForStreak(this.streak);
-				if (ev.perk === 'specialist') {
-					this.hp = Math.max(this.hp, INF_SPECIALIST_HP);
-					this.line('You · SPECIALIST (+250)', true, false, now);
-				}
+				if (ev.perk === 'specialist') this.line('You · SPECIALIST (+250)', true, false, now);
 				this.perkFlash = { perk: ev.perk, at: now };
 				this.flash = { text: INF_PERK_INFO[ev.perk].toast, at: now, tone: ev.perk === 'specialist' ? 'bonus' : 'survivor' };
 				this.host.sound('perk');
@@ -1664,7 +1659,7 @@ export class InfectedClient {
 			survivors: s?.survivors ?? 0,
 			infected: s?.infected ?? 0,
 			hp: this.hp,
-			maxHp: infMaxHp(this.team, this.perks),
+			maxHp: infMaxHp(this.team),
 			alive: this.alive,
 			respawnAt: this.alive ? 0 : this.respawnAt,
 			weapon: ws.weapon,
@@ -1727,7 +1722,7 @@ export class InfectedClient {
 			team: p.team,
 			alpha: p.team === 'infected' && p.alpha,
 			hp: p.hp,
-			maxHp: infMaxHp(p.team, p.perks),
+			maxHp: infMaxHp(p.team),
 			alive: p.alive,
 			score: p.score,
 			weapon: p.weapon,

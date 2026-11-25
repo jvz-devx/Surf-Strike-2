@@ -17,7 +17,6 @@ import {
 	INF_SECONDARY,
 	INF_SLEIGHT_RELOAD_FACTOR,
 	INF_SPECIALIST_CADENCE_FACTOR,
-	INF_SPECIALIST_HP,
 	INF_STEADY_SPEED_FACTOR,
 	INF_STEADY_SPREAD_FACTOR,
 	INF_SURVIVOR_HP,
@@ -1364,7 +1363,7 @@ describe('specialist perks (client prediction)', () => {
 		}
 	});
 
-	it('Specialist: 6 HP at once, all perks, faster cadence; the state and spectators agree', () => {
+	it('Specialist: all perks, faster cadence, no extra HP; the state and spectators agree', () => {
 		const u = survivorMe('lmg', 100, 50);
 		// Without specialist the LMG waits its full fireMs.
 		u.c.press('attack', true, 1000);
@@ -1376,7 +1375,7 @@ describe('specialist perks (client prediction)', () => {
 		u.c.press('attack', false, 1100);
 		streakTo(u, 7, 1200);
 		const v = u.c.frame(1210, true, 0);
-		expect(v).toMatchObject({ hp: INF_SPECIALIST_HP, maxHp: INF_SPECIALIST_HP, streak: 7, perks: ['hardline', 'sleight', 'scavenger', 'steady', 'specialist'] });
+		expect(v).toMatchObject({ hp: INF_SURVIVOR_HP, maxHp: INF_SURVIVOR_HP, streak: 7, perks: ['hardline', 'sleight', 'scavenger', 'steady', 'specialist'] });
 		expect(v.flash).toMatchObject({ text: 'SPECIALIST BONUS! All Perks Active +250', tone: 'bonus' });
 		expect(v.killFeed[0]!.text).toContain('SPECIALIST');
 		const t0 = 2000;
@@ -1384,14 +1383,14 @@ describe('specialist perks (client prediction)', () => {
 		u.c.tick(t0, ORIGIN, 64, 0, 0, false);
 		u.c.tick(t0 + WEAPONS.lmg.fireMs * INF_SPECIALIST_CADENCE_FACTOR + 1, ORIGIN, 64, 0, 0, false);
 		expect(fires(u)).toHaveLength(4);
-		// The state reconciles (same perks), a spectator sees the 6-pip survivor.
+		// The state reconciles (same perks), a spectator sees the same.
 		const perks = infPerksForStreak(7);
-		u.c.onModeState(st({ players: [pv(1, { hp: 6, streak: 7, perks }), pv(3, { hp: 6, streak: 7, perks, moabReady: true })] }), 2100);
-		expect(u.c.frame(2110, true, 0)).toMatchObject({ maxHp: INF_SPECIALIST_HP, hp: 6 });
+		u.c.onModeState(st({ players: [pv(1, { streak: 7, perks }), pv(3, { streak: 7, perks, moabReady: true })] }), 2100);
+		expect(u.c.frame(2110, true, 0)).toMatchObject({ maxHp: INF_SURVIVOR_HP, streak: 7, perks });
 		u.c.setSpectate(true, 3);
-		expect(u.c.frame(2120, true, 0).spec).toMatchObject({ id: 3, maxHp: INF_SPECIALIST_HP, streak: 7, perks, moabReady: true });
-		expect(infMaxHp('survivor', [])).toBe(INF_SURVIVOR_HP);
-		expect(infMaxHp('infected', perks)).toBe(INF_INFECTED_HP);
+		expect(u.c.frame(2120, true, 0).spec).toMatchObject({ id: 3, maxHp: INF_SURVIVOR_HP, streak: 7, perks, moabReady: true });
+		expect(infMaxHp('survivor')).toBe(INF_SURVIVOR_HP);
+		expect(infMaxHp('infected')).toBe(INF_INFECTED_HP);
 	});
 
 	it('perks end with the survivor life: infection, a new round; a fall-out keeps them', () => {

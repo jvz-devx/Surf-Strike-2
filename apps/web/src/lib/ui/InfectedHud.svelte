@@ -52,7 +52,7 @@
 	const team = $derived(spec ? spec.team : inf.team);
 	const alpha = $derived(spec ? spec.alpha : inf.alpha);
 	const infected = $derived(team === 'infected');
-	/** Survivors carry guns, health pips and the 1/2 swap (patient zero too on older servers). */
+	/** Survivors carry guns and the 1/2 swap (patient zero too on older servers). */
 	const armed = $derived(!infected || (alpha && (spec ? spec.weapon : inf.weapon) !== 'claws'));
 	const hp = $derived(spec ? spec.hp : inf.hp);
 	const maxHp = $derived(spec ? spec.maxHp : inf.maxHp);
@@ -454,16 +454,13 @@
 			</div>
 		{/if}
 		<div class="status-row">
-			<div class="hp ss-panel ss-shadow" class:infected={infected && !alpha} class:alpha>
-				<span class="ss-label">{spec ? spec.name : alpha ? 'Patient zero' : infected ? 'Infected' : 'Health'}</span>
-				{#if armed}
-					<div class="pips">
-						{#each Array.from({ length: maxHp }, (_, i) => i) as i (i)}<span class="pip" class:full={i < hp}></span>{/each}
-					</div>
-				{:else}
-					<div class="bar"><div class="fill" style:width="{Math.round(hpFrac * 100)}%"></div></div>
-				{/if}
-			</div>
+			<!-- No health for survivors: one hit infects them. -->
+			{#if infected || spec}
+				<div class="hp ss-panel ss-shadow" class:infected={infected && !alpha} class:alpha>
+					<span class="ss-label">{spec ? spec.name : alpha ? 'Patient zero' : 'Infected'}</span>
+					{#if infected}<div class="bar"><div class="fill" style:width="{Math.round(hpFrac * 100)}%"></div></div>{/if}
+				</div>
+			{/if}
 			<div class="weapon ss-panel ss-shadow">
 				<span class="whead">
 					<span class="wname">{weaponLabel}</span>
@@ -1197,19 +1194,6 @@
 	}
 	.hp.alpha {
 		background: rgba(130, 34, 8, 0.82);
-	}
-	.pips {
-		display: flex;
-		gap: 4px;
-	}
-	.pip {
-		width: 16px;
-		height: 16px;
-		border: 1px solid rgba(255, 255, 255, 0.6);
-		background: rgba(0, 0, 0, 0.3);
-	}
-	.pip.full {
-		background: #e8f0e0;
 	}
 	.bar,
 	.reload {

@@ -130,7 +130,7 @@ export function mockInfectedView(scene: InfMockScene, now: number): InfectedView
 		loadoutLabel: def.label,
 		survivors: last ? 1 : 3,
 		infected: last ? 5 : 3,
-		hp: infected ? 3 : 4,
+		hp: infected ? 3 : 5,
 		maxHp: 5,
 		alive: scene !== 'down',
 		respawnAt: scene === 'down' ? now + 2400 : 0,

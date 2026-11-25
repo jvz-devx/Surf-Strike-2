@@ -5,13 +5,14 @@ import {
 	getMap,
 	headCentre,
 	INF_AMMO,
+	INF_INFECTED_HP,
 	INF_INFECTION_BONUS_SECS,
 	INF_SCORE_BANK_BONUS,
 	INF_SCORE_INFECT,
 	INF_SCORE_KNIFE_BONUS,
 	INF_SCORE_MOAB,
 	INF_SCORE_SURVIVE_WIN,
-	INF_SPECIALIST_HP,
+	INF_SURVIVOR_HP,
 	INF_UAV_INTERVAL_MS,
 	Status,
 	VIEW_HEIGHT,
@@ -538,7 +539,7 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 			}
 			for (const n of owners.values()) assert.ok(n <= 2, 'at most one knife per life in flight');
 			for (const p of v.players) {
-				assert.ok(Number.isFinite(p.hp) && p.hp >= 0 && p.hp <= INF_SPECIALIST_HP);
+				assert.ok(Number.isFinite(p.hp) && p.hp >= 0 && p.hp <= (p.team === 'infected' ? INF_INFECTED_HP : INF_SURVIVOR_HP));
 				if (p.team === 'survivor') assert.ok(p.alive && !p.alpha);
 				if (p.alpha) assert.equal(p.id, v.alphaId);
 			}
