@@ -10,6 +10,8 @@ const ZERO_VEC: Vec3 = { x: 0, y: 0, z: 0 };
 export class HnsMode implements ClientMode {
 	readonly id: GameModeId = 'hns';
 	readonly client: HnsClient;
+	/** I seek, or did before I went to spectate: the server takes spectators out of the round, but they come back as seekers. */
+	private seekerThisRound = false;
 
 	constructor(private readonly host: ClientModeHost) {
 		this.client = new HnsClient(clientHost(host), host.map);
@@ -56,7 +58,10 @@ export class HnsMode implements ClientMode {
 		if (hud.hns !== v) hud.hns = v;
 	}
 
-	/** Seekers are marked and hold the knife; tags only up close, in sight, never hider tags to seekers. */
+	/**
+	 * Seekers are marked and hold the knife; tags only up close, in sight, never
+	 * hider tags to seekers, to who sought this round or to who watches a seeker.
+	 */
 	dress(players: RemotePlayers, p: RemotePlayer, visible: boolean): void {
 		const { client, host } = this;
 		const role = client.roleOf(p.id);
@@ -67,7 +72,7 @@ export class HnsMode implements ClientMode {
 		const head = { x: p.sample.x, y: p.sample.y, z: p.sample.z + 64 };
 		const dist = Math.hypot(head.x - eye.x, head.y - eye.y, head.z - eye.z);
 		const los = dist <= HNS_NAMETAG_RANGE && host.world.trace(eye, head, ZERO_VEC, ZERO_VEC).fraction >= 1;
-		const viewer = host.spec ? null : client.roleOf(host.selfId);
+		const viewer = this.seekerThisRound ? 'seeker' : client.roleOf(host.viewId);
 		players.setTagVisible(p.id, hnsTagVisible(viewer, role, dist, los));
 	}
 
@@ -76,8 +81,11 @@ export class HnsMode implements ClientMode {
 	}
 
 	message(m: ModeServerMessage, now: number): void {
-		if (m.type === 'modeState' && m.mode === 'hns') this.client.onModeState(m, now);
-		else if (m.type === 'hns') {
+		if (m.type === 'modeState' && m.mode === 'hns') {
+			this.client.onModeState(m, now);
+			const role = this.client.roleOf(this.host.selfId);
+			if (role || (m.phase !== 'hiding' && m.phase !== 'seeking')) this.seekerThisRound = role === 'seeker';
+		} else if (m.type === 'hns') {
 			this.client.onEvent(m.ev, now);
 			if (m.ev.e === 'swing') this.host.avatarAct(m.ev.by, 'swing');
 		}

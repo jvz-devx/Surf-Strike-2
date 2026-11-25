@@ -352,13 +352,47 @@ describe('HnsMode', () => {
 			expect(log.traces).toHaveLength(1);
 		});
 
-		it('hides hider tags from seekers, but not from a spectator who was one', () => {
+		it('hides hider tags from seekers, also once they spectate, until the round is over', () => {
 			const { mode, state, fake, log } = setup();
+			const tag = () => dressed(mode, remote(3, 100), true).setTagVisible;
 			state('seeking', [1], [3]);
-			expect(dressed(mode, remote(3, 100), true).setTagVisible).toBe(false);
+			expect(tag()).toBe(false);
 			fake.spec = { targetId: null, freeFly: true, pos: { x: 50, y: 0, z: 64 } };
-			expect(dressed(mode, remote(3, 100), true).setTagVisible).toBe(true);
+			expect(tag()).toBe(false);
+			// The server took me out of the round.
+			state('seeking', [2], [3]);
+			expect(tag()).toBe(false);
 			expect(log.traces.at(-1)![0]).toEqual({ x: 50, y: 0, z: 64 });
+			state('ended', [2], [3]);
+			expect(tag()).toBe(true);
+			state('hiding', [2], [3]);
+			expect(tag()).toBe(true);
+		});
+
+		it('a spectator who did not seek sees the tags the watched player sees', () => {
+			const { mode, state, fake } = setup();
+			const tag = () => dressed(mode, remote(3, 100), true).setTagVisible;
+			state('seeking', [2], [1, 3, 4]);
+			fake.spec = { targetId: 2, freeFly: false, pos: { x: 0, y: 0, z: 64 } };
+			fake.viewId = 2;
+			state('seeking', [2], [3, 4]);
+			expect(tag()).toBe(false);
+			fake.spec = { targetId: 4, freeFly: false, pos: { x: 0, y: 0, z: 64 } };
+			fake.viewId = 4;
+			expect(tag()).toBe(true);
+			fake.spec = { targetId: 4, freeFly: true, pos: { x: 0, y: 0, z: 64 } };
+			fake.viewId = 1;
+			expect(tag()).toBe(true);
+		});
+
+		it('a hider who was found seeks from then on', () => {
+			const { mode, state, fake } = setup();
+			state('seeking', [2], [1, 3]);
+			expect(dressed(mode, remote(3, 100), true).setTagVisible).toBe(true);
+			state('seeking', [1, 2], [3]);
+			fake.spec = { targetId: null, freeFly: true, pos: { x: 0, y: 0, z: 64 } };
+			state('seeking', [2], [3]);
+			expect(dressed(mode, remote(3, 100), true).setTagVisible).toBe(false);
 		});
 	});
 
