@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { createConnection } from 'node:net';
 import { describe, it } from 'node:test';
 import { WebSocket } from 'ws';
 import { CLOSE_IP_LIMIT } from '@surf/shared';
@@ -7,6 +9,24 @@ import { startServer } from './server.ts';
 import { netState, sleep, TestClient, testMap } from './test-helpers.ts';
 
 const MAPS = [testMap('surf_a', 'Alpha')];
+const LOCAL_SERVER = { port: 0, host: '127.0.0.1', dbPath: ':memory:', maps: MAPS, log: () => {} };
+
+// A peer that reads the upgrade but sends neither hello nor a close acknowledgement.
+async function silentSocket(port: number, headers = '') {
+	const socket = createConnection({ host: '127.0.0.1', port });
+	try {
+		socket.write(
+			`GET /ws HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n` +
+			'Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n' + headers + '\r\n'
+		);
+		const [data] = await once(socket, 'data', { signal: AbortSignal.timeout(2_000) });
+		assert.match(String(data), /^HTTP\/1.1 101 /);
+		return socket;
+	} catch (err) {
+		socket.destroy();
+		throw err;
+	}
+}
 
 function fakeReq(remoteAddress: string, headers: Record<string, string | string[]> = {}) {
 	return { socket: { remoteAddress }, headers };
@@ -34,10 +54,31 @@ describe('TRUST_PROXY and clientIp', () => {
 		assert.equal(clientIp(fakeReq('198.51.100.5', { 'cf-connecting-ip': '1.2.3.4' }), tp), '198.51.100.5');
 	});
 
-	it('cf mode trusts CF-Connecting-IP from private hops and ignores X-Forwarded-For', () => {
-		const tp = parseTrustProxy('cf');
-		assert.equal(clientIp(fakeReq('10.42.0.9', { 'cf-connecting-ip': '203.0.113.7' }), tp), '203.0.113.7');
-		assert.equal(clientIp(fakeReq('10.42.0.9', { 'x-forwarded-for': '203.0.113.7' }), tp), null);
+	it('cf mode trusts only CF-Connecting-IP from explicitly configured peers', () => {
+		const tp = parseTrustProxy('cf:10.52.0.0/16');
+		assert.equal(clientIp(fakeReq('::ffff:10.52.0.9', { 'cf-connecting-ip': '203.0.113.7' }), tp), '203.0.113.7');
+		assert.equal(clientIp(fakeReq('10.42.0.9', { 'cf-connecting-ip': '203.0.113.7' }), tp), '10.42.0.9');
+		assert.equal(clientIp(fakeReq('10.52.0.9', { 'x-forwarded-for': '203.0.113.7' }), tp), null);
+		assert.throws(() => parseTrustProxy('cf:10.52.0.0/'), /Invalid TRUST_PROXY/);
+		assert.throws(() => parseTrustProxy('cf:private'), /Invalid TRUST_PROXY/);
+	});
+
+	it('rejects missing or invalid visitor headers from trusted Cloudflare peers before upgrade', async () => {
+		const server = await startServer({ ...LOCAL_SERVER, trustProxy: 'cf:127.0.0.1' });
+		try {
+			const badHeaders: Array<Record<string, string>> = [
+				{ 'x-forwarded-for': '198.51.100.1' },
+				{ 'cf-connecting-ip': '1.2.3.4, 5.6.7.8' }
+			];
+			for (const headers of badHeaders) {
+				await assert.rejects(new TestClient(server.port, headers).open(), /Unexpected server response: 403/);
+			}
+			const visitor = new TestClient(server.port, { 'cf-connecting-ip': '198.51.100.1' });
+			await visitor.hello('Visitor');
+			visitor.close();
+		} finally {
+			await server.close();
+		}
 	});
 
 	it('none ignores all forwarded headers and never returns loopback', () => {
@@ -64,10 +105,11 @@ describe('ALLOWED_ORIGINS', () => {
 		assert.equal(isOriginAllowed({ headers: { origin: 'https://play.example.com' } }, allowed), true);
 		assert.equal(isOriginAllowed({ headers: { origin: 'https://evil.example.com' } }, allowed), false);
 		assert.equal(isOriginAllowed({ headers: {} }, allowed), false);
-		assert.equal(
-			isOriginAllowed({ headers: { origin: 'https://self.example.com:8080', host: 'self.example.com:8080' } }, allowed),
-			true
-		);
+		const host = 'self.example.com:8080';
+		assert.equal(isOriginAllowed({ headers: { origin: `http://${host}`, host } }, allowed), true);
+		assert.equal(isOriginAllowed({ headers: { origin: `https://${host}`, host, 'x-forwarded-proto': 'https' } }, allowed), false);
+		assert.equal(isOriginAllowed({ headers: { origin: 'http://self.example.com:8081', host } }, allowed), false);
+		assert.equal(isOriginAllowed({ headers: { origin: 'http://self.example.com', host: 'self.example.com:80' } }, allowed), true);
 		assert.throws(() => parseAllowedOrigins('ftp://bad.example'), /http or https/);
 	});
 
@@ -78,7 +120,7 @@ describe('ALLOWED_ORIGINS', () => {
 			dbPath: ':memory:',
 			maps: MAPS,
 			log: () => {},
-			allowedOrigins: 'https://allowed.example'
+			allowedOrigins: 'https://allowed.example,same-origin'
 		});
 		try {
 			const rejectedStatus = await new Promise<number>((ok, fail) => {
@@ -97,6 +139,9 @@ describe('ALLOWED_ORIGINS', () => {
 			const w = await c.hello('Good');
 			assert.equal(w.map, 'surf_a');
 			c.close();
+			const local = new TestClient(server.port, { origin: `http://127.0.0.1:${server.port}` });
+			assert.equal((await local.hello('Local')).map, 'surf_a');
+			local.close();
 		} finally {
 			await server.close();
 		}
@@ -104,53 +149,76 @@ describe('ALLOWED_ORIGINS', () => {
 });
 
 describe('pre-hello caps, hello timeout, metrics, web handler, and graceful shutdown', () => {
-	it('pre-hello sockets use a separate cap, never block player slots, and respect per-IP pending cap + short hello timeout', async () => {
+	it('rejects pending overflows with HTTP 429 or 503 and terminates silent peers', async () => {
 		const server = await startServer({
-			port: 0,
-			host: '127.0.0.1',
-			dbPath: ':memory:',
-			maps: MAPS,
-			log: () => {},
-			maxPlayers: 2,
-			maxPending: 3,
-			maxPerIp: 2,
-			helloTimeoutMs: 250
+			...LOCAL_SERVER,
+			maxPending: 2,
+			maxPendingPerIp: 1,
+			helloTimeoutMs: 1_000
 		});
-		const open: TestClient[] = [];
+		const first = await silentSocket(server.port, 'CF-Connecting-IP: 198.51.100.10\r\n');
+		const firstClosed = once(first, 'close', { signal: AbortSignal.timeout(2_500) });
 		try {
-			// Two pending sockets from one IP fill the per-IP pending cap (2), 3rd from same IP is rejected with 4010.
-			const ipA = { 'cf-connecting-ip': '198.51.100.10' };
-			const p1 = new TestClient(server.port, ipA);
-			const p2 = new TestClient(server.port, ipA);
-			open.push(p1, p2);
-			await Promise.all([p1.open(), p2.open()]);
-			assert.equal(server.lobby.pendingCount, 2);
+			assert.equal(server.lobby.pendingCount, 1);
 			assert.equal(server.lobby.playerCount, 0);
-
-			const p3SameIp = new TestClient(server.port, ipA);
-			open.push(p3SameIp);
-			await p3SameIp.until(() => p3SameIp.closed);
-			assert.equal(p3SameIp.closeCode, CLOSE_IP_LIMIT);
-
-			// Another IP takes the 3rd pending slot and completes hello even while 2 pending sockets sit open.
-			const real1 = new TestClient(server.port, { 'cf-connecting-ip': '198.51.100.11' });
-			open.push(real1);
-			await real1.hello('Real1');
+			await assert.rejects(
+				new TestClient(server.port, { 'cf-connecting-ip': '198.51.100.10' }).open(),
+				/Unexpected server response: 429/
+			);
+			const second = new TestClient(server.port);
+			await second.open();
+			assert.equal(server.lobby.pendingCount, 2);
+			await assert.rejects(
+				new TestClient(server.port, { 'cf-connecting-ip': '198.51.100.11' }).open(),
+				/Unexpected server response: 503/
+			);
+			second.send({ type: 'hello', version: 1, playerId: 'second-peer', name: 'Second' });
+			await second.waitFor('welcome');
 			assert.equal(server.lobby.playerCount, 1);
-
-			// A second real player also gets the 2nd player slot despite the 2 pending sockets!
-			const real2 = new TestClient(server.port, { 'cf-connecting-ip': '198.51.100.12' });
-			open.push(real2);
-			await real2.hello('Real2');
-			assert.equal(server.lobby.playerCount, 2);
-
-			// The 2 silent pending sockets time out with close code 4000 within helloTimeoutMs.
-			await Promise.all([p1.until(() => p1.closed), p2.until(() => p2.closed)]);
-			assert.equal(p1.closeCode, 4000);
-			assert.equal(p2.closeCode, 4000);
+			await firstClosed;
+			const replacement = new TestClient(server.port, { 'cf-connecting-ip': '198.51.100.10' });
+			await replacement.hello('Replacement');
 			assert.equal(server.lobby.pendingCount, 0);
 		} finally {
-			for (const c of open) c.close();
+			first.destroy();
+			await server.close();
+		}
+	});
+
+	it('public defaults admit 12 players from one IP and cap pending peers separately', async () => {
+		const server = await startServer({ ...LOCAL_SERVER, publicHost: true });
+		const ip = { 'cf-connecting-ip': '198.51.100.10' };
+		try {
+			for (let i = 0; i < 12; i++) await new TestClient(server.port, ip).hello(`Player${i}`);
+			assert.equal(server.lobby.playerCount, 12);
+			const extra = new TestClient(server.port, ip);
+			await extra.open();
+			extra.send({ type: 'hello', version: 1, playerId: 'extra-peer', name: 'Extra' });
+			await extra.until(() => extra.closed);
+			assert.equal(extra.closeCode, CLOSE_IP_LIMIT);
+
+			// Missing IPs under the legacy policy share a single pending bucket.
+			const unknown = Array.from({ length: 4 }, () => new TestClient(server.port));
+			await Promise.all(unknown.map((c) => c.open()));
+			await assert.rejects(new TestClient(server.port).open(), /Unexpected server response: 429/);
+		} finally {
+			await server.close();
+		}
+	});
+
+	it('reports HTTP 503 on health and upgrades while draining', async () => {
+		const server = await startServer({ ...LOCAL_SERVER, closeGraceMs: 3_000 });
+		const silent = await silentSocket(server.port);
+		try {
+			const closed = server.close();
+			const health = await fetch(`http://127.0.0.1:${server.port}/health`);
+			assert.equal(health.status, 503);
+			assert.equal((await health.json()).ok, false);
+			await assert.rejects(new TestClient(server.port).open(), /Unexpected server response: 503/);
+			silent.destroy();
+			await closed;
+		} finally {
+			silent.destroy();
 			await server.close();
 		}
 	});

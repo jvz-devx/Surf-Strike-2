@@ -26,10 +26,9 @@ export const ADMIN_ACTIONS_PER_MINUTE = 30;
 /** Automatic warnings and bans in `adminState`. */
 export const ADMIN_ABUSE_MAX = 50;
 
-/** `ADMIN_USERNAMES` (comma-separated, case-insensitive). Unset: `tim`. Empty: no admins. */
+/** `ADMIN_USERNAMES` (comma-separated, case-insensitive). Unset or empty: no admins. */
 export function parseAdminUsernames(raw: string | undefined): string[] {
-	if (raw === undefined) return ['tim'];
-	return raw
+	return (raw ?? '')
 		.split(',')
 		.map((s) => s.trim())
 		.filter(Boolean)

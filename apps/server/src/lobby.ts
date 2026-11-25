@@ -64,6 +64,7 @@ export const TIME_LEFT_MS = 5000;
 export const HELLO_TIMEOUT_MS = 5_000;
 /** Maximum open sockets awaiting `hello` (separate from the 32 player slots). */
 export const MAX_PENDING_CONNECTIONS = 16;
+export const DEFAULT_MAX_PENDING_PER_IP = 4;
 
 /** Per-second limits: above `limit` messages are dropped, above `kick` the client is kicked. */
 export const RATE = {
@@ -91,9 +92,11 @@ export interface LobbyOptions {
 	maxPlayers?: number;
 	/** Pre-hello WebSocket connections allowed (separate from `maxPlayers`). Default 16. */
 	maxPending?: number;
+	/** Pending sockets per IP. 0 disables the per-IP cap. */
+	maxPendingPerIp?: number;
 	/** Close sockets that do not send `hello` within this many ms. Default 5000. */
 	helloTimeoutMs?: number;
-	/** Connected clients allowed per IP address (ipKey); 0 = no limit (default; `pnpm host` and production set 3). */
+	/** Connected players per IP. 0 disables the per-IP cap. */
 	maxPerIp?: number;
 	/** Optional runtime metrics hooks (/metrics). */
 	metrics?: LobbyMetricsHooks;
@@ -104,7 +107,7 @@ export interface LobbyOptions {
 	rtvBlock?: number;
 	/** Gamemode tuning (tests: shorter tag rounds). */
 	modes?: ModeOptions;
-	/** Admin account usernames, case-insensitive (default: ADMIN_USERNAMES rules, i.e. `tim`). */
+	/** Admin account usernames, case-insensitive (default: none). */
 	adminUsernames?: string[];
 }
 
@@ -170,6 +173,7 @@ export class Lobby {
 	private readonly now: () => number;
 	readonly maxPlayers: number;
 	private readonly maxPending: number;
+	private readonly maxPendingPerIp: number;
 	private readonly helloTimeoutMs: number;
 	private readonly maxPerIp: number;
 	private readonly metrics?: LobbyMetricsHooks;
@@ -205,6 +209,7 @@ export class Lobby {
 		this.now = opts.now ?? Date.now;
 		this.maxPlayers = opts.maxPlayers ?? MAX_PLAYERS;
 		this.maxPending = opts.maxPending ?? MAX_PENDING_CONNECTIONS;
+		this.maxPendingPerIp = opts.maxPendingPerIp ?? 0;
 		this.helloTimeoutMs = opts.helloTimeoutMs ?? HELLO_TIMEOUT_MS;
 		this.maxPerIp = opts.maxPerIp ?? 0;
 		this.metrics = opts.metrics;
@@ -400,13 +405,14 @@ export class Lobby {
 		return { name: fallback, taken: true };
 	}
 
-	/** True if `c`'s address already has `maxPerIp` connected clients. Unknown addresses (dev, loopback) are never limited. */
-	private ipFull(c: Client): boolean {
-		if (this.maxPerIp <= 0 || c.ip === null) return false;
-		const key = ipKey(c.ip);
+	/** Unknown addresses share one bucket, separate from any visitor IP. */
+	private countFromIp(ip: string | null, helloed: boolean): number {
+		const key = ip === null ? null : ipKey(ip);
 		let n = 0;
-		for (const o of this.clients) if (o !== c && o.helloed && o.ip !== null && ipKey(o.ip) === key) n++;
-		return n >= this.maxPerIp;
+		for (const c of this.clients) {
+			if (c.helloed === helloed && (c.ip === null ? null : ipKey(c.ip)) === key) n++;
+		}
+		return n;
 	}
 
 	get playerCount(): number {
@@ -447,31 +453,16 @@ export class Lobby {
 	// -----------------------------------------------------------------------
 	// Connections
 
-	/** `ip`: client IP for guest bans (admin.ts clientIp), null when unknown. */
-	handleConnection(socket: WebSocket, ip: string | null = null): void {
-		if (this.closing) {
-			socket.close(1001, 'server shutting down');
-			return;
-		}
-		if (this.playerCount >= this.maxPlayers) {
-			socket.send(JSON.stringify({ type: 'full' } satisfies ServerMessage));
-			socket.close(4003, 'server full');
-			return;
-		}
-		if (this.pendingCount >= this.maxPending) {
-			socket.send(JSON.stringify({ type: 'full' } satisfies ServerMessage));
-			socket.close(4003, 'too many pending connections');
-			return;
-		}
-		if (this.maxPerIp > 0 && ip !== null) {
-			const key = ipKey(ip);
-			let pendingFromIp = 0;
-			for (const o of this.clients) if (!o.helloed && o.ip !== null && ipKey(o.ip) === key) pendingFromIp++;
-			if (pendingFromIp >= Math.max(1, this.maxPerIp)) {
-				socket.close(CLOSE_IP_LIMIT, 'too many pending connections from this network');
-				return;
-			}
-		}
+	/** Called synchronously before the HTTP upgrade. */
+	upgradeStatus(ip: string | null): 503 | 429 | null {
+		if (this.closing || this.playerCount >= this.maxPlayers || this.pendingCount >= this.maxPending) return 503;
+		if (this.maxPendingPerIp > 0 && this.countFromIp(ip, false) >= this.maxPendingPerIp) return 429;
+		return null;
+	}
+
+	/** Only called for upgrades admitted by upgradeStatus. */
+	handleConnection(socket: WebSocket, ip: string | null): void {
+		socket.on('error', () => socket.terminate());
 		const c: Client = {
 			socket,
 			id: this.freeId(),
@@ -496,12 +487,7 @@ export class Lobby {
 			helloTimer: null,
 			closed: false
 		};
-		c.helloTimer = setTimeout(() => {
-			if (!c.helloed) {
-				socket.close(4000, 'hello timeout');
-				this.onClose(c);
-			}
-		}, this.helloTimeoutMs);
+		c.helloTimer = setTimeout(() => socket.terminate(), this.helloTimeoutMs);
 		this.clients.add(c);
 		socket.on('message', (data, isBinary) => {
 			try {
@@ -511,7 +497,6 @@ export class Lobby {
 			}
 		});
 		socket.on('close', () => this.onClose(c));
-		socket.on('error', () => socket.terminate());
 	}
 
 	private freeId(): number {
@@ -550,6 +535,7 @@ export class Lobby {
 	}
 
 	private onMessage(c: Client, data: Buffer, isBinary: boolean): void {
+		if (c.socket.readyState !== c.socket.OPEN) return;
 		const t = performance.now();
 		if (isBinary) {
 			const n = c.rate.state.hit(t);
@@ -691,7 +677,7 @@ export class Lobby {
 			return;
 		}
 		// After the duplicates are gone, so a reload or account takeover never counts twice.
-		if (this.ipFull(c)) {
+		if (this.maxPerIp > 0 && this.countFromIp(c.ip, true) >= this.maxPerIp) {
 			this.log(`too many connections from one address: #${c.id}`);
 			c.socket.close(CLOSE_IP_LIMIT, 'too many connections from this network');
 			return;
@@ -781,6 +767,7 @@ export class Lobby {
 			}
 			c.registers.hit('conn', t);
 			if (ipBucket !== null) this.registersByIp.hit(ipBucket, t);
+			if (this.admin.isAdminAccount(username)) return fail('That username is taken.');
 		} else if (ipBucket !== null && this.loginFailsByIp.blocked(ipBucket, this.now())) {
 			return fail(TOO_MANY);
 		}

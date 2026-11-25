@@ -1,5 +1,5 @@
 /** HTTP + WebSocket game server: `/health`, `/metrics`, `/ws`, and optional SvelteKit client handler. */
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,13 +14,14 @@ import {
 	type BackupSchedule
 } from './backup.ts';
 import { Db } from './db.ts';
-import { Lobby, MODE_TICK_HZ } from './lobby.ts';
+import { DEFAULT_MAX_PENDING_PER_IP, Lobby, MODE_TICK_HZ } from './lobby.ts';
 import type { LobbyOptions } from './lobby.ts';
 import { defaultMapId, loadMaps } from './maps.ts';
 import { ServerMetrics } from './metrics.ts';
 import {
 	clientIp,
 	isOriginAllowed,
+	normalizeIp,
 	parseAllowedOrigins,
 	parseTrustProxy,
 	type AllowedOrigins,
@@ -30,7 +31,7 @@ import {
 export const DEFAULT_PORT = 27015;
 export const DEFAULT_DB_PATH = resolve(fileURLToPath(new URL('..', import.meta.url)), 'data/surf.db');
 /** Default per-IP connection limit when NODE_ENV=production and MAX_PER_IP is unset. */
-export const DEFAULT_PROD_MAX_PER_IP = 3;
+export const DEFAULT_PROD_MAX_PER_IP = 12;
 /** Time to wait for clients to acknowledge WebSocket close 1001 before force-terminating. */
 export const DEFAULT_CLOSE_GRACE_MS = 2_000;
 
@@ -39,6 +40,8 @@ export type WebHandler = (req: IncomingMessage, res: ServerResponse, next?: () =
 export interface ServerOptions extends Omit<LobbyOptions, 'maps' | 'db'> {
 	/** 0 = random free port. Default PORT env or 27015. */
 	port?: number;
+	/** Apply public connection-limit defaults when hosting a quick tunnel. */
+	publicHost?: boolean;
 	/** Bind address. Default HOST env or all interfaces. */
 	host?: string;
 	/** SQLite path or ':memory:'. Default DB_PATH env or apps/server/data/surf.db. */
@@ -108,10 +111,15 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 			: typeof opts.allowedOrigins === 'string'
 				? parseAllowedOrigins(opts.allowedOrigins)
 				: opts.allowedOrigins;
+	const publicLimits = opts.publicHost || process.env.NODE_ENV === 'production';
 	const maxPerIp =
 		opts.maxPerIp ??
 		parseOptionalInt(process.env.MAX_PER_IP, 'MAX_PER_IP', 0) ??
-		(process.env.NODE_ENV === 'production' ? DEFAULT_PROD_MAX_PER_IP : 0);
+		(publicLimits ? DEFAULT_PROD_MAX_PER_IP : 0);
+	const maxPendingPerIp =
+		opts.maxPendingPerIp ??
+		parseOptionalInt(process.env.MAX_PENDING_PER_IP, 'MAX_PENDING_PER_IP', 0) ??
+		(publicLimits ? DEFAULT_MAX_PENDING_PER_IP : 0);
 	const maxPending = opts.maxPending ?? parseOptionalInt(process.env.MAX_PENDING_CONNECTIONS, 'MAX_PENDING_CONNECTIONS', 1);
 	const helloTimeoutMs = opts.helloTimeoutMs ?? parseOptionalInt(process.env.HELLO_TIMEOUT_MS, 'HELLO_TIMEOUT_MS', 100);
 	const webHandler = await resolveWebHandler(opts.webHandler ?? (process.env.WEB_HANDLER?.trim() || undefined));
@@ -130,6 +138,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 			...devRotationOverride(),
 			...opts,
 			maxPerIp,
+			maxPendingPerIp,
 			...(maxPending === undefined ? {} : { maxPending }),
 			...(helloTimeoutMs === undefined ? {} : { helloTimeoutMs }),
 			metrics: opts.metrics ?? metrics,
@@ -144,17 +153,18 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 		throw err;
 	}
 
+	let draining = false;
 	const http = createServer((req, res) => {
 		const path = (req.url ?? '/').split('?')[0];
 		if (path === '/health') {
-			res.writeHead(200, {
+			res.writeHead(draining ? 503 : 200, {
 				'content-type': 'application/json',
 				'cache-control': 'no-store',
 				'access-control-allow-origin': '*'
 			});
 			res.end(
 				JSON.stringify({
-					ok: true,
+					ok: !draining,
 					version: PROTOCOL_VERSION,
 					tickRate: TICK_RATE,
 					map: lobby.currentMap.id,
@@ -187,22 +197,24 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 
 	const wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 });
 	http.on('upgrade', (req, socket, head) => {
+		socket.on('error', () => socket.destroy());
+		const reject = (status: number) => {
+			socket.end(
+				`HTTP/1.1 ${status} ${STATUS_CODES[status]}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+				() => socket.destroy()
+			);
+		};
+		if (draining) return reject(503);
 		const path = (req.url ?? '/').split('?')[0];
-		if (path !== '/ws') {
-			socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
-			socket.destroy();
-			return;
-		}
-		if (!isOriginAllowed(req, allowedOrigins)) {
-			socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
-			socket.destroy();
-			return;
-		}
-		wss.handleUpgrade(req, socket, head, (ws) => {
-			wss.emit('connection', ws, req);
-		});
+		if (path !== '/ws') return reject(404);
+		if (!isOriginAllowed(req, allowedOrigins)) return reject(403);
+		const ip = clientIp(req, trustProxy);
+		const peer = normalizeIp(req.socket.remoteAddress);
+		if (trustProxy.requireVisitorIp && peer && trustProxy.isTrusted(peer) && ip === null) return reject(403);
+		const status = lobby.upgradeStatus(ip);
+		if (status !== null) return reject(status);
+		wss.handleUpgrade(req, socket, head, (ws) => lobby.handleConnection(ws, ip));
 	});
-	wss.on('connection', (socket, req) => lobby.handleConnection(socket, clientIp(req, trustProxy)));
 
 	try {
 		await new Promise<void>((ok, fail) => {
@@ -227,6 +239,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 	let closing: Promise<void> | null = null;
 	const close = (): Promise<void> => {
 		if (closing) return closing;
+		draining = true;
 		closing = (async () => {
 			// Stop timers, flush playtime/economy, and send WebSocket close 1001 to every client.
 			lobby.close();

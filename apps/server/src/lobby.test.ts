@@ -206,22 +206,18 @@ describe('lobby', () => {
 		assert.equal(res.type, 'runResult');
 	});
 
-	it('full lobby: 33rd connection gets {type:"full"}', async () => {
+	it('full lobby: the 33rd connection is rejected before upgrade', async () => {
 		for (const c of clients) c.close();
 		clients.length = 0;
 		await sleep(200);
-		const many: TestClient[] = [];
-		for (let i = 0; i < 32; i++) {
-			const c = new TestClient(server.port);
-			many.push(c);
-			clients.push(c);
+		for (let i = 0; i < 32; i += 8) {
+			const batch = Array.from({ length: 8 }, () => new TestClient(server.port));
+			clients.push(...batch);
+			await Promise.all(batch.map((c, j) => c.hello(`P${i + j}`)));
 		}
-		await Promise.all(many.map((c, i) => c.hello(`P${i}`)));
 		const extra = new TestClient(server.port);
 		clients.push(extra);
-		await extra.open();
-		await extra.until(() => extra.closed);
-		assert.deepEqual(extra.messages, [{ type: 'full' }]);
+		await assert.rejects(extra.open(), /Unexpected server response: 503/);
 		for (const c of clients) c.close();
 		clients.length = 0;
 		await sleep(200);

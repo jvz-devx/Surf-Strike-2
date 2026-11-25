@@ -17,8 +17,6 @@ import {
 	readHostEnv
 } from './tunnel.ts';
 
-/** Public host only: clients allowed per IP address (docs/architecture.md#connection-limit). */
-const HOST_MAX_PER_IP = 3;
 const HEARTBEAT_MS = 60_000;
 const TUNNEL_TIMEOUT_MS = 60_000;
 
@@ -41,7 +39,7 @@ if (activeFixed) {
 
 let server: Awaited<ReturnType<typeof startServer>>;
 try {
-	server = await startServer({ port: env.port, maxPerIp: HOST_MAX_PER_IP });
+	server = await startServer({ port: env.port, publicHost: true });
 } catch (err) {
 	console.error(`host: failed to start the game server: ${(err as Error).message}`);
 	process.exit(1);
@@ -77,7 +75,7 @@ async function clearDiscovery(ownUrl: string): Promise<void> {
 	try {
 		const cleared = await clearPublishedUrl(env, ownUrl);
 		if (cleared) console.log('host: discovery cleared');
-		else console.log('host: discovery points to another server; not clearing');
+		else console.log('host: discovery was not cleared');
 	} catch (err) {
 		console.error(`host: clear failed: ${(err as Error).message}`);
 	}

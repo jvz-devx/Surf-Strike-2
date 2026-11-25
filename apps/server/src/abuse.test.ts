@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { ABUSE, type AbuseSignal, HNS_PAY, HuntTracker, pts, TAG_PAY, TimeMeter, type HuntBody, type MapDef } from '@surf/shared';
 import { AbuseEngine } from './abuse.ts';
+import { hashPassword } from './auth.ts';
 import { world, type SimPlayer } from './economy-helpers.ts';
 import { startServer, type GameServer } from './server.ts';
 import { TestClient, testMap } from './test-helpers.ts';
@@ -477,7 +478,8 @@ describe('automatic ban (real server)', () => {
 	it('kicks with reason and time left, lifts by itself, and is listed for admins', async () => {
 		const tim = connect();
 		await tim.hello('x');
-		await tim.auth('register', 'Tim', 'secret');
+		assert.ok(server.db.createAccount('Tim', await hashPassword('secret')));
+		assert.equal((await tim.auth('login', 'Tim', 'secret')).ok, true);
 		const key = crypto.randomUUID();
 		const bob = connect();
 		await bob.hello('x', key);

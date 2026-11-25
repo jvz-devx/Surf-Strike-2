@@ -4,6 +4,7 @@
  */
 import type { IncomingMessage } from 'node:http';
 import { isIP } from 'node:net';
+import { TLSSocket } from 'node:tls';
 
 interface CidrV4 {
 	kind: 4;
@@ -24,6 +25,8 @@ export interface TrustProxy {
 	readonly label: string;
 	/** Whether `X-Forwarded-For` is accepted (false in `cf`-only or `none` mode). */
 	readonly allowXff: boolean;
+	/** Require a valid visitor IP when the peer is trusted. */
+	readonly requireVisitorIp?: boolean;
 	/** True when `ip` (normalized IPv4/IPv6) is a trusted proxy hop. */
 	isTrusted(ip: string): boolean;
 }
@@ -86,7 +89,9 @@ function parseCidr(raw: string): Cidr | null {
 	if (!ipPart) return null;
 	const v = isIP(ipPart);
 	const maxBits = v === 4 ? 32 : 128;
-	const bits = slash === -1 ? maxBits : Number(raw.slice(slash + 1));
+	const suffix = raw.slice(slash + 1);
+	if (slash !== -1 && !/^\d+$/.test(suffix)) return null;
+	const bits = slash === -1 ? maxBits : Number(suffix);
 	if (!Number.isInteger(bits) || bits < 0 || bits > maxBits) return null;
 	if (v === 4) {
 		const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
@@ -117,7 +122,7 @@ function matchesAny(ip: string, cidrs: readonly Cidr[]): boolean {
  * - unset / `loopback`: trust `CF-Connecting-IP` and `X-Forwarded-For` from loopback only (local `cloudflared` default)
  * - `none` / `off` / `false`: ignore forwarded headers
  * - `private` / `cluster`: trust loopback and RFC1918/ULA/CGNAT pod/proxy hops
- * - `cf` / `cloudflare`: trust `CF-Connecting-IP` only from loopback or private hops
+ * - `cf:<list>`: require `CF-Connecting-IP` from the listed proxy IPs or CIDRs, ignoring XFF
  * - comma-separated IPs, CIDRs, or keywords (e.g. `loopback,10.42.0.0/16`)
  */
 export function parseTrustProxy(raw: string | undefined): TrustProxy {
@@ -132,19 +137,17 @@ export function parseTrustProxy(raw: string | undefined): TrustProxy {
 	if (lower === 'private' || lower === 'cluster') {
 		return { label: 'private', allowXff: true, isTrusted: (ip) => matchesAny(ip, PRIVATE_CIDRS) };
 	}
-	if (lower === 'cf' || lower === 'cloudflare') {
-		return { label: 'cf', allowXff: false, isTrusted: (ip) => matchesAny(ip, PRIVATE_CIDRS) };
-	}
+	const cloudflare = lower.startsWith('cf:');
 	const cidrs: Cidr[] = [];
-	for (const part of trimmed.split(',')) {
+	for (const part of (cloudflare ? trimmed.slice(3) : trimmed).split(',')) {
 		const token = part.trim();
-		if (!token) continue;
+		if (!token && !cloudflare) continue;
 		const t = token.toLowerCase();
-		if (t === 'loopback') {
+		if (!cloudflare && t === 'loopback') {
 			cidrs.push(...LOOPBACK_CIDRS);
 			continue;
 		}
-		if (t === 'private' || t === 'cluster') {
+		if (!cloudflare && (t === 'private' || t === 'cluster')) {
 			cidrs.push(...PRIVATE_CIDRS);
 			continue;
 		}
@@ -152,7 +155,12 @@ export function parseTrustProxy(raw: string | undefined): TrustProxy {
 		if (!cidr) throw new Error(`Invalid TRUST_PROXY entry: "${token}"`);
 		cidrs.push(cidr);
 	}
-	return { label: trimmed, allowXff: true, isTrusted: (ip) => matchesAny(ip, cidrs) };
+	return {
+		label: trimmed,
+		allowXff: !cloudflare,
+		requireVisitorIp: cloudflare,
+		isTrusted: (ip) => matchesAny(ip, cidrs)
+	};
 }
 
 export const DEFAULT_TRUST_PROXY: TrustProxy = parseTrustProxy(undefined);
@@ -231,7 +239,7 @@ export function parseAllowedOrigins(raw: string | undefined): AllowedOrigins | n
 
 /** True when the upgrade request's `Origin` header is accepted by `allowed`. */
 export function isOriginAllowed(
-	req: Pick<IncomingMessage, 'headers'>,
+	req: Pick<IncomingMessage, 'headers'> & Partial<Pick<IncomingMessage, 'socket'>>,
 	allowed: AllowedOrigins | null
 ): boolean {
 	if (!allowed) return true;
@@ -246,8 +254,13 @@ export function isOriginAllowed(
 	if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
 	if (allowed.origins.has(u.origin.toLowerCase())) return true;
 	if (allowed.sameOrigin) {
-		const host = firstHeader(req.headers.host).toLowerCase();
-		if (host && u.host.toLowerCase() === host) return true;
+		const host = firstHeader(req.headers.host);
+		const protocol = req.socket instanceof TLSSocket && req.socket.encrypted ? 'https' : 'http';
+		try {
+			return Boolean(host) && u.origin === new URL(`${protocol}://${host}`).origin;
+		} catch {
+			return false;
+		}
 	}
 	return false;
 }
