@@ -77,8 +77,8 @@ export class TestClient {
 	closeCode = 0;
 	private waiters: Array<() => void> = [];
 
-	constructor(port: number, headers?: Record<string, string>) {
-		this.ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, headers ? { headers } : undefined);
+	constructor(port: number, headers?: Record<string, string>, protocols: string[] = []) {
+		this.ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, protocols, headers ? { headers } : undefined);
 		this.ws.binaryType = 'arraybuffer';
 		this.ws.on('message', (data, isBinary) => {
 			if (isBinary && new Uint8Array(data as ArrayBuffer)[0] === BIN_ZOMBIES) {

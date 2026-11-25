@@ -16,6 +16,8 @@ import type { Vec3 } from './types.ts';
 import { TICK_RATE } from './units.ts';
 
 export const PROTOCOL_VERSION = 2;
+/** WebSocket subprotocol that sends a database identity before hello. */
+export const SERVER_ID_PROTOCOL = 'surf-server-identity';
 export const MAX_PLAYERS = 32;
 /** Close code: too many clients from this IP address (docs/architecture.md#connection-limit). */
 export const CLOSE_IP_LIMIT = 4010;
@@ -352,8 +354,11 @@ export interface PointLogEntry {
 export const RECENT_AWARDS = 30;
 
 export type ServerMessage =
+	| { type: 'serverIdentity'; serverId: string }
 	| {
 			type: 'welcome';
+			/** Stable SQLite identity, absent on older servers. */
+			serverId?: string;
 			selfId: number;
 			map: string;
 			/** Gamemode of `map` (optional for old servers: derive from the map). */

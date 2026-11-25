@@ -53,6 +53,7 @@ import { HELP_LINES, parseCommand } from './commands.ts';
 import type { AccountRow, BanRow, Db } from './db.ts';
 import { Economy } from './economy.ts';
 import { TickScheduler } from './scheduler.ts';
+import type { LobbyMetricsHooks } from './metrics.ts';
 import { Shop } from './shop.ts';
 import { isClientTransport, WsClientTransport, type ClientTransport } from './transport.ts';
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
@@ -66,7 +67,10 @@ export const SCOREBOARD_MS = 1000;
 export const ROTATION_MS = 100;
 export const PING_MS = 500;
 export const TIME_LEFT_MS = 5000;
-export const HELLO_TIMEOUT_MS = 10_000;
+export const HELLO_TIMEOUT_MS = 5_000;
+/** Maximum open sockets awaiting `hello` (separate from the 32 player slots). */
+export const MAX_PENDING_CONNECTIONS = 16;
+export const DEFAULT_MAX_PENDING_PER_IP = 4;
 
 /** Parse an optional SNAPSHOT_HZ setting (default 32; 64 supported for lower latency on good links). */
 export function parseSnapshotHz(raw: string | number | undefined): number {
@@ -100,8 +104,16 @@ export interface LobbyOptions {
 	/** Snapshot send rate in Hz (default SNAPSHOT_HZ = 32; 64 supported). */
 	snapshotHz?: number;
 	maxPlayers?: number;
-	/** Connected clients allowed per IP address (ipKey); 0 = no limit (default; `pnpm host` sets 3). */
+	/** Pre-hello WebSocket connections allowed (separate from `maxPlayers`). Default 16. */
+	maxPending?: number;
+	/** Pending sockets per IP. 0 disables the per-IP cap. */
+	maxPendingPerIp?: number;
+	/** Close sockets that do not send `hello` within this many ms. Default 5000. */
+	helloTimeoutMs?: number;
+	/** Connected players per IP. 0 disables the per-IP cap. */
 	maxPerIp?: number;
+	/** Optional runtime metrics hooks (/metrics). */
+	metrics?: LobbyMetricsHooks;
 	log?: (msg: string) => void;
 	/** Seconds per map (default MAP_DURATION); dev testing only, see server.ts. */
 	mapDuration?: number;
@@ -109,7 +121,7 @@ export interface LobbyOptions {
 	rtvBlock?: number;
 	/** Gamemode tuning (tests: shorter tag rounds). */
 	modes?: ModeOptions;
-	/** Admin account usernames, case-insensitive (default: ADMIN_USERNAMES rules, i.e. `tim`). */
+	/** Admin account usernames, case-insensitive (default: none). */
 	adminUsernames?: string[];
 }
 
@@ -181,9 +193,15 @@ export class Lobby {
 	private readonly serverClock: () => number;
 	private readonly snapHz: number;
 	private snapshotSeq = 0;
-	private readonly maxPlayers: number;
+	readonly maxPlayers: number;
+	private readonly maxPending: number;
+	private readonly maxPendingPerIp: number;
+	private readonly helloTimeoutMs: number;
 	private readonly maxPerIp: number;
+	private readonly metrics?: LobbyMetricsHooks;
 	private readonly log: (msg: string) => void;
+	private readonly loginFailsByIp = new AttemptLimiter(AUTH_LIMITS.loginFailsPerConnection * 2);
+	private readonly registersByIp = new AttemptLimiter(AUTH_LIMITS.registersPerConnection * 2);
 	private map: MapDef;
 	private scheduler: TickScheduler | null = null;
 	private lastTimeLeftSent = 0;
@@ -212,7 +230,11 @@ export class Lobby {
 		this.db = opts.db;
 		this.now = opts.now ?? Date.now;
 		this.maxPlayers = opts.maxPlayers ?? MAX_PLAYERS;
+		this.maxPending = opts.maxPending ?? MAX_PENDING_CONNECTIONS;
+		this.maxPendingPerIp = opts.maxPendingPerIp ?? 0;
+		this.helloTimeoutMs = opts.helloTimeoutMs ?? HELLO_TIMEOUT_MS;
 		this.maxPerIp = opts.maxPerIp ?? 0;
+		this.metrics = opts.metrics;
 		this.log = opts.log ?? ((m) => console.log(m));
 		this.accounts = new Accounts(this.db, () => this.now());
 		this.stats = new AccountStats(this.db, opts.playClock ?? opts.now, this.log);
@@ -313,6 +335,7 @@ export class Lobby {
 
 	/** Advance gamemode rules (timer-driven at MODE_TICK_HZ; public for tests). */
 	tickMode(): void {
+		this.metrics?.recordModeTick();
 		this.mode.tick();
 		this.economy.tick();
 		this.casino.tick();
@@ -433,13 +456,14 @@ export class Lobby {
 		return { name: fallback, taken: true };
 	}
 
-	/** True if `c`'s address already has `maxPerIp` connected clients. Unknown addresses (dev, loopback) are never limited. */
-	private ipFull(c: Client): boolean {
-		if (this.maxPerIp <= 0 || c.ip === null) return false;
-		const key = ipKey(c.ip);
+	/** Unknown addresses share one bucket, separate from any visitor IP. */
+	private countFromIp(ip: string | null, helloed: boolean): number {
+		const key = ip === null ? null : ipKey(ip);
 		let n = 0;
-		for (const o of this.clients) if (o !== c && o.helloed && o.ip !== null && ipKey(o.ip) === key) n++;
-		return n >= this.maxPerIp;
+		for (const c of this.clients) {
+			if (c.helloed === helloed && (c.ip === null ? null : ipKey(c.ip)) === key) n++;
+		}
+		return n;
 	}
 
 	get playerCount(): number {
@@ -448,28 +472,57 @@ export class Lobby {
 		return n;
 	}
 
+	/** Open sockets that have not completed `hello` yet. */
+	get pendingCount(): number {
+		let n = 0;
+		for (const c of this.clients) if (!c.helloed) n++;
+		return n;
+	}
+
+	/** Largest WebSocket send queue across all connected sockets (bytes). */
+	maxBufferedBytes(): number {
+		let max = 0;
+		for (const c of this.clients) {
+			if (c.socket.bufferedAmount > max) max = c.socket.bufferedAmount;
+		}
+		return max;
+	}
+
 	close(): void {
 		this.closing = true;
 		this.scheduler?.stop();
 		this.scheduler = null;
 		this.stats.close();
 		this.economy.close();
-		for (const c of this.clients) c.transport.close(1001, 'server shutting down');
+		for (const c of this.clients) {
+			if (c.helloTimer) clearTimeout(c.helloTimer);
+			c.helloTimer = null;
+			c.transport.close(1001, 'server shutting down');
+		}
 	}
 
 	// -----------------------------------------------------------------------
 	// Connections
 
+	/** Called synchronously before the HTTP upgrade. */
+	upgradeStatus(ip: string | null): 503 | 429 | null {
+		if (this.closing || this.playerCount >= this.maxPlayers || this.pendingCount >= this.maxPending) return 503;
+		if (this.maxPendingPerIp > 0 && this.countFromIp(ip, false) >= this.maxPendingPerIp) return 429;
+		return null;
+	}
+
 	/** `ip`: client IP for guest bans (admin.ts clientIp), null when unknown. */
 	handleConnection(conn: WebSocket | ClientTransport, ip: string | null = null): void {
 		const transport = isClientTransport(conn) ? conn : new WsClientTransport(conn);
-		if (this.closing) {
-			transport.close(1001, 'server shutting down');
-			return;
-		}
-		if (this.clients.size >= this.maxPlayers) {
-			transport.sendReliable(JSON.stringify({ type: 'full' } satisfies ServerMessage));
-			transport.close(4003, 'server full');
+
+		const status = this.upgradeStatus(ip);
+		if (status !== null) {
+			if (this.closing) transport.close(1001, 'server shutting down');
+			else if (status === 429) transport.close(CLOSE_IP_LIMIT, 'too many pending connections');
+			else {
+				transport.sendReliable(JSON.stringify({ type: 'full' } satisfies ServerMessage));
+				transport.close(4003, 'server full');
+			}
 			return;
 		}
 		const c: Client = {
@@ -500,9 +553,7 @@ export class Lobby {
 			helloTimer: null,
 			closed: false
 		};
-		c.helloTimer = setTimeout(() => {
-			if (!c.helloed) transport.close(4000, 'hello timeout');
-		}, HELLO_TIMEOUT_MS);
+		c.helloTimer = setTimeout(() => transport.terminate(), this.helloTimeoutMs);
 		this.clients.add(c);
 		transport.onMessage((data, isBinary) => {
 			try {
@@ -516,6 +567,7 @@ export class Lobby {
 		});
 		transport.onClose(() => this.onClose(c));
 		transport.onError(() => transport.terminate());
+		this.send(c, { type: 'serverIdentity', serverId: this.db.serverId });
 	}
 
 	private freeId(): number {
@@ -554,6 +606,7 @@ export class Lobby {
 	}
 
 	private onMessage(c: Client, data: Buffer, isBinary: boolean): void {
+		if (c.socket.readyState !== c.socket.OPEN) return;
 		const t = performance.now();
 		if (isBinary) {
 			const n = c.rate.state.hit(t);
@@ -688,8 +741,14 @@ export class Lobby {
 		const guest = this.guestNameFor(typeof msg.name === 'string' ? msg.name : '', msg.playerId);
 		const guestName = guest.name;
 		if (resumed) this.dropAccountDuplicates(c, resumed.account.id);
+		// Re-check player cap after dropping duplicates in case pending sockets raced for the last slot.
+		if (this.playerCount >= this.maxPlayers) {
+			this.send(c, { type: 'full' });
+			c.socket.close(4003, 'server full');
+			return;
+		}
 		// After the duplicates are gone, so a reload or account takeover never counts twice.
-		if (this.ipFull(c)) {
+		if (this.maxPerIp > 0 && this.countFromIp(c.ip, true) >= this.maxPerIp) {
 			this.log(`too many connections from one address: #${c.id}`);
 			c.transport.close(CLOSE_IP_LIMIT, 'too many connections from this network');
 			return;
@@ -712,6 +771,7 @@ export class Lobby {
 		for (const o of this.clients) if (o.helloed) players.push(info(o));
 		this.send(c, {
 			type: 'welcome',
+			serverId: this.db.serverId,
 			selfId: c.id,
 			map: this.map.id,
 			mode: this.map.kind,
@@ -774,10 +834,17 @@ export class Lobby {
 		if (c.accountId !== null) return fail(`Already logged in as ${c.name}. Log out first.`);
 		const username = typeof msg.username === 'string' ? msg.username.slice(0, 256) : '';
 		const password = typeof msg.password === 'string' ? msg.password : '';
+		const ipBucket = c.ip !== null ? ipKey(c.ip) : null;
 		if (msg.type === 'register') {
 			const t = this.now();
-			if (c.registers.blocked('conn', t)) return fail(TOO_MANY);
+			if (c.registers.blocked('conn', t) || (ipBucket !== null && this.registersByIp.blocked(ipBucket, t))) {
+				return fail(TOO_MANY);
+			}
 			c.registers.hit('conn', t);
+			if (ipBucket !== null) this.registersByIp.hit(ipBucket, t);
+			if (this.admin.isAdminAccount(username)) return fail('That username is taken.');
+		} else if (ipBucket !== null && this.loginFailsByIp.blocked(ipBucket, this.now())) {
+			return fail(TOO_MANY);
 		}
 		c.authBusy = true;
 		let outcome: Awaited<ReturnType<Accounts['login']>>;
@@ -791,6 +858,9 @@ export class Lobby {
 		}
 		if (c.closed || this.closing || c.accountId !== null) return;
 		if (!outcome.ok) {
+			if (msg.type === 'login' && ipBucket !== null && outcome.error !== TOO_MANY) {
+				this.loginFailsByIp.hit(ipBucket, this.now());
+			}
 			this.log(`${msg.type} failed #${c.id}`);
 			return fail(outcome.error);
 		}
@@ -1158,6 +1228,7 @@ export class Lobby {
 
 	sendSnapshot(): void {
 		const now = this.now();
+		this.metrics?.recordSnapshotTick();
 		const entries: SnapshotEntry[] = [];
 		for (const c of this.clients) {
 			if (c.helloed && !c.spectating && c.state) entries.push({ id: c.id, ...c.state });
@@ -1215,8 +1286,13 @@ export class Lobby {
 	// Send helpers
 
 	private sendRaw(c: Client, data: string | Uint8Array, reliable = false): void {
+		if (!c.transport.open) return;
 		if (typeof data === 'string' || reliable) c.transport.sendReliable(data);
-		else c.transport.sendUnreliable(data);
+		else if (!c.transport.sendUnreliable(data)) {
+			this.metrics?.recordFrameDropped();
+			return;
+		}
+		this.metrics?.recordBytesSent(typeof data === 'string' ? Buffer.byteLength(data) : data.byteLength);
 	}
 
 	private send(c: Client, msg: ServerMessage): void {
@@ -1230,7 +1306,7 @@ export class Lobby {
 	private broadcast(msg: ServerMessage, except?: Client | number): void {
 		const s = JSON.stringify(msg);
 		const skipId = typeof except === 'number' ? except : except?.id;
-		for (const c of this.clients) if (c.helloed && c.id !== skipId) c.transport.sendReliable(s);
+		for (const c of this.clients) if (c.helloed && c.id !== skipId) this.sendRaw(c, s);
 	}
 
 	private system(text: string, except?: Client): void {

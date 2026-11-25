@@ -4,11 +4,11 @@
  */
 import type { GhostFrame, ServerMessage, SnapshotFrame, ZombieFrame } from '@surf/shared';
 import { NetClient } from './client.js';
-import { DEV_FALLBACK_URL, discover, RETRY_MS, toWsUrl } from './discovery.js';
+import { DEV_FALLBACK_URL, discover, RETRY_MS, sessionScope, toWsUrl } from './discovery.js';
 
 export interface ConnectionHandlers {
 	connecting(url: string): void;
-	open(client: NetClient): void;
+	open(client: NetClient, scope: string | null): void;
 	message(msg: ServerMessage): void;
 	snapshot(frame: SnapshotFrame, arrivalMs: number): void;
 	/** BIN_GHOST frame (docs/gameplay.md#ghosts). */
@@ -25,6 +25,8 @@ export interface ConnectionHandlers {
 
 export interface ConnectionOptions {
 	override: string | null;
+	/** Same-origin WebSocket URL used in self-hosted builds (skips `/api/server` discovery). */
+	sameOrigin?: string | null;
 	dev: boolean;
 	fetch: typeof fetch;
 }
@@ -100,14 +102,15 @@ export class Connection {
 		if (this.disposed || this.stopped || this.client || this.busy) return;
 		if (Date.now() < this.holdUntil) return this.schedule();
 		this.busy = true;
-		let url = this.manualUrl ?? this.opts.override;
+		let url = this.manualUrl ?? this.opts.override ?? this.opts.sameOrigin ?? null;
+		let discovered = false;
 		if (!url) {
 			this.abort = new AbortController();
-			url = await discover(this.opts.fetch, this.abort.signal);
+			const found = await discover(this.opts.fetch, this.abort.signal);
 			this.abort = null;
-			if (!url && this.opts.dev) url = DEV_FALLBACK_URL;
 			// A manual `connect` may have arrived during discovery.
-			url = this.manualUrl ?? url;
+			url = this.manualUrl ?? found ?? (this.opts.dev ? DEV_FALLBACK_URL : null);
+			discovered = this.manualUrl === null && found !== null;
 		}
 		this.busy = false;
 		if (this.disposed || this.stopped || this.client) return;
@@ -118,7 +121,7 @@ export class Connection {
 		this.h.connecting(url);
 		const target = url;
 		const client: NetClient = new NetClient(target, {
-			open: () => this.h.open(client),
+			open: (serverId) => this.h.open(client, serverId === null ? null : sessionScope(target, serverId, discovered)),
 			message: (m) => this.h.message(m),
 			snapshot: (e, t) => this.h.snapshot(e, t),
 			ghost: (f) => this.h.ghost?.(f),

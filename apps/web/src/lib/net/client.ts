@@ -3,6 +3,7 @@ import {
 	BIN_GHOST,
 	BIN_SNAPSHOT,
 	BIN_ZOMBIES,
+	SERVER_ID_PROTOCOL,
 	decodeGhostFrame,
 	decodeSnapshot,
 	decodeZombies,
@@ -15,7 +16,7 @@ import {
 import { createWsTransport, type NetTransport, type NetTransportFactory } from './transport.js';
 
 export interface NetClientHandlers {
-	open(): void;
+	open(serverId: string | null): void;
 	message(msg: ServerMessage): void;
 	snapshot(frame: SnapshotFrame, arrivalMs: number): void;
 	/** BIN_GHOST frame: a map's record ghost, or "none" (docs/gameplay.md#ghosts). */
@@ -34,10 +35,12 @@ function textBytes(s: string): number {
 }
 
 const OPEN_TIMEOUT_MS = 8000;
+const SERVER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export class NetClient {
 	private transport: NetTransport | null;
 	private opened = false;
+	private waitingForIdentity = false;
 	private closed = false;
 	private openTimer: ReturnType<typeof setTimeout> | null;
 
@@ -48,12 +51,11 @@ export class NetClient {
 	) {
 		this.openTimer = null;
 		this.transport = transportFactory(url, {
-			open: () => {
+			open: (protocol) => {
 				if (this.closed) return;
-				if (this.openTimer) clearTimeout(this.openTimer);
-				this.openTimer = null;
 				this.opened = true;
-				this.h.open();
+				this.waitingForIdentity = protocol === SERVER_ID_PROTOCOL;
+				if (!this.waitingForIdentity) this.identify(null);
 			},
 			text: (data, now) => {
 				if (this.closed) return;
@@ -64,7 +66,14 @@ export class NetClient {
 				} catch {
 					return;
 				}
-				if (msg && typeof msg === 'object' && typeof msg.type === 'string') this.h.message(msg);
+				if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
+				if (msg.type === 'serverIdentity') {
+					if (this.waitingForIdentity && typeof msg.serverId === 'string' && SERVER_ID_RE.test(msg.serverId)) {
+						this.identify(msg.serverId);
+					}
+					return;
+				}
+				this.h.message(msg);
 			},
 			binary: (data, now) => {
 				if (this.closed) return;
@@ -94,7 +103,7 @@ export class NetClient {
 	}
 
 	get isOpen(): boolean {
-		return this.opened && !this.closed && (this.transport?.isOpen ?? false);
+		return this.opened && !this.waitingForIdentity && !this.closed && (this.transport?.isOpen ?? false);
 	}
 
 	send(msg: ClientMessage): void {
@@ -114,6 +123,14 @@ export class NetClient {
 		if (this.closed) return;
 		this.transport?.close();
 		this.finish();
+	}
+
+	private identify(serverId: string | null): void {
+		if (this.openTimer === null) return;
+		clearTimeout(this.openTimer);
+		this.openTimer = null;
+		this.waitingForIdentity = false;
+		this.h.open(serverId);
 	}
 
 	private finish(code = 0): void {

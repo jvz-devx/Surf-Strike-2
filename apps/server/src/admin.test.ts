@@ -6,6 +6,7 @@ import { after, before, describe, it } from 'node:test';
 import type { AdminAction } from '@surf/shared';
 import { ADMIN_COINS_MAX, ADMIN_EXTEND, CLOSE_IP_LIMIT, PROTOCOL_VERSION, RTV_BLOCK } from '@surf/shared';
 import { clientIp, ipKey, parseAdminUsernames } from './admin.ts';
+import { hashPassword } from './auth.ts';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
 import { TestClient, testMap } from './test-helpers.ts';
@@ -81,8 +82,8 @@ after(async () => {
 });
 
 describe('admin', () => {
-	it('parses ADMIN_USERNAMES (default tim, case-insensitive)', () => {
-		assert.deepEqual(parseAdminUsernames(undefined), ['tim']);
+	it('defaults to no admins and parses configured usernames case-insensitively', () => {
+		assert.deepEqual(parseAdminUsernames(undefined), []);
 		assert.deepEqual(parseAdminUsernames(''), []);
 		assert.deepEqual(parseAdminUsernames(' Tim ,BOB,, '), ['tim', 'bob']);
 	});
@@ -106,9 +107,15 @@ describe('admin', () => {
 		assert.deepEqual(denied, { type: 'adminResult', ok: false, error: 'You are not an admin.' });
 		assert.equal(guest.of('adminState').length, 0, 'non-admins never get admin state');
 
-		const reg = await guest.auth('register', 'Tim', 'secret1');
-		assert.ok(reg.ok && reg.admin === true && reg.token);
-		timToken = reg.ok ? reg.token! : '';
+		assert.deepEqual(await guest.auth('register', 'tIm', 'secret1'), {
+			type: 'auth', ok: false, error: 'That username is taken.'
+		});
+		assert.equal(server.db.accountByName('Tim'), null);
+
+		assert.ok(server.db.createAccount('Tim', await hashPassword('secret1')));
+		const login = await guest.auth('login', 'Tim', 'secret1');
+		assert.ok(login.ok && login.admin === true && login.token);
+		timToken = login.token;
 		const state = await adminState(guest);
 		assert.deepEqual(
 			state.maps.map((m) => [m.id, m.enabled]),
@@ -422,7 +429,7 @@ describe('connection limit per IP', () => {
 			all.push(c);
 			return c;
 		};
-		const refused = async (headers: Record<string, string>) => {
+		const refused = async (headers?: Record<string, string>) => {
 			const c = open(headers);
 			await c.open();
 			c.send({ type: 'hello', version: 0, playerId: crypto.randomUUID(), name: 'Bot' });
@@ -444,8 +451,9 @@ describe('connection limit per IP', () => {
 			await b.until(() => b.closed);
 			await new Promise((r) => setTimeout(r, 50));
 			await open(home).hello('D');
-			for (let i = 0; i < 5; i++) await open().hello(`Dev${i}`); // unknown address: no limit
-			assert.equal(s.lobby.playerCount, 9);
+			for (let i = 0; i < 3; i++) await open().hello(`Unknown${i}`);
+			await refused(); // Unknown addresses share a separate player bucket.
+			assert.equal(s.lobby.playerCount, 7);
 		} finally {
 			for (const c of all) c.close();
 			await s.close();

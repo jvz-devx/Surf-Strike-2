@@ -6,8 +6,10 @@
  * changing protocol framing or `Game`.
  */
 
+import { SERVER_ID_PROTOCOL } from '@surf/shared';
+
 export interface NetTransportHandlers {
-	open(): void;
+	open(protocol?: string): void;
 	text(data: string, arrivalMs: number): void;
 	binary(data: ArrayBuffer, arrivalMs: number): void;
 	close(code: number): void;
@@ -28,11 +30,11 @@ export class WsNetTransport implements NetTransport {
 	private closed = false;
 
 	constructor(url: string, handlers: NetTransportHandlers) {
-		const ws = new WebSocket(url);
+		const ws = new WebSocket(url, ['surf', SERVER_ID_PROTOCOL]);
 		ws.binaryType = 'arraybuffer';
 		this.ws = ws;
 		ws.onopen = () => {
-			if (!this.closed) handlers.open();
+			if (!this.closed) handlers.open(ws.protocol);
 		};
 		ws.onmessage = (ev) => {
 			if (this.closed) return;

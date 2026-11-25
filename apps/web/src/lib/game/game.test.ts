@@ -119,14 +119,17 @@ vi.mock('./modes/index.js', () => ({
 }));
 
 import { Game } from './game.js';
+import { memoryStore, type KeyValueStore } from './storage.js';
 
 /** The private members the tests look at. */
 interface Inside {
 	frame(now: number): void;
 	player: PlayerState;
 	yaw: number;
+	store: KeyValueStore;
 }
 interface Handlers {
+	open(client: { send(m: ClientMessage): void }, scope: string | null): void;
 	message(m: ServerMessage): void;
 	snapshot(frame: { seq: number; serverTimeMs: number; entries: object[] }, arrival: number): void;
 	closed(wasOpen: boolean, url: string, code: number): void;
@@ -187,6 +190,26 @@ beforeEach(() => {
 	T.next = {};
 	T.construct = null;
 	T.mouse = { dx: 0, dy: 0 };
+});
+
+it('sends a login token in hello only for its identified session scope', () => {
+	const { inside, conn, online } = setup();
+	inside.store = memoryStore({
+		'surf.session:discovery:/api/server': JSON.stringify({ token: 'legacy-token', username: 'Player' })
+	});
+	const send = vi.fn();
+	const first = 'discovery:/api/server:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+	const second = 'discovery:/api/server:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+	conn.open({ send }, first);
+	expect(send.mock.lastCall?.[0]).not.toHaveProperty('token');
+	online();
+	conn.message({ type: 'auth', ok: true, username: 'Player', token: 'new-token' });
+	conn.open({ send }, second);
+	expect(send.mock.lastCall?.[0]).not.toHaveProperty('token');
+	conn.open({ send }, first);
+	expect(send.mock.lastCall?.[0]).toMatchObject({ type: 'hello', token: 'new-token' });
+	conn.open({ send }, null);
+	expect(send.mock.lastCall?.[0]).not.toHaveProperty('token');
 });
 
 describe('the mode of a map', () => {

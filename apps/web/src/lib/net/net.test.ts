@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { encodeSnapshot, withTeleportSeq, type NetState, type ServerMessage, type SnapshotFrame } from '@surf/shared';
+import { describe, expect, it, vi } from 'vitest';
+import { SERVER_ID_PROTOCOL, encodeSnapshot, withTeleportSeq, type NetState, type ServerMessage, type SnapshotFrame } from '@surf/shared';
 import { NetClient } from './client.js';
-import { parseDiscovery, serverOverride, toWsUrl } from './discovery.js';
+import { parseDiscovery, sameOriginWsUrl, serverOverride, toWsUrl } from './discovery.js';
 import { emptySample, lerpAngle, MAX_EXTRAP_MS, SnapshotBuffer } from './interp.js';
 import type { NetTransport, NetTransportHandlers } from './transport.js';
+import { Connection } from './connection.js';
+import { clearSession, loadSession, saveSession } from '../game/identity.js';
+import { memoryStore } from '../game/storage.js';
 
 describe('discovery URLs', () => {
 	it('converts http(s) to ws(s) and appends /ws', () => {
@@ -16,10 +19,119 @@ describe('discovery URLs', () => {
 		expect(toWsUrl('ftp://nope')).toBeNull();
 		expect(toWsUrl('')).toBeNull();
 	});
-	it('reads ?server=', () => {
+	it('reads ?server= and same-origin URLs', () => {
 		expect(serverOverride('?server=https%3A%2F%2Fa.b')).toBe('wss://a.b/ws');
 		expect(serverOverride('?x=1')).toBeNull();
+		expect(sameOriginWsUrl({ origin: 'https://surf.example.com' })).toBe('wss://surf.example.com/ws');
+		expect(sameOriginWsUrl({ origin: 'http://localhost:8080' })).toBe('ws://localhost:8080/ws');
+		expect(sameOriginWsUrl(null)).toBeNull();
 	});
+	it('self-hosted Connection connects to sameOrigin without calling /api/server, while ?server= overrides it', () => {
+		const fetchSpy = vi.fn();
+		const opened: string[] = [];
+		const origWs = globalThis.WebSocket;
+		class FakeWs {
+			binaryType = '';
+			constructor(url: string) {
+				opened.push(url);
+			}
+			close() {}
+		}
+		globalThis.WebSocket = FakeWs as unknown as typeof WebSocket;
+		try {
+			const noop = () => {};
+			const c1 = new Connection(
+				{ connecting: noop, open: noop, message: noop, snapshot: noop, closed: noop, idle: noop },
+				{ override: null, sameOrigin: 'wss://self.example/ws', dev: false, fetch: fetchSpy as unknown as typeof fetch }
+			);
+			c1.start();
+			c1.dispose();
+			expect(opened).toEqual(['wss://self.example/ws']);
+			expect(fetchSpy).not.toHaveBeenCalled();
+
+			const c2 = new Connection(
+				{ connecting: noop, open: noop, message: noop, snapshot: noop, closed: noop, idle: noop },
+				{
+					override: 'wss://other.example/ws',
+					sameOrigin: 'wss://self.example/ws',
+					dev: false,
+					fetch: fetchSpy as unknown as typeof fetch
+				}
+			);
+			c2.start();
+			c2.dispose();
+			expect(opened).toEqual(['wss://self.example/ws', 'wss://other.example/ws']);
+			expect(fetchSpy).not.toHaveBeenCalled();
+		} finally {
+			globalThis.WebSocket = origWs;
+		}
+	});
+	it('reuses a session only after seeing the same database identity on the socket', async () => {
+		const store = memoryStore();
+		const account = { token: 'tunnel-token', username: 'Player' };
+		saveSession(store, 'discovery:/api/server', { ...account, token: 'legacy-token' });
+		const noop = () => {};
+		const firstId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+		const otherId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+		let socket!: FakeWs;
+		class FakeWs {
+			protocol = SERVER_ID_PROTOCOL;
+			onopen?: () => void;
+			onmessage?: (event: { data: string }) => void;
+			constructor() { socket = this; }
+			close() {}
+		}
+		vi.stubGlobal('WebSocket', FakeWs);
+
+		async function connect(host: string, serverId: string | null, manual = false) {
+			const opened = vi.fn();
+			let scope: string | null = null;
+			const connection = new Connection(
+				{
+					connecting: noop,
+					open: (_client, identityScope) => {
+						scope = identityScope;
+						opened(scope === null ? null : loadSession(store, scope));
+					},
+					message: noop, snapshot: noop, closed: noop, idle: noop
+				},
+				{ override: manual ? `wss://${host}/ws` : null, dev: false, fetch: async () => Response.json({ url: `https://${host}` }) }
+			);
+			try {
+				socket = undefined!;
+				connection.start();
+				await vi.waitFor(() => expect(socket).toBeDefined());
+				if (serverId === null) socket.protocol = 'surf';
+				socket.onopen?.();
+				if (serverId !== null) {
+					expect(opened).not.toHaveBeenCalled();
+					socket.onmessage?.({ data: JSON.stringify({ type: 'serverIdentity', serverId }) });
+				}
+				expect(opened).toHaveBeenCalledExactlyOnceWith(scope === null ? null : loadSession(store, scope));
+				return { scope, session: opened.mock.calls[0]?.[0] };
+			} finally {
+				connection.dispose();
+			}
+		}
+		try {
+			const first = await connect('first.trycloudflare.com', firstId);
+			expect(first.session).toBeNull();
+			expect(first.scope).not.toBeNull();
+			saveSession(store, first.scope!, account);
+
+			const rotated = await connect('second.trycloudflare.com', firstId);
+			expect(rotated.session).toEqual(account);
+			expect((await connect('third.trycloudflare.com', otherId)).session).toBeNull();
+			expect((await connect('second.trycloudflare.com', otherId)).session).toBeNull();
+			expect((await connect('second.trycloudflare.com', firstId, true)).session).toBeNull();
+			expect((await connect('second.trycloudflare.com', null)).session).toBeNull();
+			clearSession(store, rotated.scope!);
+			expect((await connect('first.trycloudflare.com', firstId)).session).toBeNull();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it('parses discovery responses', () => {
 		const now = Date.parse('2026-11-21T12:00:00Z');
 		expect(parseDiscovery({ url: null }, now)).toBeNull();

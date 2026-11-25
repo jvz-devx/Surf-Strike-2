@@ -72,7 +72,7 @@ import { AdaptiveDelay } from '../net/adaptive.js';
 import type { NetClient } from '../net/client.js';
 import { ServerClock } from '../net/clock.js';
 import { Connection } from '../net/connection.js';
-import { serverOverride } from '../net/discovery.js';
+import { sameOriginWsUrl, serverOverride } from '../net/discovery.js';
 import { emptySample, SnapshotBuffer, type Sample } from '../net/interp.js';
 import { NetStats } from '../net/stats.js';
 import { emptyPose } from '../render/players.js';
@@ -196,7 +196,8 @@ export class Game implements CommandContext {
 	// Identity
 	private playerId: string;
 	/** Stored session (token + username); the server confirms it on welcome. */
-	private session: StoredSession | null;
+	private session: StoredSession | null = null;
+	private sessionScope: string | null = null;
 	/** Token sent in the current connection's hello (to detect a rejected session). */
 	private helloToken: string | null = null;
 
@@ -290,10 +291,7 @@ export class Game implements CommandContext {
 		this.playerId = loadPlayerId(this.store);
 		const storedName = loadName(this.store);
 		if (storedName) this.cvars.set('name', storedName);
-		this.session = loadSession(this.store);
-		this.hud.account = this.session ? { username: this.session.username } : null;
-		// First visit (no session, never chose guest): account panel instead of the old name prompt.
-		this.hud.authPanelOpen = !this.session && !isGuest(this.store);
+		this.hud.authPanelOpen = !isGuest(this.store);
 		this.hud.cvars = this.cvars.snapshot();
 		this.hud.maps = MAPS.map((m) => ({ id: m.id, title: m.title, kind: m.kind, difficulty: m.difficulty, ...(m.size && { size: m.size }) }));
 
@@ -343,7 +341,7 @@ export class Game implements CommandContext {
 				idle: () => {
 					this.hud.connecting = false;
 				},
-				open: (c) => this.onOpen(c),
+				open: (c, scope) => this.onOpen(c, scope),
 				message: (m) => this.onMessage(m),
 				snapshot: (e, t) => this.onSnapshot(e, t),
 				ghost: (f) => this.client.ghostFrame?.(f),
@@ -353,6 +351,10 @@ export class Game implements CommandContext {
 			},
 			{
 				override: typeof location !== 'undefined' ? serverOverride(location.search) : null,
+				sameOrigin:
+					typeof __SURF_SELF_HOSTED__ !== 'undefined' && __SURF_SELF_HOSTED__ && typeof location !== 'undefined'
+						? sameOriginWsUrl(location)
+						: null,
 				dev: import.meta.env.DEV,
 				fetch: (...a) => fetch(...a)
 			}
@@ -840,7 +842,7 @@ export class Game implements CommandContext {
 	}
 
 	private logout(): void {
-		clearSession(this.store);
+		if (this.sessionScope !== null) clearSession(this.store, this.sessionScope);
 		this.session = null;
 		this.helloToken = null;
 		if (!this.hud.account) return;
@@ -904,9 +906,9 @@ export class Game implements CommandContext {
 		h.account = { username: m.username, admin: m.admin === true };
 		h.authError = null;
 		if (!h.account.admin) h.adminState = null;
-		if (m.token) {
+		if (m.token && this.sessionScope !== null) {
 			this.session = { token: m.token, username: m.username };
-			saveSession(this.store, this.session);
+			saveSession(this.store, this.sessionScope, this.session);
 		}
 		if (h.authPanelOpen) {
 			h.authPanelOpen = false;
@@ -1001,16 +1003,16 @@ export class Game implements CommandContext {
 		if (account === undefined) return; // old server without accounts
 		if (account) {
 			h.account = { username: account.username, admin: account.admin === true };
-			if (this.session && this.session.username !== account.username) {
+			if (this.sessionScope !== null && this.session && this.session.username !== account.username) {
 				this.session = { ...this.session, username: account.username };
-				saveSession(this.store, this.session);
+				saveSession(this.store, this.sessionScope, this.session);
 			}
 			return;
 		}
 		h.account = null;
 		if (this.helloToken) {
 			// Stored session unknown or expired: forget it; ask again unless playing as guest.
-			clearSession(this.store);
+			if (this.sessionScope !== null) clearSession(this.store, this.sessionScope);
 			this.session = null;
 			if (!isGuest(this.store)) {
 				this.releaseAll();
@@ -1822,7 +1824,13 @@ export class Game implements CommandContext {
 		];
 	}
 
-	private onOpen(client: NetClient): void {
+	private onOpen(client: NetClient, scope: string | null): void {
+		if (scope === null || scope !== this.sessionScope) {
+			this.sessionScope = scope;
+			this.session = scope === null ? null : loadSession(this.store, scope);
+			this.hud.account = this.session ? { username: this.session.username } : null;
+			this.hud.authPanelOpen = !this.session && !isGuest(this.store);
+		}
 		this.helloToken = this.session?.token ?? null;
 		client.send({
 			type: 'hello',
@@ -2174,7 +2182,7 @@ export class Game implements CommandContext {
 		if (code === CLOSE_IP_LIMIT) {
 			// Retrying would fail until someone on this network leaves.
 			this.conn.disconnect();
-			this.notice('Too many players are connected from your network (3 at most). Playing solo; reload the page to try again.');
+			this.notice('Too many players are connected from your network. Playing solo; reload the page to try again.');
 		}
 		if (this.mode !== 'online') {
 			if (wasOpen) this.net = null;

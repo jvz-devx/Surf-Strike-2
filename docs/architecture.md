@@ -1,6 +1,9 @@
 # Architecture
 
-The static client is on Vercel. The lobby runs as one Node process on the host's PC, exposed as `wss://` through a Cloudflare quick tunnel. The tunnel URL is published to the Vercel Runtime Cache every time the server starts.
+Surf Strike 2 supports two deployment modes:
+
+1. **Vercel + local host (`./start.sh`)**: the static client runs on Vercel, and the lobby runs as one Node process on a host PC behind a Cloudflare quick tunnel whose URL is published to the Vercel Runtime Cache.
+2. **Self-hosted container ([hosting.md](hosting.md))**: a single Docker image (`node:24-trixie-slim`) bundles the Node 24 game server with the SvelteKit `@sveltejs/adapter-node` client on one port (`8080`). The client connects directly to `wss://<host>/ws` without `/api/server`.
 
 ```
  Friends' browsers                    Vercel                         Host PC
@@ -38,23 +41,25 @@ Run `./start.sh` from the repo root to host for the public Vercel site. It loads
 1. Start the game server on `localhost:27015`.
 2. Spawn `cloudflared tunnel --url http://localhost:27015` and parse the `https://*.trycloudflare.com` URL from its output.
 3. `POST` that URL to `https://<vercel-app>/api/server` with header `Authorization: Bearer <HOST_SECRET>`. The API keeps `{ url, startedAt, lastSeen }` in the Vercel Runtime Cache for 3 minutes.
-4. Every 60 s, re-post as a heartbeat (`lastSeen`).
-5. On shutdown (SIGINT/SIGTERM), post `{ url: null }` so clients skip the connection attempt.
+4. Every 60 s, re-post as a heartbeat (`lastSeen`), refusing to overwrite a fixed non-`trycloudflare.com` server in discovery.
+5. On shutdown (SIGINT/SIGTERM), post `{ url: null, expectedUrl }` only if discovery still points to this tunnel, so a local host never clears a fixed self-hosted server.
+
+Before starting, `./start.sh` and `pnpm host` also check `FIXED_SERVER_URL` (if configured) and `GET /api/server`, refusing to run when a fixed self-hosted server answers healthy.
 
 ## Client connect flow
 
 1. Load the page and immediately start solo mode on the current default map.
-2. `GET /api/server`. If `url` is null or `lastSeen` is older than 3 minutes, stay solo and show "Offline — solo" in the HUD.
-3. Otherwise open `wss://<tunnel>/ws`. On success, switch to the server's current map and state.
-4. On disconnect, fall back to solo on the same map. Retry discovery every 10 s.
-5. A `?server=<url>` query parameter overrides discovery, for local testing.
+2. Check `?server=<url>`. If set, connect directly to that WebSocket URL.
+3. In a self-hosted build (`SURF_ADAPTER=node`), connect directly to `wss://<host>/ws` (or `ws://` on HTTP) on the same origin without calling `/api/server`.
+4. Otherwise (`adapter-vercel`), `GET /api/server`. If `url` is null or `lastSeen` is older than 3 minutes, stay solo and show "Offline — solo" in the HUD. If present, open `wss://<tunnel>/ws`.
+5. On disconnect, fall back to solo on the same map. Retry discovery every 10 s.
 
 ## One-time setup
 
 - Create a Vercel project. No storage is needed: the discovery record lives in the Runtime Cache (regional, not durable; every heartbeat writes it again). The Hobby plan includes 200,000 writes and 1 million reads a month for all projects together; a host that never stops writes 43,200 times a month. A Blob store (2,000 writes a month) was used before and got suspended.
 - Set `HOST_SECRET` (random 32+ chars, enforced) in Vercel env vars and in `apps/server/.env`.
 - The endpoint reads env via `process.env` because SvelteKit 3 deprecated `$env/dynamic/private`.
-- `apps/server/.env` (see `.env.example`): `HOST_SECRET`, `DISCOVERY_URL`, `PORT` (27015), `DB_PATH` (default `apps/server/data/surf.db`), optional `CLOUDFLARED`, `ADMIN_USERNAMES` (admin accounts, default `tim`; [Admin and bans](#admin-and-bans)).
+- `apps/server/.env` (see `.env.example`): `HOST_SECRET`, `DISCOVERY_URL`, `PORT` (27015), `DB_PATH` (default `apps/server/data/surf.db`), optional `CLOUDFLARED`, `ADMIN_USERNAMES` (admin accounts, unset by default; [Admin and bans](#admin-and-bans)).
 - Set `DISCOVERY_URL` in `apps/server/.env` to the deployed Vercel app.
 - `cloudflared` is already installed at `~/.local/bin/cloudflared`.
 - The host's Node is v20.20.1, which is past end of life (April 2026). Upgrade to Node 22 or 24 (via `fnm`) before development.
@@ -97,7 +102,8 @@ Each client simulates its own movement at 64 Hz with zero input lag. The server 
   - horizontal speed never exceeded `sv_maxvelocity`;
   - no position jumps larger than speed allows (teleport detection), except server-known teleport triggers.
   A run failing any check is not saved, and the player gets a chat notice.
-- **Close codes:** 4000 no hello within 10 s, 4001 bad player id, 4002 same player id or same account connected again (old socket; that client stops auto-reconnecting until reload), 4003 server full, 4008 rate-limit kick, 4009 banned (sent after a `banned { reason, seconds? }` message; the client shows the ban screen and stops auto-reconnecting until reload, or with `seconds` until the ban lifts; see [Admin and bans](#admin-and-bans)), 4010 too many clients from this IP address ([connection limit](#connection-limit); the client stops auto-reconnecting until reload).
+- **Close codes:** 1001 server shutting down, 4001 bad player id, 4002 same player id or same account connected again (old socket; that client stops auto-reconnecting until reload), 4003 server full at hello, 4008 rate-limit kick, 4009 banned (sent after a `banned { reason, seconds? }` message; the client shows the ban screen and stops auto-reconnecting until reload, or with `seconds` until the ban lifts; see [Admin and bans](#admin-and-bans)), 4010 too many clients from this IP address ([connection limit](#connection-limit); the client stops auto-reconnecting until reload).
+- **Hardening and metrics:** pre-hello sockets use a separate cap (`MAX_PENDING_CONNECTIONS`, default 16) so unauthenticated sockets cannot take up the 32 player slots. Optional `ALLOWED_ORIGINS` enforces a WebSocket `Origin` allow-list. `/health` stays lightweight for probes, and `/metrics` serves Prometheus gauges and counters (players, event-loop delay p50/p99/max, snapshot and mode tick lateness, bytes/s, max socket `bufferedAmount`, process RSS). See [hosting.md](hosting.md).
 - **Security:** friends-only by design. Chat is HTML-escaped, names are limited to 24 chars, and each client is rate-limited (state 70 msg/s, chat 2 msg/s). No anti-cheat beyond run validation. Accounts: see below. Admin rights come only from the logged-in account (`ADMIN_USERNAMES`), never from a display name, and guests cannot use a registered username as their name ([Admin and bans](#admin-and-bans)).
 
 ### Render timestamps for lag compensation
@@ -110,9 +116,10 @@ The helper rejects future timestamps and claims older than RTT plus 180 ms of in
 
 | Direction | Message | Encoding |
 | --- | --- | --- |
+| S→C | `serverIdentity { serverId }` immediately after the upgrade. Clients that negotiate `surf-server-identity` wait for this frame before sending hello. | JSON |
 | C→S | `hello { playerId, name, version, token? }` (`token`: stored session, auto-login; `version = 2`) | JSON |
-| S→C | `welcome { selfId, map, mode, mapTimeLeft, players[], cvars, records, account, serverTime?, snapshotHz? }` (`account`: `{ username, admin }` or `null` for guests; `serverTime` seeds client clock sync; `snapshotHz` reports the active snapshot rate) | JSON |
-| C↔S | `ping { t }` / `pong { t, serverTime }` (client→server 1 Hz for clock sync and RTT; server→client every 2 s for scoreboard ping) | JSON |
+| S→C | `welcome { serverId, selfId, map, mode, mapTimeLeft, players[], cvars, records, account, serverTime?, snapshotHz? }` (`account`: `{ username, admin }` or `null` for guests; `serverTime` seeds client clock sync; `snapshotHz` reports the active snapshot rate) | JSON |
+| C→S / S→C | `ping { t }` / `pong { t, serverTime }` (1 Hz client clock sync) | JSON |
 | S→C | `maps { enabled[] }`: maps players may pick (votes, Change map); right after `welcome` and to everyone on every change | JSON |
 | C→S | `register { username, password }`, `login { username, password }`, `logout {}` (any time after `welcome`, on the open socket) | JSON |
 | S→C | `auth { ok: true, username, token?, records?, admin? }` / `auth { ok: false, error }` (`username: null` = logged out; also sent with `ok: false` after a `welcome` whose hello token was rejected) | JSON |
@@ -154,7 +161,7 @@ Username + password, no email or verification ([gameplay.md](gameplay.md#account
 
 - **Rules:** username 1–24 characters, no whitespace at all, printable characters only (no control, zero-width or bidi characters), stored NFC with its original casing and unique case-insensitively (`username_lower`). Password 5–128 characters, nothing else.
 - **Hashing:** `node:crypto` scrypt (N = 16384, r = 8, p = 1, 32-byte key) with a random 16-byte salt per account, stored as `scrypt$N$r$p$salt$hash` (base64url); checked with `timingSafeEqual`. A login for an unknown username hashes against a dummy hash so both failures take the same time and return the same error ("Wrong username or password.").
-- **Sessions:** a successful register or login returns a token (32 random bytes, base64url). The server stores only its SHA-256 hash in `sessions`, valid for 90 days. The client keeps the token in localStorage and sends it in `hello` to log in automatically. `logout` deletes the session row. Expired rows are deleted when looked up and pruned on each new login.
+- **Sessions:** a successful register or login returns a token (32 random bytes, base64url). The server stores only its SHA-256 hash in `sessions`, valid for 90 days. The client stores the token in localStorage under the server's SQLite identity and sends it in `hello` after receiving the identity on that socket. Discovery can rotate a quick tunnel without changing the identity. Players with sessions saved before this change sign in once to save a session under the new key. `logout` deletes the session row. Expired rows are deleted when looked up and pruned on each new login.
 - **Rate limits** (sliding one-minute window): 5 failed logins per connection and 5 per username (across all connections), then "Too many attempts. Wait a minute and try again."; 3 register attempts per connection. One register/login at a time per connection.
 - **One connection per account:** a login (message or hello token) closes any other connection of that account with 4002.
 - **Never logged:** passwords and tokens. The log shows only `login #id account <id> <username>` or `login failed #id`.
@@ -163,6 +170,7 @@ Username + password, no email or verification ([gameplay.md](gameplay.md#account
 | --- | --- |
 | `accounts` | `id`, `username`, `username_lower` (unique), `password_hash`, `created_at`, `last_login` |
 | `sessions` | `token_hash` (SHA-256 hex), `account_id`, `created_at`, `expires_at` |
+| `server_settings` | `key` (primary key), `value`. The `serverId` row holds the UUID generated when the database is first opened by this version. |
 | `replays` | `map` (primary key), `account_id`, `time_ticks`, `samples`, `data` (deflate-raw BLOB), `created_at`: one record ghost per map, replaced only by a faster validated account run ([gameplay.md](gameplay.md#ghosts)) |
 | `owned_items` | `account_id`, `item_id` (primary key together), `bought_at`, `price` ([economy.md](economy.md#shop)) |
 | `equipped` | `account_id`, `slot` (primary key together), `item_id`; references `owned_items` |
@@ -183,17 +191,17 @@ Username + password, no email or verification ([gameplay.md](gameplay.md#account
 
 ## Connection limit
 
-The public host (`pnpm host`, so `./start.sh`) accepts at most 3 connected clients per IP address (`maxPerIp`, close 4010), so one person cannot fill the lobby with bots to raise the [player multiplier](economy.md#player-multiplier). IPv6 is counted per /64. A reload, or the same account in another tab, replaces the old connection first and does not count twice. Clients with an unknown address (loopback, local dev) are never limited, and the dev server (`pnpm server`) has no limit.
+The public host (`pnpm host`, `./start.sh`) and production self-hosted servers (`NODE_ENV=production`) default to 12 connected clients per IP address (`MAX_PER_IP`, close 4010) and 4 pending pre-hello sockets per IP (`MAX_PENDING_PER_IP`, HTTP 429). The global pre-hello cap returns HTTP 503. The server terminates sockets that do not complete hello on time. IPv6 is counted per /64. A reload, or the same account in another tab, replaces the old connection first and does not count twice. Unknown visitor IPs share one bucket for connection caps. The dev server (`pnpm server`) defaults to no per-IP cap.
 
 ## Admin and bans
 
 A small admin menu (Esc menu › Admin, [ui.md](ui.md#admin)) for the host. Code: `apps/server/src/admin.ts`.
 
-- **Who is admin.** Only logged-in accounts whose username (case-insensitive, `username_lower`) is listed in `ADMIN_USERNAMES` in `apps/server/.env` (comma-separated; unset = `tim`, empty = no admins). The server decides at hello-token login and at `login`/`register`, and resets it on `logout`. Display names never count: a guest can type any name, but guest names equal (ignoring case) to a registered username are refused (hello falls back to `Guest-xxxx`; `name` / `!name` get a system message). The client is told `account.admin` only to show the menu; every `admin` message is re-checked server-side and non-admins get an error.
+- **Who is admin.** Only logged-in accounts whose username (case-insensitive, `username_lower`) is listed in `ADMIN_USERNAMES` in `apps/server/.env` (comma-separated, unset or empty = no admins). The server decides at hello-token login and at password login, and resets it on `logout`. Public registration reserves configured admin usernames. Display names never count: a guest can type any name, but guest names equal (ignoring case) to a registered username are refused (hello falls back to `Guest-xxxx`; `name` / `!name` get a system message). The client is told `account.admin` only to show the menu; every `admin` message is re-checked server-side and non-admins get an error.
 - **Rate limit and audit.** 30 admin actions per minute per connection. Every action is printed to the server console (`admin <name> (account <id>) <action> <target>`) and stored in `admin_log`; passwords, tokens and IPs are never logged.
 - **Maps.** Disabled maps (`map_settings`) are left out of vote options, RTV nominations, random picks (`MapRotation` takes a live `isEnabled` filter) and the lone-player Change map; at least one map always stays enabled. Disabling the current map does not end it. `forceMap` changes to any map (disabled ones too) at once for everyone, through `MapRotation.forceMap` and the normal `mapChange` broadcast; `extend` adds 10 minutes (not during a vote or pending change).
 - **Bans.** Targets: a connected player (by lobby id) or an account by username (offline ban). An account ban stores the account id (plus the player key of a connected target): all of its connections are kicked (`banned`, close 4009), and hello-token auto-login and `login` are refused. A guest ban stores the player key and, when known, the client IP: hellos with that key or IP are refused unless the hello token logs in an admin account. Admin accounts cannot be banned (nor ban themselves). Unban deletes the row. Bans by the abuse detection ([economy.md](economy.md#abuse-and-collusion)) have `created_by = auto` and an `expires_at`: expired ones no longer count and are deleted later. An admin can still ban such an account permanently.
-- **Client IP.** Tunnel connections arrive from cloudflared on loopback, so the IP is the `CF-Connecting-IP` header; it is only trusted on loopback connections. Direct connections use the socket address. A loopback address is never stored (it would ban everyone on the tunnel).
+- **Client IP.** Controlled by `TRUST_PROXY` ([hosting.md](hosting.md#trust_proxy)). Default `loopback` trusts `CF-Connecting-IP` and `X-Forwarded-For` only on loopback connections (local `cloudflared`). Set `TRUST_PROXY=private`, `cf`, or explicit CIDRs behind an in-cluster tunnel or reverse proxy so guest bans target the visitor IP rather than the proxy pod. Loopback and trusted proxy addresses are never stored.
 
 | Table | Columns |
 | --- | --- |
