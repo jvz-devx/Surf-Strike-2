@@ -278,6 +278,7 @@ interface ZmPlayer {
 	/** Survivor weapon kept while a zombie (restored next round). */
 	loadout: WeaponId;
 	pos: ZmPlayerPos | null;
+	poseHistory: Array<{ tick: number; pose: HitboxPose }>;
 	/** Route progress of `pos`, refreshed every sim step. */
 	s: number;
 	/** Gates behind this survivor: passed, or skipped by a spawn at a checkpoint. */
@@ -431,6 +432,7 @@ export class ZombiesGame {
 				ws: this.weaponState(DEFAULT_WEAPON),
 				loadout: DEFAULT_WEAPON,
 				pos: null,
+				poseHistory: [],
 				s: 0,
 				zone: 0,
 				iframesUntil: 0,
@@ -446,9 +448,10 @@ export class ZombiesGame {
 		}
 	}
 
-	setPlayerPos(id: number, pos: ZmPlayerPos): void {
+	setPlayerPos(id: number, pos: ZmPlayerPos, teleported = false): void {
 		const p = this.players.get(id);
 		if (!p) return;
+		if (teleported) p.poseHistory.length = 0;
 		if (!p.pos) p.pos = { ...pos };
 		else {
 			p.pos.x = pos.x;
@@ -490,6 +493,7 @@ export class ZombiesGame {
 
 	private spawnEvent(p: ZmPlayer, s: Spawn, now: number, reason: SpawnReason): void {
 		p.graceUntil = now + TELEPORT_GRACE_MS;
+		p.poseHistory.length = 0;
 		p.pos = { x: s.pos.x, y: s.pos.y, z: s.pos.z, ducked: false, yaw: s.yaw };
 		this.pending.push({ e: 'spawn', id: p.id, x: s.pos.x, y: s.pos.y, z: s.pos.z, yaw: s.yaw, hp: p.hp, team: p.team, reason });
 	}
@@ -653,7 +657,7 @@ export class ZombiesGame {
 		return out;
 	}
 
-	/** Shot targets: AI zombies at the shooter's tick (history), player-zombies as they are now. */
+	/** Shot targets at the shooter's tick, or their current pose if they have no sample for it. */
 	private targets(tick: number): Target[] {
 		const t = Math.round(Math.max(this.tick - HISTORY_TICKS, Math.min(this.tick, tick)));
 		const frame = t >= this.tick ? undefined : this.history.find((h) => h.tick === t);
@@ -664,7 +668,8 @@ export class ZombiesGame {
 		}
 		for (const p of this.players.values()) {
 			if (p.team !== 'zombie' || !p.alive || !p.pos) continue;
-			out.push({ kind: 'pz', p, pose: { x: p.pos.x, y: p.pos.y, z: p.pos.z, yaw: p.pos.yaw ?? 0 } });
+			const pose = frame && p.poseHistory.find((h) => h.tick === t)?.pose;
+			out.push({ kind: 'pz', p, pose: pose ?? { ...p.pos, yaw: p.pos.yaw ?? 0 } });
 		}
 		return out;
 	}
@@ -1166,7 +1171,13 @@ export class ZombiesGame {
 		const poses = new Map<number, HitboxPose>();
 		for (const z of this.zombies.values()) poses.set(z.id, { x: z.body.origin.x, y: z.body.origin.y, z: z.body.origin.z, yaw: z.yaw });
 		this.history.push({ tick: this.tick, poses });
-		while (this.history.length > HISTORY_TICKS) this.history.shift();
+		if (this.history.length > HISTORY_TICKS + 1) this.history.shift();
+		for (const p of this.players.values()) {
+			if (p.team !== 'zombie' || !p.alive || !p.pos) continue;
+			const { x, y, z, yaw = 0 } = p.pos;
+			p.poseHistory.push({ tick: this.tick, pose: { x, y, z, yaw } });
+			if (p.poseHistory.length > HISTORY_TICKS + 1) p.poseHistory.shift();
+		}
 	}
 
 	// ---------------------------------------------------------------------

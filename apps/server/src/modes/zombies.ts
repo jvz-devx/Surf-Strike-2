@@ -10,6 +10,7 @@ import {
 	decayed,
 	encodeZombies,
 	FLAG_DUCKED,
+	FLAG_TELEPORTED,
 	mapCvars,
 	REPEAT_MS,
 	Status,
@@ -81,7 +82,7 @@ export class ZombiesMode implements ServerMode {
 	}
 
 	state(p: ModePlayer, s: NetState): void {
-		this.game.setPlayerPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0, yaw: s.yaw });
+		this.game.setPlayerPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0, yaw: s.yaw }, (s.flags & FLAG_TELEPORTED) !== 0);
 	}
 
 	zone(): void {}
