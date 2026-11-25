@@ -9,3 +9,7 @@ import './glasses_googly.js';
 import './top_astronaut.js';
 import './bottom_robot.js';
 import './shoes_rocket.js';
+import './hat_octopus.js';
+import './glasses_snorkel.js';
+import './top_turtle.js';
+import './shoes_monster.js';
