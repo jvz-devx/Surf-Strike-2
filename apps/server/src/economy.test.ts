@@ -51,7 +51,7 @@ describe('ledger', () => {
 
 	it('AFK, spectating, unknown players and too few players earn nothing', () => {
 		const w = world(HNS);
-		const ps = w.join(5);
+		const ps = w.join(3);
 		w.active();
 		const p = ps[0]!;
 		w.run(31, (id) => id !== p.id);

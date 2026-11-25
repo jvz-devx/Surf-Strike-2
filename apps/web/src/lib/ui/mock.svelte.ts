@@ -214,7 +214,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 						t0,
 						coinsN === 0 ? 0 : -400
 					),
-		multiplier: old ? null : race ? { mult: 10, active: 5, need: 0 } : { mult: 15, active: 6, need: 5 },
+		multiplier: old ? null : race ? { mult: 10, active: 5, need: 0 } : { mult: 15, active: 6, need: 3 },
 		awardPopups: [
 			...mockAwards(coinsN ?? 0).map((e) => awardPopup({ type: 'award', base: 30, total: 0, balance: 0, ...e }, t0 + 60_000)),
 			...(params.has('warn') ? [noticePopup({ type: 'coinsNotice', tone: 'warn', text: MOCK_WARNING }, t0 + 60_000)] : [])

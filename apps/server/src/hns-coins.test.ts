@@ -326,13 +326,24 @@ describe('hide and seek coins: the end of a round', () => {
 		assert.equal(s.mode.game.bagCoins, null);
 	});
 
-	it('fewer than 5 active players: no awards and no bag', () => {
-		const s = lobby(4);
+	it('3 active players are enough to be paid', () => {
+		const s = lobby(3);
 		const { seeker, hiders } = s.start();
 		s.chase(seeker, hiders[0]!, 41);
+		assert.equal(s.paid(seeker, 'hnsChase'), 2);
+		assert.equal(s.w.sent(seeker, 'award')[0]!.mult, 12);
+		s.run(SEEK / 2);
+		assert.equal(s.events.filter((e) => e.e === 'bag').length, 1);
+	});
+
+	it('fewer than 3 active players: no awards and no bag', () => {
+		const s = lobby(2);
+		const { seeker, hiders } = s.start();
+		s.chase(seeker, hiders[0]!, 41);
+		s.run(SEEK / 2);
 		s.find(seeker, hiders[0]!);
-		s.run(SEEK - 40);
-		assert.equal(s.mode.game.phase === 'ended' || s.mode.game.phase === 'hiding', true);
+		s.run(0.5);
+		assert.equal(s.mode.game.winner, 'seekers');
 		for (const p of s.all) assert.deepEqual(s.any(p), []);
 		assert.equal(s.events.some((e) => e.e === 'bag'), false);
 	});
@@ -406,11 +417,11 @@ describe('hide and seek coins: the cash bag', () => {
 		const guest = g.hiders.find((p) => p.accountId === null)!;
 		walkOver(g.s, guest);
 		assert.ok(g.s.chat.includes(`${guest.name} grabbed the cash bag.`));
-		const f = toBag(5);
-		f.s.leave(f.hiders[3]!);
+		const f = toBag(3);
+		f.s.leave(f.hiders[1]!);
 		walkOver(f.s, f.hiders[0]!);
 		assert.equal(f.s.mode.game.bagCoins, 4);
-		assert.ok(f.s.told.some((t) => t.startsWith('The cash bag needs 5 active players')));
+		assert.ok(f.s.told.some((t) => t.startsWith('The cash bag needs 3 active players')));
 	});
 });
 

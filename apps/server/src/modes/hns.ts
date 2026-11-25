@@ -23,6 +23,7 @@ import {
 	HUNT_RANGE,
 	HuntTracker,
 	INTERP_DELAY_MS,
+	MIN_ACTIVE,
 	overSpeedCap,
 	POINTS_SCALE,
 	SNAPSHOT_HZ,
@@ -290,7 +291,7 @@ export class HnsMode implements ServerMode {
 					return;
 				case 'minPlayers': {
 					const p = this.player(id);
-					if (p && !this.bagTold.has(id)) this.host.systemTo(p, 'The cash bag needs 5 active players. It stays here for now.');
+					if (p && !this.bagTold.has(id)) this.host.systemTo(p, `The cash bag needs ${MIN_ACTIVE.hns} active players. It stays here for now.`);
 					this.bagTold.add(id);
 					return;
 				}

@@ -66,7 +66,7 @@ describe('payouts', () => {
 		expect(TAG_PAY.placement).toEqual([30, 20, 10]);
 		expect([HNS_PAY.find, HNS_PAY.bagMin, HNS_PAY.bagMax]).toEqual([30, 40, 100]);
 		expect([INFECTED_PAY.survive, INFECTED_PAY.surviveEasy, INFECTED_PAY.moab, decayed(INFECTED_PAY.moab, INFECTED_PAY.moabRepeat, 1)]).toEqual([40, 20, 80, 10]);
-		expect(MIN_ACTIVE).toEqual({ tag: 3, hns: 5, infected: 4 });
+		expect(MIN_ACTIVE).toEqual({ tag: 3, hns: 3, infected: 4 });
 		const caps = Object.fromEntries(Object.entries(AWARDS as Record<string, AwardDef>).map(([k, d]) => [k, d.perRound]));
 		expect(caps).toMatchObject({ tagChased: 30, tagTag: 30, hnsChase: 40, hnsChased: 80, hnsView: 60, infKills: 40, infInfect: 50, zombiesKill: 30 });
 		expect(AWARDS.tagPlace.minActive).toBe(4);

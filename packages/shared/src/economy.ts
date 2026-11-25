@@ -179,7 +179,7 @@ export const INFECTED_PAY = Object.freeze({
 export const HUNT_RANGE = Object.freeze({ tagChase: 500, hnsChase: 600, hnsView: 2000 });
 
 /** Active players a mode needs before it pays anything but playtime. */
-export const MIN_ACTIVE: Readonly<Partial<Record<GameModeId, number>>> = Object.freeze({ tag: 3, hns: 5, infected: 4 });
+export const MIN_ACTIVE: Readonly<Partial<Record<GameModeId, number>>> = Object.freeze({ tag: 3, hns: 3, infected: 4 });
 
 export interface AwardDef {
 	/** Shown in the popup and the Coins view. */
