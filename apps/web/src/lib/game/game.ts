@@ -427,7 +427,7 @@ export class Game implements CommandContext {
 				this.audio.setVolume(Number(value));
 				break;
 			case 'fov':
-				this.renderer?.setFov(Number(value));
+				this.renderer?.setFov(this.client?.scopeFov ?? Number(value));
 				break;
 			case 'cl_hideplayers':
 				this.renderer?.players.setHidden(Number(value) !== 0);

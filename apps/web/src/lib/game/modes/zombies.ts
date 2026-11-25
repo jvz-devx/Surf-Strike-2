@@ -20,6 +20,7 @@ import type { ClientMode, ClientModeHost, ModeServerMessage, RemotePlayer } from
 export class ZombiesMode implements ClientMode {
 	readonly id = 'zombies';
 	readonly client: ZombiesClient;
+	scopeFov: number | null = null;
 	/** Physics cvars with the held weapon's max speed. */
 	private readonly sv: Cvars = { ...SURF_CVARS };
 
@@ -35,7 +36,10 @@ export class ZombiesMode implements ClientMode {
 			voteOpen: () => host.voteOpen,
 			// Heard from the camera: the spectator camera while spectating (infected-listener.ts).
 			sound: (name, at) => host.audio.zombies(name, soundSource(at, host.spec, host.remotes), soundListener(host.spec, host.eye), host.yaw),
-			setZoom: (fov) => host.renderer?.setFov(fov ?? host.cvar('fov')),
+			setZoom: (fov) => {
+				this.scopeFov = fov;
+				host.renderer?.setFov(fov ?? host.cvar('fov'));
+			},
 			push: (vx, vy) => {
 				host.player.velocity.x = vx;
 				host.player.velocity.y = vy;

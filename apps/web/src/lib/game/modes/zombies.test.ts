@@ -185,6 +185,16 @@ describe('ZombiesMode', () => {
 		expect(s.renderer.setFov).toHaveBeenLastCalledWith(88);
 	});
 
+	it('says which FOV the scope holds, for a change of the fov cvar meanwhile', () => {
+		const s = setup();
+		hold(s, 'sniper');
+		expect(s.mode.scopeFov).toBe(null);
+		s.mode.press('attack2', true, s.now);
+		expect(s.mode.scopeFov).toBe(WEAPONS.sniper.zoomFov);
+		s.mode.press('attack2', true, s.now);
+		expect(s.mode.scopeFov).toBe(null);
+	});
+
 	it('publishes its HUD view on construction, then only when it changed, and takes it back on dispose', () => {
 		const s = setup();
 		expect(s.hudWrites).toHaveLength(1);

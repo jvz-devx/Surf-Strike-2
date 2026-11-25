@@ -133,6 +133,8 @@ export type ModeServerMessage = Extract<ServerMessage, { type: 'modeState' | 'zm
 export interface ClientMode {
 	readonly id: GameModeId;
 	readonly view?: Readonly<ModeView>;
+	/** FOV the mode has set (horizontal, 4:3) instead of the cvar's; null or absent: none. Infected eases its own every frame (`view`). */
+	readonly scopeFov?: number | null;
 	/** Race: the local run. Absent: no timer. */
 	readonly run?: Readonly<RunState>;
 
