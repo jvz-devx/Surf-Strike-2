@@ -462,7 +462,7 @@ export class InfectedClient {
 		return !this.alive;
 	}
 
-	/** No server round: game.ts handles fall-outs (the server skips them while waiting). */
+	/** No server round: fall-outs are handled locally (modes/infected.ts; the server skips them while waiting). */
 	get localFallouts(): boolean {
 		return this.solo || this.phase === 'waiting';
 	}

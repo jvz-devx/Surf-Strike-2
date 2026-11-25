@@ -131,6 +131,7 @@ export type ModeCommand = 'beacon' | 'moab';
 export type ModeServerMessage = Extract<ServerMessage, { type: 'modeState' | 'zm' | 'inf' | 'hns' | 'tagged' }>;
 
 export interface ClientMode {
+	/** For tests and the dev console; the game does not read it. */
 	readonly id: GameModeId;
 	readonly view?: Readonly<ModeView>;
 	/** FOV the mode has set (horizontal, 4:3) instead of the cvar's; null or absent: none. Infected eases its own every frame (`view`). */
@@ -140,7 +141,7 @@ export interface ClientMode {
 
 	// Input (never called while spectating, except `release` and `slot`)
 	press?(action: 'attack' | 'attack2', down: boolean, now: number): void;
-	/** Every held button was let go (pointer lock lost, spectating started or ended). */
+	/** Every held button was let go (pointer lock or window focus lost, chat, console or a menu opened, spectating started or ended). */
 	release?(now: number): void;
 	/** Number key. False: the key goes to the map vote. */
 	slot?(n: number, now: number): boolean;
