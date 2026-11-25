@@ -130,6 +130,32 @@ describe('TRUST_PROXY and clientIp', () => {
 });
 
 describe('ALLOWED_ORIGINS', () => {
+	it('uses ORIGIN for same-origin upgrades behind TLS termination', async (t) => {
+		const original = process.env.ORIGIN;
+		process.env.ORIGIN = 'https://public.example';
+		t.after(() => {
+			if (original === undefined) delete process.env.ORIGIN;
+			else process.env.ORIGIN = original;
+		});
+		const server = await startServer({ ...LOCAL_SERVER, allowedOrigins: 'same-origin' });
+		try {
+			const client = new TestClient(server.port, { origin: 'https://public.example' });
+			assert.equal((await client.hello('Visitor')).map, 'surf_a');
+			await assert.rejects(
+				new TestClient(server.port, { origin: `http://127.0.0.1:${server.port}` }).open(),
+				/Unexpected server response: 403/
+			);
+			await assert.rejects(
+				new TestClient(server.port, {
+					origin: 'https://wrong.example', host: 'wrong.example', 'x-forwarded-proto': 'https'
+				}).open(),
+				/Unexpected server response: 403/
+			);
+		} finally {
+			await server.close();
+		}
+	});
+
 	it('parses allow-list and checks origins including same-origin', () => {
 		assert.equal(parseAllowedOrigins(undefined), null);
 		assert.equal(isOriginAllowed({ headers: {} }, null), true);

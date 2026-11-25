@@ -57,7 +57,7 @@ The container listens on `HOST:PORT` (default `0.0.0.0:8080`):
 | `HOST` | `0.0.0.0` | Network interface to bind |
 | `PORT` | `8080` | HTTP and WebSocket port (plain server default outside Docker is `27015`) |
 | `DB_PATH` | `/data/surf.db` | SQLite database path |
-| `ORIGIN` | unset | Set to the public HTTPS URL for the SvelteKit handler behind cloudflared |
+| `ORIGIN` | unset | Public origin used by the SvelteKit handler and the WebSocket `same-origin` check |
 | `WEB_HANDLER` | `/app/web/handler.js` | Path to the `@sveltejs/adapter-node` `handler.js`; unset to run API/WS only |
 | `ADMIN_USERNAMES` | unset (no admins) | Comma-separated existing admin account usernames, case-insensitive |
 | `TRUST_PROXY` | `loopback` | Trusted proxy hops for `CF-Connecting-IP` and `X-Forwarded-For` (see below) |
@@ -86,7 +86,7 @@ When `X-Forwarded-For` is used, the server walks hops right-to-left and picks th
 
 ### `ALLOWED_ORIGINS`
 
-Set `ALLOWED_ORIGINS` to the browser page origin. With TLS termination at cloudflared, use the explicit public HTTPS origin, such as `https://surf-test.jensvanzutphen.com`. The `same-origin` setting compares scheme, hostname and port using the incoming connection scheme and works for the local Docker quick start. For Vite, list `http://localhost:5173` and, if used, `http://127.0.0.1:5173` or the origin of your custom dev port. Disallowed or missing `Origin` headers receive HTTP 403. Leave the allow-list unset for local bot tools that omit `Origin`.
+Set `ALLOWED_ORIGINS=same-origin` when the game and page share an origin. Behind cloudflared, set `ORIGIN` to the public HTTPS origin, such as `https://surf-test.jensvanzutphen.com`. With `ORIGIN` unset, the server derives the origin from the request host and connection scheme. If the browser page is hosted separately, add its origin to `ALLOWED_ORIGINS`. For Vite, list `http://localhost:5173` and, if used, `http://127.0.0.1:5173` or the origin of your custom dev port. Disallowed or missing `Origin` headers receive HTTP 403. Leave the allow-list unset for local bot tools that omit `Origin`.
 
 ### Admin accounts
 
