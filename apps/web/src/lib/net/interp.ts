@@ -1,9 +1,9 @@
 /**
- * Remote-player interpolation buffer: snapshots are stamped on the server
- * monotonic timeline with per-player `NetState.tick` spacing to remove
- * 64->32 Hz aliasing and uplink jitter (docs/architecture.md#netcode).
+ * Remote-player interpolation buffer on the server's monotonic timeline
+ * (docs/architecture.md#netcode). Untimed snapshots use the sender's tick
+ * spacing to remove aliasing and uplink jitter.
  */
-import { DUCK_HULL_MAX, FLAG_DUCKED, FLAG_TELEPORTED, HULL_MAX, HULL_MIN, INTERP_DELAY_MS, teleportSeq, SnapshotTimeline, type CollisionWorld, type NetState } from '@surf/shared';
+import { DUCK_HULL_MAX, FLAG_DUCKED, FLAG_TELEPORTED, HULL_MAX, HULL_MIN, INTERP_DELAY_MS, teleportSeq, SnapshotTimeline, type CollisionWorld, type NetState, type SnapshotEntry } from '@surf/shared';
 
 /** Shared with the server's lag compensation (packages/shared protocol.ts). */
 export { INTERP_DELAY_MS };
@@ -48,6 +48,7 @@ export class SnapshotBuffer {
 	/** Local client arrival timestamp (ms) of the last pushed snapshot, used for visibility timeouts. */
 	private lastLocalArrival = -Infinity;
 	private readonly timeline = new SnapshotTimeline();
+	private serverSourceIdle: boolean | undefined;
 
 	/** Teleport threshold: larger jumps snap instead of interpolating. */
 	snapDistance = 1024;
@@ -65,10 +66,18 @@ export class SnapshotBuffer {
 	 * Pass `localArrivalMs` when `serverTimeMs` is on the server timeline so
 	 * `lastArrival` stays in the caller's local clock domain.
 	 */
-	push(state: NetState, serverTimeMs: number, localArrivalMs = serverTimeMs): void {
+	push(state: Omit<SnapshotEntry, 'id'>, serverTimeMs: number, localArrivalMs = serverTimeMs): void {
 		this.lastLocalArrival = localArrivalMs;
-		const t = this.timeline.push(state.tick, serverTimeMs);
+		this.serverSourceIdle = state.sourceIdle;
+		const t = state.sampleTimeMs ?? this.timeline.push(state.tick, serverTimeMs, true);
 		if (t === null) return;
+		if (state.sampleTimeMs !== undefined) {
+			const last = this.buf.at(-1);
+			if (last && t <= last.t) {
+				if (t === last.t) last.s = state;
+				return;
+			}
+		}
 		this.buf.push({ t, s: state });
 		if (this.buf.length > CAPACITY) this.buf.shift();
 	}
@@ -84,13 +93,14 @@ export class SnapshotBuffer {
 
 	/** True when this remote player's sim tick has stopped advancing (e.g. backgrounded tab). */
 	get sourceIdle(): boolean {
-		return this.timeline.sourceIdle;
+		return this.serverSourceIdle ?? this.timeline.sourceIdle;
 	}
 
 	clear(): void {
 		this.buf.length = 0;
 		this.lastLocalArrival = -Infinity;
 		this.timeline.clear();
+		this.serverSourceIdle = undefined;
 		this.lastUnderrun = false;
 		this.lastExtrapMs = 0;
 		this.lastOverrunMs = 0;

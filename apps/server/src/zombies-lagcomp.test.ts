@@ -23,7 +23,7 @@ function arena(): MapDef {
 	return map;
 }
 
-async function shotOnTimeline(stale: boolean, repeatTick = false): Promise<boolean> {
+async function shotOnTimeline({ stale = false, repeatTick = false, lateJoin = false } = {}): Promise<boolean> {
 	let now = 1000;
 	let stateTick = 0;
 	const server = await startServer({
@@ -33,6 +33,7 @@ async function shotOnTimeline(stale: boolean, repeatTick = false): Promise<boole
 	const { lobby } = server;
 	const shooter = new TestClient(server.port);
 	const target = new TestClient(server.port);
+	let observer: TestClient | undefined;
 	try {
 		const a = (await shooter.hello('Shooter')).selfId;
 		await shooter.until(() => [...lobby.clients].find((p) => p.id === a)?.hasRttSample);
@@ -74,11 +75,13 @@ async function shotOnTimeline(stale: boolean, repeatTick = false): Promise<boole
 		const players = new SnapshotBuffer();
 		const zombies = new ZombieBuffer();
 		const delivery = 15;
-		const playerFrame = async () => {
-			const n = shooter.snapshots.length;
+		const playerFrame = async (receiver = shooter, drop = false) => {
+			const n = receiver.snapshotFrames.length;
 			lobby.sendSnapshot();
-			const frame = await shooter.until(() => shooter.snapshotFrames[n]);
-			players.push(frame.entries.find((p) => p.id === b)!, frame.serverTimeMs, now + delivery);
+			const frame = await receiver.until(() => receiver.snapshotFrames[n]);
+			const entry = frame.entries.find((p) => p.id === b)!;
+			if (!drop) players.push(entry, frame.serverTimeMs, now + delivery);
+			return entry;
 		};
 		const zombieFrame = async () => {
 			const next = game.tick + 1;
@@ -86,17 +89,39 @@ async function shotOnTimeline(stale: boolean, repeatTick = false): Promise<boole
 			zombies.push(await shooter.until(() => shooter.zombieFrames.find((f) => f.tick >= next)), now + delivery);
 		};
 		let aimAt: number;
-		if (repeatTick) {
+		if (lateJoin) {
+			await put(target, b, targetPos(-240));
+			await playerFrame();
+			players.clear();
+
+			observer = new TestClient(server.port);
+			await observer.hello('Observer');
+			now += period;
+			stateTick += 3;
+			await put(target, b, targetPos(-120));
+			await playerFrame(observer, true);
+
+			now += period;
+			stateTick++;
+			await put(target, b, targetPos(0));
+			await playerFrame(observer);
+			now += period;
+			stateTick++;
+			await put(target, b, targetPos(120));
+			await playerFrame(observer);
+			aimAt = now + 1.25;
+		} else if (repeatTick) {
 			await put(target, b, targetPos(-120));
 			await playerFrame();
 			now += period;
 			stateTick++;
 			await put(target, b, targetPos(0));
-			await playerFrame();
+			const previous = await playerFrame();
 
 			// No state arrives for one relay, then the sender returns four ticks ahead.
 			now += period;
-			await playerFrame();
+			const repeated = await playerFrame();
+			assert.equal(repeated.sampleTimeMs, previous.sampleTimeMs);
 			aimAt = now + 0.25 * period;
 			now += period;
 			stateTick += 3;
@@ -123,8 +148,8 @@ async function shotOnTimeline(stale: boolean, repeatTick = false): Promise<boole
 		assert.ok(players.sample(aimAt, rendered));
 		zombies.sample(aimAt, []);
 		if (repeatTick) assert.equal(rendered.y, 75);
-		else assert.ok(Math.abs(rendered.y) < 1);
-		if (!stale && !repeatTick) assert.ok(!Number.isInteger(zombies.tick));
+		else if (!lateJoin) assert.ok(Math.abs(rendered.y) < 1);
+		if (!stale && !repeatTick && !lateJoin) assert.ok(!Number.isInteger(zombies.tick));
 		const seen = headCentre(rendered);
 		const delta = { x: seen.x - origin.x, y: seen.y - origin.y, z: seen.z - origin.z };
 		const len = Math.hypot(delta.x, delta.y, delta.z);
@@ -137,18 +162,23 @@ async function shotOnTimeline(stale: boolean, repeatTick = false): Promise<boole
 	} finally {
 		shooter.close();
 		target.close();
+		observer?.close();
 		await server.close();
 	}
 }
 
 it('rewinds the player-zombie pose drawn by staggered snapshot buffers', async () => {
-	assert.equal(await shotOnTimeline(false), true);
+	assert.equal(await shotOnTimeline(), true);
 });
 
 it('hits the interpolated player-zombie between samples after a repeated relay tick', async () => {
-	assert.equal(await shotOnTimeline(false, true), true);
+	assert.equal(await shotOnTimeline({ repeatTick: true }), true);
 });
 
 it('bounds a Zombie Run shot sampled outside the RTT budget', async () => {
-	assert.equal(await shotOnTimeline(true), false);
+	assert.equal(await shotOnTimeline({ stale: true }), false);
+});
+
+it('rewinds to the pose seen by a late observer after a dropped snapshot', async () => {
+	assert.equal(await shotOnTimeline({ lateJoin: true }), true);
 });

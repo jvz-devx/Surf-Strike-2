@@ -13,7 +13,7 @@ The default output directory is `tools/netprobe/results`. Use `--out DIR` to sav
 
 Bots use the browser's fixed-step accumulator at 64 Hz with a 60 Hz sender frame clock by default. `--sender-fps 144` changes the sender cadence. Each bot traverses a phased copy of the same 16-second route, with 265 u/s straight runs, 1200 u/s arcs, stops, a reversal, and both sub-1024-u and longer teleports. One observer socket feeds separate copies of the interpolation buffer for 60 and 144 Hz sampling. Use `--fps 60` or `--fps 144` to measure a single rate.
 
-Protocol v1 uses the wire format and the unmodified interpolation logic from `a64f384`. The tool reads the protocol version from `/health` before connecting. For v2 and v3, the adapter loads the browser's server clock, adaptive delay and interpolation buffer. Both revisions use the same snapshot format.
+Protocol v1 uses the wire format and the unmodified interpolation logic from `a64f384`. The tool reads the protocol version from `/health` before connecting. For v2 and v3, the adapter loads the browser's server clock, adaptive delay and interpolation buffer. The adapter uses server-assigned sample times when present in v3 snapshots.
 
 ## Metrics
 

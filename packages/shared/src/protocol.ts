@@ -600,7 +600,12 @@ const SNAP_ANGLE_SCALE = 65536 / 360;
 
 /** Snapshot header flag: entries include race `stage` (u8) + `runTicks` (u24). */
 export const SNAP_FLAG_RACE = 1;
-/** Snapshot v2 header: u8 kind, u8 flags, u8 count, u16 seq, f64 serverTimeMs. */
+/** Snapshot header flag: entries carry server-assigned sample times. */
+const SNAP_FLAG_SAMPLE_TIME = 2;
+const SNAP_SOURCE_IDLE = 0x80;
+const SNAP_SAMPLE_SCALE = 8; // 1/8 ms per signed 24-bit offset
+const SNAP_SAMPLE_BYTES = 3;
+/** Snapshot header: u8 kind, u8 flags, u8 count, u16 seq, f64 serverTimeMs. */
 export const SNAPSHOT_HEADER_SIZE = 13;
 /** Per-entry bytes without race fields: u16 id, u32 tick, 3×i24 pos, 3×i16 vel, 2×u16 ang, u8 flags, u8 status, u8 teleport generation. */
 export const SNAPSHOT_ENTRY_BASE = 28;
@@ -686,6 +691,10 @@ export function decodeState(buf: ArrayBuffer | Uint8Array): NetState | null {
 
 export interface SnapshotEntry extends NetState {
 	id: number;
+	/** Server-assigned pose time in ms. Absent on v2 snapshots. */
+	sampleTimeMs?: number;
+	/** The sender's tick is stalled or slow, as seen by the relay. */
+	sourceIdle?: boolean;
 }
 
 export interface SnapshotFrame {
@@ -696,10 +705,12 @@ export interface SnapshotFrame {
 	entries: SnapshotEntry[];
 }
 
-function writeI24(v: DataView, o: number, units: number): void {
-	let n = Math.round(units * SNAP_POS_SCALE);
-	if (n < I24_MIN) n = I24_MIN;
-	else if (n > I24_MAX) n = I24_MAX;
+function clampI24(n: number): number {
+	return Math.max(I24_MIN, Math.min(I24_MAX, n));
+}
+
+function writeI24(v: DataView, o: number, n: number): void {
+	n = clampI24(n);
 	v.setUint8(o, n & 0xff);
 	v.setUint8(o + 1, (n >> 8) & 0xff);
 	v.setUint8(o + 2, (n >> 16) & 0xff);
@@ -707,7 +718,14 @@ function writeI24(v: DataView, o: number, units: number): void {
 
 function readI24(v: DataView, o: number): number {
 	const u = v.getUint8(o) | (v.getUint8(o + 1) << 8) | (v.getUint8(o + 2) << 16);
-	return ((u << 8) >> 8) / SNAP_POS_SCALE;
+	return (u << 8) >> 8;
+}
+
+/** Normalize to the wire time. Round absolute ticks before subtraction to keep repeated samples stable. */
+export function snapshotSampleTimeMs(sampleMs: number, frameMs: number): number {
+	const base = Math.round(frameMs * SNAP_SAMPLE_SCALE);
+	const delta = Math.round(sampleMs * SNAP_SAMPLE_SCALE) - base;
+	return (base + clampI24(delta)) / SNAP_SAMPLE_SCALE;
 }
 
 function writeI16Clamped(v: DataView, o: number, val: number): void {
@@ -740,25 +758,25 @@ function unpackSnapAngle(q: number): number {
 }
 
 /**
- * Encode a v2 binary snapshot. At 32 players this is 909 B (non-race) or
- * 1037 B (race), fitting inside a single TCP segment and a single ~1150 B
- * QUIC/WebTransport datagram.
+ * At 32 players, snapshots with sample times use 1005 B (non-race) or
+ * 1133 B (race). Untimed v2 snapshots use 909 B or 1037 B.
  */
 export function encodeSnapshot(entries: readonly SnapshotEntry[], serverTimeMs = 0, seq = 0): ArrayBuffer {
 	const count = Math.min(255, entries.length);
 	let hasRace = false;
+	let timed = false;
 	for (let i = 0; i < count; i++) {
 		const e = entries[i]!;
-		if (e.stage !== 0 || e.runTicks !== 0) {
-			hasRace = true;
-			break;
-		}
+		if (e.stage !== 0 || e.runTicks !== 0) hasRace = true;
+		if (e.sampleTimeMs !== undefined) timed = true;
 	}
-	const stride = hasRace ? SNAPSHOT_ENTRY_RACE : SNAPSHOT_ENTRY_BASE;
+	const baseStride = hasRace ? SNAPSHOT_ENTRY_RACE : SNAPSHOT_ENTRY_BASE;
+	const stride = baseStride + (timed ? SNAP_SAMPLE_BYTES : 0);
+	const frameTime = Math.round(serverTimeMs * SNAP_SAMPLE_SCALE);
 	const buf = new ArrayBuffer(SNAPSHOT_HEADER_SIZE + count * stride);
 	const v = new DataView(buf);
 	v.setUint8(0, BIN_SNAPSHOT);
-	v.setUint8(1, hasRace ? SNAP_FLAG_RACE : 0);
+	v.setUint8(1, (hasRace ? SNAP_FLAG_RACE : 0) | (timed ? SNAP_FLAG_SAMPLE_TIME : 0));
 	v.setUint8(2, count);
 	v.setUint16(3, seq & 0xffff, true);
 	v.setFloat64(5, serverTimeMs, true);
@@ -767,20 +785,25 @@ export function encodeSnapshot(entries: readonly SnapshotEntry[], serverTimeMs =
 		const e = entries[i]!;
 		v.setUint16(o, e.id & 0xffff, true);
 		v.setUint32(o + 2, e.tick >>> 0, true);
-		writeI24(v, o + 6, e.x);
-		writeI24(v, o + 9, e.y);
-		writeI24(v, o + 12, e.z);
+		writeI24(v, o + 6, Math.round(e.x * SNAP_POS_SCALE));
+		writeI24(v, o + 9, Math.round(e.y * SNAP_POS_SCALE));
+		writeI24(v, o + 12, Math.round(e.z * SNAP_POS_SCALE));
 		writeI16Clamped(v, o + 15, e.vx);
 		writeI16Clamped(v, o + 17, e.vy);
 		writeI16Clamped(v, o + 19, e.vz);
 		v.setUint16(o + 21, packSnapAngle(e.pitch), true);
 		v.setUint16(o + 23, packSnapAngle(e.yaw), true);
-		v.setUint8(o + 25, e.flags & ~FLAG_TELEPORT_SEQ_MASK);
+		const flags = (e.flags & ~FLAG_TELEPORT_SEQ_MASK) | (timed && e.sourceIdle ? SNAP_SOURCE_IDLE : 0);
+		v.setUint8(o + 25, flags);
 		v.setUint8(o + 26, e.status & 0xff);
 		v.setUint8(o + 27, teleportSeq(e.flags));
 		if (hasRace) {
 			v.setUint8(o + 28, e.stage & 0xff);
 			writeU24Clamped(v, o + 29, e.runTicks);
+		}
+		if (timed) {
+			const sampleTime = Math.round((e.sampleTimeMs ?? serverTimeMs) * SNAP_SAMPLE_SCALE);
+			writeI24(v, o + baseStride, sampleTime - frameTime);
 		}
 		o += stride;
 	}
@@ -792,32 +815,41 @@ export function decodeSnapshot(buf: ArrayBuffer | Uint8Array): SnapshotFrame | n
 	const v = toDataView(buf);
 	if (v.getUint8(0) !== BIN_SNAPSHOT) return null;
 	const snapFlags = v.getUint8(1);
-	if ((snapFlags & ~SNAP_FLAG_RACE) !== 0) return null;
+	if ((snapFlags & ~(SNAP_FLAG_RACE | SNAP_FLAG_SAMPLE_TIME)) !== 0) return null;
 	const hasRace = (snapFlags & SNAP_FLAG_RACE) !== 0;
+	const timed = (snapFlags & SNAP_FLAG_SAMPLE_TIME) !== 0;
 	const n = v.getUint8(2);
-	const stride = hasRace ? SNAPSHOT_ENTRY_RACE : SNAPSHOT_ENTRY_BASE;
+	const baseStride = hasRace ? SNAPSHOT_ENTRY_RACE : SNAPSHOT_ENTRY_BASE;
+	const stride = baseStride + (timed ? SNAP_SAMPLE_BYTES : 0);
 	if (buf.byteLength !== SNAPSHOT_HEADER_SIZE + n * stride) return null;
 	const seq = v.getUint16(3, true);
 	const serverTimeMs = v.getFloat64(5, true);
 	if (!Number.isFinite(serverTimeMs)) return null;
+	const frameTime = Math.round(serverTimeMs * SNAP_SAMPLE_SCALE);
+	if (timed && !Number.isSafeInteger(frameTime)) return null;
 	const entries: SnapshotEntry[] = new Array(n);
 	let o = SNAPSHOT_HEADER_SIZE;
 	for (let i = 0; i < n; i++) {
+		const flags = v.getUint8(o + 25);
 		entries[i] = {
 			id: v.getUint16(o, true),
 			tick: v.getUint32(o + 2, true),
-			x: readI24(v, o + 6),
-			y: readI24(v, o + 9),
-			z: readI24(v, o + 12),
+			x: readI24(v, o + 6) / SNAP_POS_SCALE,
+			y: readI24(v, o + 9) / SNAP_POS_SCALE,
+			z: readI24(v, o + 12) / SNAP_POS_SCALE,
 			vx: v.getInt16(o + 15, true),
 			vy: v.getInt16(o + 17, true),
 			vz: v.getInt16(o + 19, true),
 			pitch: unpackSnapAngle(v.getUint16(o + 21, true)),
 			yaw: unpackSnapAngle(v.getUint16(o + 23, true)),
-			flags: withTeleportSeq(v.getUint8(o + 25), v.getUint8(o + 27)),
+			flags: withTeleportSeq(flags & ~SNAP_SOURCE_IDLE, v.getUint8(o + 27)),
 			status: v.getUint8(o + 26) as Status,
 			stage: hasRace ? v.getUint8(o + 28) : 0,
-			runTicks: hasRace ? readU24(v, o + 29) : 0
+			runTicks: hasRace ? readU24(v, o + 29) : 0,
+			...(timed ? {
+				sampleTimeMs: (frameTime + readI24(v, o + baseStride)) / SNAP_SAMPLE_SCALE,
+				sourceIdle: (flags & SNAP_SOURCE_IDLE) !== 0
+			} : {})
 		};
 		o += stride;
 	}

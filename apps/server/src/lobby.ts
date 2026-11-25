@@ -46,6 +46,8 @@ import {
 	RICHEST,
 	sanitizeText,
 	SNAPSHOT_HZ,
+	SnapshotTimeline,
+	snapshotSampleTimeMs,
 	TAG_TICK_HZ,
 	usernameKey
 } from '@surf/shared';
@@ -169,6 +171,7 @@ interface Client {
 	spectating: boolean;
 	targetId: number | null;
 	state: NetState | null;
+	relay: { timeline: SnapshotTimeline; sample: { state: NetState; at: number } | null } | null;
 	pendingSpawn: Vec3 | null;
 	spawnAt: number;
 	spawnSeq: number;
@@ -559,6 +562,7 @@ export class Lobby {
 			spectating: false,
 			targetId: null,
 			state: null,
+			relay: null,
 			pendingSpawn: null,
 			spawnAt: 0,
 			spawnSeq: 0,
@@ -1070,7 +1074,11 @@ export class Lobby {
 			teleported = mapTeleport(this.map, c.state, state);
 		}
 		c.clientTeleportSeq = clientSeq;
-		if (teleported) c.relayTeleportSeq = (c.relayTeleportSeq + 1) & 0xff;
+		if (teleported) {
+			c.relayTeleportSeq = (c.relayTeleportSeq + 1) & 0xff;
+			// Retain the time anchor, but never relay the pre-teleport pose again.
+			if (c.relay) c.relay.sample = null;
+		}
 		const flags = withTeleportSeq((state.flags & ~FLAG_TELEPORTED) | (teleported ? FLAG_TELEPORTED : 0), c.relayTeleportSeq);
 		return { ...state, flags };
 	}
@@ -1088,6 +1096,7 @@ export class Lobby {
 		c.targetId = targetId;
 		if (changed) {
 			c.state = null;
+			if (c.relay) c.relay.sample = null;
 			c.pendingSpawn = null;
 			c.spawnFrame = null;
 			if (spectating) this.rotation.removeVoter(String(c.id));
@@ -1253,6 +1262,7 @@ export class Lobby {
 		for (const c of this.clients) {
 			if (!c.helloed) continue;
 			c.state = null;
+			c.relay = null;
 			c.pendingSpawn = null;
 			c.spawnFrame = null;
 			this.send(c, {
@@ -1286,10 +1296,20 @@ export class Lobby {
 				c.spawnSentAt = now;
 				this.sendRaw(c, c.spawnFrame);
 			}
-			if (c.state) entries.push({ id: c.id, ...c.state });
+			if (!c.state) continue;
+			const relay = c.relay ??= { timeline: new SnapshotTimeline(), sample: null };
+			const at = relay.timeline.push(c.state.tick, now);
+			if (at !== null) relay.sample = { state: c.state, at };
+			if (!relay.sample) continue;
+			entries.push({
+				id: c.id,
+				...relay.sample.state,
+				sampleTimeMs: snapshotSampleTimeMs(relay.sample.at, now),
+				sourceIdle: relay.timeline.sourceIdle
+			});
 		}
 		if (entries.length === 0) return;
-		this.mode.snapshot?.(entries, now);
+		this.mode.snapshot?.(entries);
 		this.snapshotSeq = (this.snapshotSeq + 1) & 0xffff;
 		const buf = Buffer.from(encodeSnapshot(entries, now, this.snapshotSeq));
 		for (const c of this.clients) if (c.helloed) this.sendRaw(c, buf);

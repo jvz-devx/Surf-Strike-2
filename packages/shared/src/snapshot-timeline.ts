@@ -32,7 +32,7 @@ export class SnapshotTimeline {
 	private lastSampleAt = -Infinity;
 
 	/** Return the sample's time, or null if the receiver should drop this tick. */
-	push(tick: number, serverTimeMs: number): number | null {
+	push(tick: number, serverTimeMs: number, allowInitialRepeat = false): number | null {
 		this.latestServerTime = Math.max(this.latestServerTime, serverTimeMs);
 
 		let sampleTime = serverTimeMs;
@@ -43,8 +43,7 @@ export class SnapshotTimeline {
 		} else {
 			const dt = tick - this.lastTick;
 			if (dt === 0) {
-				// Keep constant-tick fixtures working until the source is old enough to be idle.
-				if (this.tickProgressed || this.sourceIdle) return null;
+				if (!allowInitialRepeat || this.tickProgressed || this.sourceIdle) return null;
 			} else if (dt < 0) {
 				if (dt < -64) {
 					// Sender tick counter reset (reconnect/respawn/test reset): re-anchor cleanly.

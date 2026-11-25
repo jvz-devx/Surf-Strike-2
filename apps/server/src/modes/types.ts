@@ -71,7 +71,7 @@ export interface ServerMode {
 	/** A state packet arrived (already stored in `p.state`). */
 	state(p: ModePlayer, s: NetState): void;
 	/** Player poses in the lobby's outgoing snapshot, stamped on the server clock. */
-	snapshot?(entries: readonly SnapshotEntry[], now: number): void;
+	snapshot?(entries: readonly SnapshotEntry[]): void;
 	/** Race zone event (ignored by non-race modes). */
 	zone(p: ModePlayer, kind: ZoneKind, index: number, tick: number): void;
 	/** Race records for welcome/mapChange (empty for non-race modes). */

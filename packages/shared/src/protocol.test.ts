@@ -47,7 +47,7 @@ function makeEntry(id: number, extra: Partial<NetState> = {}): SnapshotEntry {
 	};
 }
 
-describe('protocol v2 binary codec', () => {
+describe('protocol binary codec', () => {
 	it('advertises protocol version 3', () => {
 		expect(PROTOCOL_VERSION).toBe(3);
 	});
@@ -187,6 +187,25 @@ describe('protocol v2 binary codec', () => {
 
 		expect(decodeSnapshot(combatBuf)?.entries.length).toBe(MAX_PLAYERS);
 		expect(decodeSnapshot(raceBuf)?.entries.length).toBe(MAX_PLAYERS);
+	});
+
+	it('preserves v3 sample times across relay frames and fits 32 players within 1150 bytes', () => {
+		const combat = Array.from({ length: MAX_PLAYERS }, (_, i) => ({
+			...makeEntry(i + 1),
+			sampleTimeMs: 4990.125 + i,
+			sourceIdle: i === 0
+		}));
+		const race = combat.map((e) => ({ ...e, stage: 2, runTicks: 1200 + e.id }));
+		const combatBuf = encodeSnapshot(combat, 5000.01, 1);
+		const raceBuf = encodeSnapshot(race, 5031.27, 2);
+		expect(combatBuf.byteLength).toBe(1005);
+		expect(raceBuf.byteLength).toBe(1133);
+		const decodedCombat = decodeSnapshot(combatBuf)!.entries;
+		const decodedRace = decodeSnapshot(raceBuf)!.entries;
+		expect(decodedCombat.map((e) => e.sampleTimeMs)).toEqual(combat.map((e) => e.sampleTimeMs));
+		expect(decodedRace.map((e) => e.sampleTimeMs)).toEqual(combat.map((e) => e.sampleTimeMs));
+		expect(decodedCombat[0]).toMatchObject({ flags: FLAG_ON_GROUND, sourceIdle: true });
+		expect(decodedRace.at(-1)).toMatchObject({ stage: 2, runTicks: 1232, sourceIdle: false });
 	});
 
 	it('clamps out-of-range coordinates, velocities and runTicks cleanly', () => {

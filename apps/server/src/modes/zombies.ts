@@ -93,8 +93,8 @@ export class ZombiesMode implements ServerMode {
 		this.game.setPlayerPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0, yaw: s.yaw }, (s.flags & FLAG_TELEPORTED) !== 0);
 	}
 
-	snapshot(entries: readonly SnapshotEntry[], now: number): void {
-		this.game.recordPlayerSnapshot(entries, now);
+	snapshot(entries: readonly SnapshotEntry[]): void {
+		this.game.recordPlayerSnapshot(entries);
 	}
 
 	zone(): void {}
