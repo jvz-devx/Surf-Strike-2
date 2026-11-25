@@ -158,6 +158,20 @@ describe('ZombiesMode', () => {
 		expect(s.host.send).toHaveBeenCalledWith({ type: 'loadout', weapon: 'lmg' });
 	});
 
+	it('letting go of every button stops automatic fire', () => {
+		const s = setup();
+		s.state();
+		hold(s, 'lmg', 90);
+		const shots = () => vi.mocked(s.host.send).mock.calls.length;
+		s.mode.press('attack', true, s.now);
+		for (let t = 0; t < 1000; t += 16) s.mode.tick(s.now + t, s.now + t);
+		const fired = shots();
+		expect(fired).toBeGreaterThan(3);
+		s.mode.release(s.now + 1000);
+		for (let t = 1300; t < 2300; t += 16) s.mode.tick(s.now + t, s.now + t);
+		expect(shots()).toBe(fired);
+	});
+
 	it('the scope sets the FOV; unscoping and disposing set the FOV cvar back', () => {
 		const s = setup();
 		hold(s, 'sniper');

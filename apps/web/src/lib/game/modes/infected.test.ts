@@ -187,6 +187,22 @@ describe('InfectedMode', () => {
 		expect(s.renderer.setFov).toHaveBeenLastCalledWith(101);
 	});
 
+	it('letting go of every button stops automatic fire', () => {
+		const s = setup();
+		s.phase('playing');
+		s.state();
+		s.ev({ e: 'ammo', id: 7, weapon: 'lmg', mag: 90, reserve: 200 });
+		const shots = () => vi.mocked(s.host.send).mock.calls.filter(([m]) => m.type === 'fire').length;
+		let at = s.run(s.now, 1500);
+		s.mode.press('attack', true, at);
+		at = s.run(at, 1000);
+		const fired = shots();
+		expect(fired).toBeGreaterThan(3);
+		s.mode.release(at);
+		s.run(at + 300, 1000);
+		expect(shots()).toBe(fired);
+	});
+
 	it('with cl_aimtoggle the aim stays after the button, also when every button is let go', () => {
 		const s = setup(false);
 		s.cvars.cl_aimtoggle = 1;

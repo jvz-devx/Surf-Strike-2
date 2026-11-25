@@ -70,8 +70,9 @@ export class InfectedMode implements ClientMode {
 		this.client.press(action, down, now);
 	}
 
-	/** A held aim lets go with the button; a toggled one stays. */
+	/** The trigger and a held aim let go with the button; a toggled aim stays. */
 	release(now: number): void {
+		this.client.press('attack', false, now);
 		this.client.press('attack2', false, now);
 	}
 

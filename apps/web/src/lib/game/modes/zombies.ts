@@ -55,6 +55,11 @@ export class ZombiesMode implements ClientMode {
 		this.client.press(action, down, now);
 	}
 
+	/** The trigger lets go with the button. */
+	release(now: number): void {
+		this.client.press('attack', false, now);
+	}
+
 	slot(n: number, now: number): boolean {
 		return this.client.slot(n, now);
 	}
