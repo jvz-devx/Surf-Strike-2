@@ -3,6 +3,9 @@
 
 FROM node:24-trixie-slim AS build
 RUN corepack enable
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends g++ make python3 \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -19,6 +22,7 @@ RUN pnpm --filter web exec svelte-kit sync \
  && SURF_ADAPTER=node pnpm --filter web build \
  && pnpm --filter server build \
  && pnpm --filter server deploy --prod --ignore-scripts /out/server \
+ && npm_config_nodedir=/usr/local pnpm --dir /out/server rebuild better-sqlite3 \
  && pnpm --filter web deploy --prod --ignore-scripts /out/web
 
 FROM node:24-trixie-slim
@@ -41,6 +45,7 @@ COPY --from=build /out/web/node_modules ./web/node_modules
 RUN mkdir -p /data/backups && chown -R node:node /data
 
 USER node
+RUN node -e 'const db = new (require("better-sqlite3"))(":memory:"); db.close()'
 EXPOSE 8080
 VOLUME ["/data"]
 
