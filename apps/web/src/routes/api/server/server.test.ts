@@ -50,4 +50,18 @@ describe('/api/server', () => {
 		expect((await post({})).status).toBe(400);
 		expect(await get()).toEqual({ url: null });
 	});
+
+	it('conditional clear with expectedUrl refuses to wipe a different server URL', async () => {
+		const fixed = 'https://surf.example.com';
+		expect((await post({ url: fixed })).status).toBe(200);
+		const mismatch = await post({ url: null, expectedUrl: URL_ });
+		expect(mismatch.status).toBe(200);
+		expect(await mismatch.json()).toEqual({ ok: true, cleared: false, url: fixed });
+		expect((await get()).url).toBe(fixed);
+
+		const match = await post({ url: null, expectedUrl: fixed });
+		expect(match.status).toBe(200);
+		expect((await match.json()).cleared).toBe(true);
+		expect(await get()).toEqual({ url: null });
+	});
 });
