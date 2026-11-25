@@ -71,6 +71,7 @@ import type { NetClient } from '../net/client.js';
 import { Connection } from '../net/connection.js';
 import { serverOverride } from '../net/discovery.js';
 import { emptySample, INTERP_DELAY_MS, SnapshotBuffer, type Sample } from '../net/interp.js';
+import { NetStats } from '../net/stats.js';
 import { emptyPose } from '../render/players.js';
 import { GameRenderer } from '../render/renderer.js';
 import { Binds } from './binds.js';
@@ -272,6 +273,8 @@ export class Game implements CommandContext {
 	private fpsSince = 0;
 	private trendAt = 0;
 	private trendSpeed = 0;
+	private netStats = new NetStats();
+	private lastNetGraph = 0;
 
 	constructor(private canvas: HTMLCanvasElement) {
 		this.cvars = new ClientCvars(this.store);
@@ -337,6 +340,7 @@ export class Game implements CommandContext {
 				snapshot: (e, t) => this.onSnapshot(e, t),
 				ghost: (f) => this.client.ghostFrame?.(f),
 				zombies: (f, t) => this.client.zombies?.(f, t),
+				traffic: (dir, bytes, at) => this.netStats.recordTraffic(dir, bytes, at),
 				closed: (wasOpen, _url, code) => this.onClosed(wasOpen, code)
 			},
 			{
@@ -527,6 +531,7 @@ export class Game implements CommandContext {
 			r.buf.clear();
 			r.hasSample = false;
 		}
+		this.netStats.resetPlayers();
 		if (this.mode === 'solo') {
 			this.records = null;
 			this.soloPb = loadSoloPb(this.store, def.id);
@@ -1337,7 +1342,7 @@ export class Game implements CommandContext {
 		}
 
 		const view = this.updateCamera(now);
-		this.updateRemotes(now);
+		this.updateRemotes(now, dt);
 		this.client.frame(now);
 		this.updateHud(now, view);
 		this.audio.update(Math.min(dt, 100) / 1000, {
@@ -1385,13 +1390,19 @@ export class Game implements CommandContext {
 		return n.z > 0.1 && n.z < 0.7 ? n : null;
 	}
 
-	private updateRemotes(now: number): void {
+	private updateRemotes(now: number, dtMs: number): void {
 		if (this.remotes.size === 0) return;
 		const renderAt = now - INTERP_DELAY_MS;
 		const players = this.renderer?.players;
 		const specTarget = this.spec && !this.spec.freeFly ? this.spec.targetId : null;
+		let anyUnderrun = false;
+		let anyExtrap = false;
 		for (const rm of this.remotes.values()) {
 			rm.hasSample = rm.buf.sample(renderAt, rm.sample);
+			if (rm.hasSample && !rm.spectating && now - rm.buf.lastArrival < 3000) {
+				if (rm.buf.lastUnderrun) anyUnderrun = true;
+				if (rm.buf.lastExtrapMs > 0) anyExtrap = true;
+			}
 			if (!players) continue;
 			if (!players.has(rm.id)) players.upsert(rm.id, rm.name);
 			const s = rm.sample;
@@ -1418,6 +1429,7 @@ export class Game implements CommandContext {
 			players.setPose(rm.id, pose, visible);
 			this.client.dress?.(players, rm, visible, now);
 		}
+		this.netStats.recordFrame(now, dtMs, anyUnderrun, anyExtrap);
 	}
 
 	private updateHud(now: number, target: Sample | null): void {
@@ -1505,6 +1517,14 @@ export class Game implements CommandContext {
 			if (!cur || cur.targetName !== name || cur.freeFly !== this.spec.freeFly)
 				h.spectating = { targetName: name, freeFly: this.spec.freeFly };
 		} else if (h.spectating) h.spectating = null;
+
+		const netGraphLevel = this.cvars.num('net_graph');
+		if (netGraphLevel <= 0) {
+			if (h.netGraph !== null) h.netGraph = null;
+		} else if (h.netGraph === null || now - this.lastNetGraph >= 200) {
+			this.lastNetGraph = now;
+			h.netGraph = this.netStats.view(now, netGraphLevel >= 2);
+		}
 	}
 
 	private refreshSoloBoard(now: number): void {
@@ -1923,10 +1943,14 @@ export class Game implements CommandContext {
 			case 'timeLeft':
 				this.mapEndsAt = now + m.mapTimeLeft * 1000;
 				break;
-			case 'scoreboard':
+			case 'scoreboard': {
 				this.hud.scoreboard = m.rows;
 				this.hud.richest = Array.isArray(m.richest) ? m.richest : [];
+				const me = m.rows.find((r) => r.id === this.selfId);
+				if (me && this.netStats.rtt < 0) this.netStats.recordRtt(me.ping);
+				else if (me && me.ping > 0) this.netStats.recordRtt(me.ping);
 				break;
+			}
 			case 'modeState':
 				if (m.mode === this.gameMode.id) this.hud.modeState = m;
 				this.client.message?.(m, now);
@@ -2026,6 +2050,8 @@ export class Game implements CommandContext {
 		this.hud.rtvCooldown = null;
 		this.renderer?.players.clear();
 		this.remotes.clear();
+		this.netStats.reset();
+		this.netStats.setInterpDelay(INTERP_DELAY_MS);
 		this.hud.ban = null;
 		this.hud.coins = null;
 		this.hud.multiplier = null;
@@ -2049,6 +2075,7 @@ export class Game implements CommandContext {
 
 	private onSnapshot(entries: SnapshotEntry[], arrival: number): void {
 		if (this.mode !== 'online') return;
+		this.netStats.recordSnapshot(arrival, { selfId: this.selfId, entries });
 		for (const e of entries) {
 			if (e.id === this.selfId) continue;
 			this.remote(e.id).buf.push(e, arrival);
@@ -2112,6 +2139,7 @@ export class Game implements CommandContext {
 		this.hud.richest = [];
 		this.hud.modeState = null;
 		this.remotes.clear();
+		this.netStats.reset();
 		this.renderer?.players.clear();
 		this.records = null;
 		this.hud.adminState = null;

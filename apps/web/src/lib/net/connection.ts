@@ -15,6 +15,8 @@ export interface ConnectionHandlers {
 	ghost?(frame: GhostFrame): void;
 	/** BIN_ZOMBIES frame (docs/modes.md#zombies). */
 	zombies?(frame: ZombieFrame, arrivalMs: number): void;
+	/** Inbound/outbound wire bytes (for `net_graph`). */
+	traffic?(dir: 'in' | 'out', bytes: number, atMs: number): void;
 	/** `code`: WebSocket close code (4002 = same player/account connected elsewhere). */
 	closed(wasOpen: boolean, url: string, code: number): void;
 	/** Discovery found no server (still solo). */
@@ -121,6 +123,7 @@ export class Connection {
 			snapshot: (e, t) => this.h.snapshot(e, t),
 			ghost: (f) => this.h.ghost?.(f),
 			zombies: (f, t) => this.h.zombies?.(f, t),
+			traffic: (dir, bytes, at) => this.h.traffic?.(dir, bytes, at),
 			close: (wasOpen, code) => {
 				if (this.client === client) this.client = null;
 				this.h.closed(wasOpen, target, code);

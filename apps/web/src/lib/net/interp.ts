@@ -44,6 +44,12 @@ export class SnapshotBuffer {
 	private buf: Entry[] = [];
 	/** Teleport threshold: larger jumps snap instead of interpolating. */
 	snapDistance = 1024;
+	/** True when the last `sample` ran past the newest buffered snapshot. */
+	lastUnderrun = false;
+	/** How many ms the last `sample` extrapolated past the newest snapshot (0 when not extrapolating). */
+	lastExtrapMs = 0;
+	/** How many ms `renderMs` exceeded the newest buffered snapshot on the last `sample`. */
+	lastOverrunMs = 0;
 
 	push(state: NetState, arrivalMs: number): void {
 		const last = this.buf[this.buf.length - 1];
@@ -62,18 +68,34 @@ export class SnapshotBuffer {
 
 	clear(): void {
 		this.buf.length = 0;
+		this.lastUnderrun = false;
+		this.lastExtrapMs = 0;
+		this.lastOverrunMs = 0;
 	}
 
 	/** Sample at `renderMs` (already delayed). Returns false when empty. */
 	sample(renderMs: number, out: Sample): boolean {
 		const n = this.buf.length;
-		if (n === 0) return false;
+		if (n === 0) {
+			this.lastUnderrun = false;
+			this.lastExtrapMs = 0;
+			this.lastOverrunMs = 0;
+			return false;
+		}
 		let a = this.buf[0];
 		let b = a;
+		this.lastUnderrun = false;
+		this.lastExtrapMs = 0;
+		this.lastOverrunMs = 0;
 		if (renderMs <= a.t) {
 			b = a;
 		} else if (renderMs >= this.buf[n - 1].t) {
 			a = b = this.buf[n - 1];
+			const over = renderMs - b.t;
+			if (over > 0) {
+				this.lastUnderrun = true;
+				this.lastOverrunMs = over;
+			}
 		} else {
 			for (let i = 1; i < n; i++) {
 				if (this.buf[i].t >= renderMs) {
