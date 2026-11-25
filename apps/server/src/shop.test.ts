@@ -348,6 +348,7 @@ describe('shop on the server', () => {
 		assert.ok(!full.ok && /everything/.test(full.error));
 		assert.equal(server.db.accountStats(accountId).pointsBalance, LOOTBOX.price * 2 + 100);
 		c.close();
+		await c.until(() => server.lobby.playerCount === 0);
 	});
 
 	describe('loot box news', () => {
@@ -391,6 +392,7 @@ describe('shop on the server', () => {
 			const m = await guest.waitFor('boxNews', () => true, guest.messages.findIndex((x) => x.type === 'boxNews') + 1);
 			assert.deepEqual([m.item, m.duplicate], [d.item, d.item !== lootItems()[0]!.id]);
 			for (const x of all) x.close();
+			await c.until(() => server.lobby.playerCount === 0);
 		});
 
 		it('another open and a disconnect announce what is left', async () => {
@@ -402,8 +404,9 @@ describe('shop on the server', () => {
 			assert.deepEqual([first.id, first.item], [id, a.item]);
 			await other.barrier();
 			assert.equal(other.of('boxNews').length, 1);
+			const beforeLeave = other.messages.length;
 			c.close();
-			const left = await other.waitFor('leave', (m) => m.id === id);
+			const left = await other.waitFor('leave', (m) => m.id === id, beforeLeave);
 			assert.deepEqual(other.of('boxNews').slice(1).map((m) => [m.name, m.item]), [['NewsTwice', b.item]]);
 			assert.ok(left);
 			other.close();

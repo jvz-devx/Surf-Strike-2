@@ -8,7 +8,7 @@ import type { MapDef } from '@surf/shared';
 import { PROTOCOL_VERSION, RTV_BLOCK, TICK_RATE } from '@surf/shared';
 import { clientIp, parseAdminUsernames } from './admin.ts';
 import { Db } from './db.ts';
-import { Lobby } from './lobby.ts';
+import { Lobby, parseSnapshotHz } from './lobby.ts';
 import type { LobbyOptions } from './lobby.ts';
 import { defaultMapId, loadMaps } from './maps.ts';
 
@@ -48,6 +48,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 		maps,
 		db,
 		initialMap: opts.initialMap ?? defaultMapId(maps),
+		snapshotHz: opts.snapshotHz ?? parseSnapshotHz(process.env.SNAPSHOT_HZ),
 		adminUsernames: opts.adminUsernames ?? parseAdminUsernames(process.env.ADMIN_USERNAMES)
 	});
 

@@ -49,7 +49,9 @@ import { Casino } from './casino.ts';
 import { HELP_LINES, parseCommand } from './commands.ts';
 import type { AccountRow, BanRow, Db } from './db.ts';
 import { Economy } from './economy.ts';
+import { TickScheduler } from './scheduler.ts';
 import { Shop } from './shop.ts';
+import { isClientTransport, WsClientTransport, type ClientTransport } from './transport.ts';
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
 import type { ZoneKind } from './validation.ts';
 
@@ -61,6 +63,12 @@ export const ROTATION_MS = 100;
 export const PING_MS = 2000;
 export const TIME_LEFT_MS = 5000;
 export const HELLO_TIMEOUT_MS = 10_000;
+
+/** Parse an optional SNAPSHOT_HZ setting (default 32; 64 supported for lower latency on good links). */
+export function parseSnapshotHz(raw: string | number | undefined): number {
+	const n = typeof raw === 'number' ? raw : Number(raw);
+	return Number.isFinite(n) && n >= 1 && n <= 128 ? Math.round(n) : SNAPSHOT_HZ;
+}
 
 /** Per-second limits: above `limit` messages are dropped, above `kick` the client is kicked. */
 export const RATE = {
@@ -85,6 +93,8 @@ export interface LobbyOptions {
 	playClock?: () => number;
 	/** Start interval timers (snapshot, scoreboard, rotation, ping). Default true. */
 	timers?: boolean;
+	/** Snapshot send rate in Hz (default SNAPSHOT_HZ = 32; 64 supported). */
+	snapshotHz?: number;
 	maxPlayers?: number;
 	/** Connected clients allowed per IP address (ipKey); 0 = no limit (default; `pnpm host` sets 3). */
 	maxPerIp?: number;
@@ -113,7 +123,7 @@ class Window {
 }
 
 interface Client {
-	socket: WebSocket;
+	transport: ClientTransport;
 	id: number;
 	playerId: string;
 	name: string;
@@ -161,12 +171,13 @@ export class Lobby {
 	private readonly now: () => number;
 	/** Monotonic server clock (ms) stamped into snapshots (injectable via playClock/now for tests). */
 	private readonly serverClock: () => number;
+	private readonly snapHz: number;
 	private snapshotSeq = 0;
 	private readonly maxPlayers: number;
 	private readonly maxPerIp: number;
 	private readonly log: (msg: string) => void;
 	private map: MapDef;
-	private timers: NodeJS.Timeout[] = [];
+	private scheduler: TickScheduler | null = null;
 	private lastTimeLeftSent = 0;
 	private closing = false;
 	private mode: ServerMode;
@@ -204,6 +215,7 @@ export class Lobby {
 		this.admin = this.createAdmin(opts.adminUsernames ?? parseAdminUsernames(undefined));
 		const clock = opts.playClock ?? opts.now ?? (() => performance.now());
 		this.serverClock = clock;
+		this.snapHz = parseSnapshotHz(opts.snapshotHz);
 		this.economy = this.createEconomy(clock);
 		this.shop = new Shop<Client>({
 			db: this.db,
@@ -244,15 +256,42 @@ export class Lobby {
 		});
 		this.lastTimeLeftSent = this.now();
 		if (opts.timers !== false) {
-			this.timers.push(
-				setInterval(() => this.sendSnapshot(), 1000 / SNAPSHOT_HZ),
-				setInterval(() => this.sendScoreboard(), SCOREBOARD_MS),
-				setInterval(() => this.updateRotation(), ROTATION_MS),
-				setInterval(() => this.sendPings(), PING_MS),
-				setInterval(() => this.stats.flush(), PLAYTIME_FLUSH_MS),
-				setInterval(() => this.tickMode(), 1000 / MODE_TICK_HZ)
-			);
+			const loopHz = Math.max(MODE_TICK_HZ, this.snapHz);
+			const tickMs = 1000 / loopHz;
+			const modeStepMs = 1000 / MODE_TICK_HZ;
+			const snapStepMs = 1000 / this.snapHz;
+			let modeAcc = 0;
+			let snapAcc = 0;
+			this.scheduler = new TickScheduler({
+				hz: loopHz,
+				onTick: () => {
+					// Run mode tick before snapshot send on shared ticks so freshly
+					// processed states and mode changes land in the immediate snapshot.
+					modeAcc += tickMs;
+					if (modeAcc + 0.001 >= modeStepMs) {
+						modeAcc -= modeStepMs;
+						this.tickMode();
+					}
+					snapAcc += tickMs;
+					if (snapAcc + 0.001 >= snapStepMs) {
+						snapAcc -= snapStepMs;
+						this.sendSnapshot();
+					}
+				},
+				periodic: [
+					{ everyMs: ROTATION_MS, run: () => this.updateRotation() },
+					{ everyMs: SCOREBOARD_MS, run: () => this.sendScoreboard() },
+					{ everyMs: PING_MS, run: () => this.sendPings() },
+					{ everyMs: PLAYTIME_FLUSH_MS, run: () => this.stats.flush() }
+				]
+			});
+			this.scheduler.start();
 		}
+	}
+
+	/** Active snapshot broadcast rate (Hz). */
+	get snapshotHz(): number {
+		return this.snapHz;
 	}
 
 	get currentMap(): MapDef {
@@ -312,7 +351,7 @@ export class Lobby {
 				this.economy.sent(p as Client, msg);
 				this.send(p as Client, msg);
 			},
-			broadcast: (msg) => this.broadcast(msg),
+			broadcast: (msg, exceptId) => this.broadcast(msg, exceptId),
 			sendBinary: (p, data) => this.sendRaw(p as Client, Buffer.from(data), true),
 			broadcastBinary: (data, droppable = false) => {
 				const buf = Buffer.from(data);
@@ -370,7 +409,7 @@ export class Lobby {
 	private kickBanned(c: Client, ban: BanRow): void {
 		this.log(`banned #${c.id} ${c.name}`);
 		this.send(c, this.bannedMessage(ban));
-		c.socket.close(4009, 'banned');
+		c.transport.close(4009, 'banned');
 		this.onClose(c);
 	}
 
@@ -403,29 +442,30 @@ export class Lobby {
 
 	close(): void {
 		this.closing = true;
-		for (const t of this.timers) clearInterval(t);
-		this.timers = [];
+		this.scheduler?.stop();
+		this.scheduler = null;
 		this.stats.close();
 		this.economy.close();
-		for (const c of this.clients) c.socket.close(1001, 'server shutting down');
+		for (const c of this.clients) c.transport.close(1001, 'server shutting down');
 	}
 
 	// -----------------------------------------------------------------------
 	// Connections
 
 	/** `ip`: client IP for guest bans (admin.ts clientIp), null when unknown. */
-	handleConnection(socket: WebSocket, ip: string | null = null): void {
+	handleConnection(conn: WebSocket | ClientTransport, ip: string | null = null): void {
+		const transport = isClientTransport(conn) ? conn : new WsClientTransport(conn);
 		if (this.closing) {
-			socket.close(1001, 'server shutting down');
+			transport.close(1001, 'server shutting down');
 			return;
 		}
 		if (this.clients.size >= this.maxPlayers) {
-			socket.send(JSON.stringify({ type: 'full' } satisfies ServerMessage));
-			socket.close(4003, 'server full');
+			transport.sendReliable(JSON.stringify({ type: 'full' } satisfies ServerMessage));
+			transport.close(4003, 'server full');
 			return;
 		}
 		const c: Client = {
-			socket,
+			transport,
 			id: this.freeId(),
 			playerId: '',
 			name: '',
@@ -449,18 +489,18 @@ export class Lobby {
 			closed: false
 		};
 		c.helloTimer = setTimeout(() => {
-			if (!c.helloed) socket.close(4000, 'hello timeout');
+			if (!c.helloed) transport.close(4000, 'hello timeout');
 		}, HELLO_TIMEOUT_MS);
 		this.clients.add(c);
-		socket.on('message', (data, isBinary) => {
+		transport.onMessage((data, isBinary) => {
 			try {
-				this.onMessage(c, data as Buffer, isBinary);
+				this.onMessage(c, data, isBinary);
 			} catch (err) {
 				this.log(`error handling message from #${c.id}: ${(err as Error).message}`);
 			}
 		});
-		socket.on('close', () => this.onClose(c));
-		socket.on('error', () => socket.terminate());
+		transport.onClose(() => this.onClose(c));
+		transport.onError(() => transport.terminate());
 	}
 
 	private freeId(): number {
@@ -494,8 +534,8 @@ export class Lobby {
 
 	private kick(c: Client, reason: string): void {
 		this.log(`kick #${c.id} ${c.name}: ${reason}`);
-		c.socket.close(4008, reason);
-		c.socket.terminate();
+		c.transport.close(4008, reason);
+		c.transport.terminate();
 	}
 
 	private onMessage(c: Client, data: Buffer, isBinary: boolean): void {
@@ -615,13 +655,13 @@ export class Lobby {
 
 	private onHello(c: Client, msg: Extract<ClientMessage, { type: 'hello' }>): void {
 		if (typeof msg.playerId !== 'string' || !PLAYER_ID_RE.test(msg.playerId)) {
-			c.socket.close(4001, 'bad player id');
+			c.transport.close(4001, 'bad player id');
 			return;
 		}
 		// Same player connecting again (reload, second tab): drop the old socket.
 		for (const o of this.clients) {
 			if (o !== c && o.helloed && o.playerId === msg.playerId) {
-				o.socket.close(4002, 'connected from another tab');
+				o.transport.close(4002, 'connected from another tab');
 				this.onClose(o);
 			}
 		}
@@ -631,7 +671,7 @@ export class Lobby {
 		if (ban) {
 			this.log(`banned hello #${c.id}${resumed ? ` account ${resumed.account.id}` : ''}`);
 			this.send(c, this.bannedMessage(ban));
-			c.socket.close(4009, 'banned');
+			c.transport.close(4009, 'banned');
 			return;
 		}
 		const guest = this.guestNameFor(typeof msg.name === 'string' ? msg.name : '', msg.playerId);
@@ -640,7 +680,7 @@ export class Lobby {
 		// After the duplicates are gone, so a reload or account takeover never counts twice.
 		if (this.ipFull(c)) {
 			this.log(`too many connections from one address: #${c.id}`);
-			c.socket.close(CLOSE_IP_LIMIT, 'too many connections from this network');
+			c.transport.close(CLOSE_IP_LIMIT, 'too many connections from this network');
 			return;
 		}
 		const name = resumed ? resumed.account.username : guestName;
@@ -670,7 +710,7 @@ export class Lobby {
 			records: this.mode.records(c),
 			account: resumed ? { username: resumed.account.username, admin } : null,
 			serverTime: this.serverClock(),
-			snapshotHz: SNAPSHOT_HZ
+			snapshotHz: this.snapHz
 		});
 		this.send(c, this.admin.mapsMessage());
 		if (!resumed && guest.taken) {
@@ -710,7 +750,7 @@ export class Lobby {
 	private dropAccountDuplicates(c: Client, accountId: number): void {
 		for (const o of this.clients) {
 			if (o !== c && o.helloed && o.accountId === accountId) {
-				o.socket.close(4002, 'logged in from another tab or device');
+				o.transport.close(4002, 'logged in from another tab or device');
 				this.onClose(o);
 			}
 		}
@@ -1139,20 +1179,19 @@ export class Lobby {
 	// -----------------------------------------------------------------------
 	// Send helpers
 
-	private sendRaw(c: Client, data: string | Buffer, reliable = false): void {
-		if (c.socket.readyState !== c.socket.OPEN) return;
-		// Drop frames to clients with a large backlog instead of buffering forever.
-		if (typeof data !== 'string' && !reliable && c.socket.bufferedAmount > 1 << 20) return;
-		c.socket.send(data);
+	private sendRaw(c: Client, data: string | Uint8Array, reliable = false): void {
+		if (typeof data === 'string' || reliable) c.transport.sendReliable(data);
+		else c.transport.sendUnreliable(data);
 	}
 
 	private send(c: Client, msg: ServerMessage): void {
-		this.sendRaw(c, JSON.stringify(msg));
+		c.transport.sendReliable(JSON.stringify(msg));
 	}
 
-	private broadcast(msg: ServerMessage, except?: Client): void {
+	private broadcast(msg: ServerMessage, except?: Client | number): void {
 		const s = JSON.stringify(msg);
-		for (const c of this.clients) if (c.helloed && c !== except) this.sendRaw(c, s);
+		const skipId = typeof except === 'number' ? except : except?.id;
+		for (const c of this.clients) if (c.helloed && c.id !== skipId) c.transport.sendReliable(s);
 	}
 
 	private system(text: string, except?: Client): void {

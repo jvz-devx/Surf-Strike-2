@@ -340,7 +340,7 @@ export class HnsMode implements ServerMode {
 					continue;
 				}
 				case 'swing':
-					for (const p of h.players()) if (p.id !== ev.by) h.send(p, { type: 'hns', ev });
+					h.broadcast({ type: 'hns', ev }, ev.by);
 					continue;
 			}
 			changed = true;

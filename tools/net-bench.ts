@@ -459,13 +459,14 @@ async function connectClient(
 	return { ws, ...welcome };
 }
 
-async function runScenario(def: ScenarioDef, durationSec: number): Promise<ScenarioResult> {
+async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz = SNAPSHOT_HZ): Promise<ScenarioResult> {
 	const server = await startServer({
 		port: 0,
 		host: '127.0.0.1',
 		dbPath: ':memory:',
 		maps: [benchMap()],
 		initialMap: 'surf_bench',
+		snapshotHz,
 		log: () => {}
 	});
 	const proxy = new ImpairmentProxy(server.port, def.profile);
@@ -802,24 +803,26 @@ async function main(): Promise<void> {
 	let duration = 5;
 	let json = false;
 	let filter: string | null = null;
+	let snapshotHz = SNAPSHOT_HZ;
 	for (let i = 0; i < args.length; i++) {
 		if (args[i] === '--duration' && args[i + 1]) duration = Math.max(1, Number(args[++i]));
 		else if (args[i] === '--json') json = true;
 		else if (args[i] === '--scenario' && args[i + 1]) filter = args[++i]!;
+		else if (args[i] === '--hz' && args[i + 1]) snapshotHz = Math.max(1, Math.min(128, Math.round(Number(args[++i]))));
 	}
 
 	const list = filter ? DEFAULT_SCENARIOS.filter((s) => s.name.includes(filter!)) : DEFAULT_SCENARIOS;
 	const results: ScenarioResult[] = [];
 	for (const sc of list) {
-		results.push(await runScenario(sc, duration));
+		results.push(await runScenario(sc, duration, snapshotHz));
 	}
 
 	if (json) {
-		console.log(JSON.stringify({ protocol: PROTOCOL_VERSION, snapshotHz: SNAPSHOT_HZ, results }, null, 2));
+		console.log(JSON.stringify({ protocol: PROTOCOL_VERSION, snapshotHz, results }, null, 2));
 		return;
 	}
 
-	console.log(`Surf Strike 2 net-bench (protocol v${PROTOCOL_VERSION}, SNAPSHOT_HZ=${SNAPSHOT_HZ}, ${duration}s/scenario)\n`);
+	console.log(`Surf Strike 2 net-bench (protocol v${PROTOCOL_VERSION}, SNAPSHOT_HZ=${snapshotHz}, ${duration}s/scenario)\n`);
 	console.log(
 		[
 			'scenario'.padEnd(20),

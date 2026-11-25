@@ -303,7 +303,7 @@ export class InfectedMode implements ServerMode {
 			if (route.to !== undefined) {
 				for (const p of h.players()) if (p.id === route.to) h.send(p, msg);
 			} else if (route.except !== undefined) {
-				for (const p of h.players()) if (p.id !== route.except) h.send(p, msg);
+				h.broadcast(msg, route.except);
 			} else h.broadcast(msg);
 			if (URGENT.has(ev.e)) this.urgent = true;
 			// A shot and a reload change nothing the mode state shows.

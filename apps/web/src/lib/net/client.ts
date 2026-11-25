@@ -1,4 +1,4 @@
-/** Thin WebSocket wrapper: JSON text frames, binary snapshots and ghost frames. */
+/** Thin transport-agnostic client: JSON text frames, binary snapshots and ghost frames. */
 import {
 	BIN_GHOST,
 	BIN_SNAPSHOT,
@@ -12,6 +12,7 @@ import {
 	type ServerMessage,
 	type SnapshotFrame
 } from '@surf/shared';
+import { createWsTransport, type NetTransport, type NetTransportFactory } from './transport.js';
 
 export interface NetClientHandlers {
 	open(): void;
@@ -23,7 +24,7 @@ export interface NetClientHandlers {
 	zombies?(frame: ZombieFrame, arrivalMs: number): void;
 	/** Inbound/outbound wire bytes (for `net_graph`). */
 	traffic?(dir: 'in' | 'out', bytes: number, atMs: number): void;
-	/** `code` is the WebSocket close code (0 when the socket never existed or was closed locally). */
+	/** `code` is the close code (0 when the socket never existed or was closed locally). */
 	close(wasOpen: boolean, code: number): void;
 }
 
@@ -35,40 +36,27 @@ function textBytes(s: string): number {
 const OPEN_TIMEOUT_MS = 8000;
 
 export class NetClient {
-	private ws: WebSocket | null;
+	private transport: NetTransport | null;
 	private opened = false;
 	private closed = false;
 	private openTimer: ReturnType<typeof setTimeout> | null;
 
 	constructor(
 		readonly url: string,
-		private h: NetClientHandlers
+		private h: NetClientHandlers,
+		transportFactory: NetTransportFactory = createWsTransport
 	) {
-		let ws: WebSocket | null = null;
-		try {
-			ws = new WebSocket(url);
-		} catch {
-			ws = null;
-		}
-		this.ws = ws;
 		this.openTimer = null;
-		if (!ws) {
-			queueMicrotask(() => this.finish());
-			return;
-		}
-		ws.binaryType = 'arraybuffer';
-		this.openTimer = setTimeout(() => this.close(), OPEN_TIMEOUT_MS);
-		ws.onopen = () => {
-			if (this.openTimer) clearTimeout(this.openTimer);
-			this.openTimer = null;
-			this.opened = true;
-			this.h.open();
-		};
-		ws.onmessage = (ev) => {
-			if (this.closed) return;
-			const data = ev.data;
-			const now = performance.now();
-			if (typeof data === 'string') {
+		this.transport = transportFactory(url, {
+			open: () => {
+				if (this.closed) return;
+				if (this.openTimer) clearTimeout(this.openTimer);
+				this.openTimer = null;
+				this.opened = true;
+				this.h.open();
+			},
+			text: (data, now) => {
+				if (this.closed) return;
 				this.h.traffic?.('in', textBytes(data), now);
 				let msg: ServerMessage;
 				try {
@@ -77,7 +65,9 @@ export class NetClient {
 					return;
 				}
 				if (msg && typeof msg === 'object' && typeof msg.type === 'string') this.h.message(msg);
-			} else if (data instanceof ArrayBuffer && data.byteLength > 0) {
+			},
+			binary: (data, now) => {
+				if (this.closed) return;
 				this.h.traffic?.('in', data.byteLength, now);
 				const kind = new Uint8Array(data, 0, 1)[0];
 				if (kind === BIN_GHOST) {
@@ -93,38 +83,36 @@ export class NetClient {
 				if (kind !== BIN_SNAPSHOT) return;
 				const frame = decodeSnapshot(data);
 				if (frame) this.h.snapshot(frame, now);
-			}
-		};
-		ws.onclose = (ev) => this.finish(ev.code);
-		ws.onerror = () => {
-			// onclose follows
-		};
+			},
+			close: (code) => this.finish(code)
+		});
+		if (!this.transport) {
+			queueMicrotask(() => this.finish());
+			return;
+		}
+		this.openTimer = setTimeout(() => this.close(), OPEN_TIMEOUT_MS);
 	}
 
 	get isOpen(): boolean {
-		return this.opened && !this.closed && this.ws?.readyState === WebSocket.OPEN;
+		return this.opened && !this.closed && (this.transport?.isOpen ?? false);
 	}
 
 	send(msg: ClientMessage): void {
 		if (!this.isOpen) return;
 		const raw = JSON.stringify(msg);
-		this.ws!.send(raw);
+		this.transport!.sendText(raw);
 		this.h.traffic?.('out', textBytes(raw), performance.now());
 	}
 
-	sendBinary(buf: ArrayBuffer): void {
+	sendBinary(buf: ArrayBuffer, reliable = false): void {
 		if (!this.isOpen) return;
-		this.ws!.send(buf);
+		this.transport!.sendBinary(buf, reliable);
 		this.h.traffic?.('out', buf.byteLength, performance.now());
 	}
 
 	close(): void {
 		if (this.closed) return;
-		try {
-			this.ws?.close();
-		} catch {
-			// ignore
-		}
+		this.transport?.close();
 		this.finish();
 	}
 
@@ -133,9 +121,6 @@ export class NetClient {
 		this.closed = true;
 		if (this.openTimer) clearTimeout(this.openTimer);
 		this.openTimer = null;
-		if (this.ws) {
-			this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null;
-		}
 		this.h.close(this.opened, code);
 	}
 }

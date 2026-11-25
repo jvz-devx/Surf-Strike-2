@@ -191,7 +191,7 @@ export class ZombiesMode implements ServerMode {
 			if (route.to !== undefined) {
 				for (const p of h.players()) if (p.id === route.to) h.send(p, msg);
 			} else if (route.except !== undefined) {
-				for (const p of h.players()) if (p.id !== route.except) h.send(p, msg);
+				h.broadcast(msg, route.except);
 			} else h.broadcast(msg);
 			this.announce(ev);
 		}
