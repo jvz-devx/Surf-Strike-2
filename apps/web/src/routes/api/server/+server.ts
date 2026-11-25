@@ -2,23 +2,29 @@
  * Discovery API (docs/architecture.md#start-up-flow).
  *
  * POST /api/server  Authorization: Bearer <HOST_SECRET>  body { url: string | null }
- *   Stores { url, startedAt, lastSeen } at a fixed Vercel Blob path.
+ *   Keeps { url, startedAt, lastSeen } in the Vercel Runtime Cache for as long as
+ *   the host sends heartbeats. Not durable, and it needs no storage product: the
+ *   heartbeats would use up a free Blob store's monthly operations in two days.
  * GET  /api/server  -> { url, lastSeen } or { url: null } (absent, cleared or stale > 3 min).
+ *   The CDN answers for 5 s, so many waiting clients cost few cache reads.
  *
- * Env (server only): HOST_SECRET, BLOB_READ_WRITE_TOKEN, optional BLOB_ACCESS
- * ('private' default, or 'public' to match the store's access mode).
+ * Both run in one region (the runtime cache is regional). Outside Vercel the cache
+ * is in memory.
+ *
+ * Env (server only): HOST_SECRET.
  *
  * Env vars are read from process.env: SvelteKit 3's `$env/dynamic/private`
  * only exposes variables declared with defineEnvVars.
  */
 import { json } from '@sveltejs/kit';
-import { get, put } from '@vercel/blob';
+import { getCache } from '@vercel/functions';
 import type { RequestHandler } from './$types';
 
-const BLOB_PATH = 'discovery/server.json';
+const KEY = 'discovery-server';
 const STALE_MS = 3 * 60 * 1000;
 const MAX_URL = 512;
 const NO_STORE = { 'cache-control': 'no-store, max-age=0' };
+const GET_HEADERS = { ...NO_STORE, 'vercel-cdn-cache-control': 'max-age=5' };
 
 interface DiscoveryRecord {
 	url: string | null;
@@ -32,8 +38,9 @@ function env(name: string): string | undefined {
 	return v ? v : undefined;
 }
 
-function access(): 'public' | 'private' {
-	return env('BLOB_ACCESS') === 'public' ? 'public' : 'private';
+/** The cache's own hash is 32 bits, and on the Hobby plan all projects share the cache. */
+function cache() {
+	return getCache({ namespace: 'surf-strike', keyHashFunction: (k) => k });
 }
 
 async function sha256(s: string): Promise<Uint8Array> {
@@ -67,10 +74,8 @@ function normalizeServerUrl(v: unknown): string | null | undefined {
 	return `${u.protocol}//${u.host}${path}`;
 }
 
-async function readRecord(token: string): Promise<DiscoveryRecord | null> {
-	const res = await get(BLOB_PATH, { access: access(), token, useCache: false });
-	if (!res || res.statusCode !== 200) return null;
-	const data = (await new Response(res.stream).json()) as Partial<DiscoveryRecord>;
+async function readRecord(): Promise<DiscoveryRecord | null> {
+	const data = (await cache().get(KEY)) as Partial<DiscoveryRecord> | null | undefined;
 	if (typeof data !== 'object' || data === null || typeof data.lastSeen !== 'number') return null;
 	return {
 		url: typeof data.url === 'string' ? data.url : null,
@@ -80,12 +85,10 @@ async function readRecord(token: string): Promise<DiscoveryRecord | null> {
 }
 
 export const GET: RequestHandler = async () => {
-	const token = env('BLOB_READ_WRITE_TOKEN');
-	if (!token) return json({ url: null }, { headers: NO_STORE });
 	try {
-		const rec = await readRecord(token);
-		if (!rec || !rec.url || Date.now() - rec.lastSeen > STALE_MS) return json({ url: null }, { headers: NO_STORE });
-		return json({ url: rec.url, lastSeen: rec.lastSeen }, { headers: NO_STORE });
+		const rec = await readRecord();
+		if (!rec || !rec.url || Date.now() - rec.lastSeen > STALE_MS) return json({ url: null }, { headers: GET_HEADERS });
+		return json({ url: rec.url, lastSeen: rec.lastSeen }, { headers: GET_HEADERS });
 	} catch (err) {
 		console.error('discovery GET failed:', (err as Error).message);
 		return json({ url: null }, { headers: NO_STORE });
@@ -94,8 +97,7 @@ export const GET: RequestHandler = async () => {
 
 export const POST: RequestHandler = async ({ request }) => {
 	const secret = env('HOST_SECRET');
-	const token = env('BLOB_READ_WRITE_TOKEN');
-	if (!secret || !token) {
+	if (!secret) {
 		return json({ error: 'discovery not configured' }, { status: 503, headers: NO_STORE });
 	}
 	const auth = request.headers.get('authorization') ?? '';
@@ -119,21 +121,17 @@ export const POST: RequestHandler = async ({ request }) => {
 		const now = Date.now();
 		let startedAt: number | null = null;
 		if (url) {
-			const prev = await readRecord(token).catch(() => null);
+			const prev = await readRecord().catch(() => null);
 			startedAt = prev && prev.url === url && prev.startedAt ? prev.startedAt : now;
 		}
 		const rec: DiscoveryRecord = { url, startedAt, lastSeen: now };
-		await put(BLOB_PATH, JSON.stringify(rec), {
-			access: access(),
-			token,
-			addRandomSuffix: false,
-			allowOverwrite: true,
-			contentType: 'application/json',
-			cacheControlMaxAge: 60
-		});
+		await cache().set(KEY, rec, { ttl: STALE_MS / 1000, name: KEY });
+		// A failed write is only logged by the cache, so read it back.
+		const kept = await readRecord();
+		if (kept?.lastSeen !== now) throw new Error('the record was not kept');
 		return json({ ok: true, ...rec }, { headers: NO_STORE });
 	} catch (err) {
 		console.error('discovery POST failed:', (err as Error).message);
-		return json({ error: 'blob write failed' }, { status: 502, headers: NO_STORE });
+		return json({ error: 'cache write failed' }, { status: 502, headers: NO_STORE });
 	}
 };

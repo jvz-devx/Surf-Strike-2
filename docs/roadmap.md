@@ -14,7 +14,7 @@ Progress (2026-11-21): milestones 0–10 implemented with unit tests; 11 (produc
 | 5 | The four maps | `surf_aurora`, `surf_ember`, `bhop_meadow`, `bhop_circuit` with themes, procedural materials and zone outlines |
 | 6 | Audio | All recorded CC0 sounds in [ui.md](ui.md#audio), credited in `CREDITS.md` |
 | 7 | Server and netcode | Game server, protocol, remote-player interpolation, join/leave, 32-player cap, solo fallback and reconnect |
-| 8 | Hosting | `pnpm host` launches server + `cloudflared` and registers the URL; `/api/server` on Vercel with Blob and `HOST_SECRET` |
+| 8 | Hosting | `pnpm host` launches server + `cloudflared` and registers the URL; `/api/server` on Vercel with the Runtime Cache and `HOST_SECRET` |
 | 9 | Multiplayer features | Run validation, SQLite PBs and top-10, chat and commands, Tab scoreboard, spectate |
 | 10 | Rotation and voting | 15-minute map timer, vote panel, extend, `!rtv`, map change countdown (online and solo) |
 | 11 | Deploy and polish | Vercel production deploy, playtest with friends, tune cvars and maps |

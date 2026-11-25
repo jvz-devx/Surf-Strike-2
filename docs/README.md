@@ -60,7 +60,7 @@ Weapon models: `tools/models/procedural/build.sh [id…]` rebuilds the script-bu
 | --- | --- |
 | Client | SvelteKit + Three.js + TypeScript, deployed on Vercel |
 | Game server | Node + `ws` + SQLite, runs on the host's own PC |
-| Public access | `cloudflared` quick tunnel, URL registered to a Vercel API backed by Vercel Blob |
+| Public access | `cloudflared` quick tunnel, URL registered to a Vercel API backed by the Vercel Runtime Cache |
 | Offline behaviour | Solo play with a local timer and rotation; auto-reconnects when the server comes up |
 | Netcode | Client simulates its own movement; server validates runs and relays state |
 | Physics | CS2 movement: 64 tick with subtick input on a Source `CGameMovement` port, SharpTimer CS2 surf/bhop cvars |

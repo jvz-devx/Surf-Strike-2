@@ -78,7 +78,7 @@ input[type=range]{width:160px}
  <text class="elab" x="555" y="143" text-anchor="middle">Bearer HOST_SECRET · heartbeat 60 s</text>
  <g class="node" id="n-client" data-k="client"><rect x="20" y="60" width="145" height="170"/><text x="92" y="130" text-anchor="middle" font-weight="600" font-size="13">SvelteKit client</text><text x="92" y="148" text-anchor="middle" font-size="11">Three.js · physics</text><text x="92" y="163" text-anchor="middle" font-size="11">HUD · console · solo</text></g>
  <g class="node" id="n-static" data-k="static"><rect x="215" y="55" width="170" height="40"/><text x="300" y="80" text-anchor="middle" font-size="12.5">Static client</text></g>
- <g class="node" id="n-api" data-k="api"><rect x="215" y="105" width="170" height="40"/><text x="300" y="130" text-anchor="middle" font-size="12.5">Discovery API · Blob</text></g>
+ <g class="node" id="n-api" data-k="api"><rect x="215" y="105" width="170" height="40"/><text x="300" y="130" text-anchor="middle" font-size="12.5">Discovery API · Cache</text></g>
  <g class="node" id="n-cf" data-k="cf"><rect x="450" y="180" width="220" height="35"/><text x="560" y="202" text-anchor="middle" font-size="12.5">cloudflared tunnel</text></g>
  <g class="node" id="n-srv" data-k="srv"><rect x="450" y="235" width="220" height="45"/><text x="560" y="254" text-anchor="middle" font-size="12.5" font-weight="600">Game server</text><text x="560" y="270" text-anchor="middle" font-size="11">Node · ws · SQLite · :27015</text></g>
 </svg>
@@ -142,14 +142,14 @@ const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 $$('#tabs button').forEach(b=>b.onclick=()=>{$$('#tabs button').forEach(x=>x.classList.toggle('on',x===b));$$('.pane').forEach(p=>p.classList.toggle('on',p.id===b.dataset.t))});
 const info={client:'<b>Client</b> — renders, simulates own movement (zero input lag), HUD, console. Starts solo instantly; joins server when found.',
 static:'<b>Static client</b> — SvelteKit with adapter-vercel. No game logic server-side.',
-api:'<b>Discovery API</b> — <code>+server.ts</code> + <code>@vercel/blob</code>. POST stores <code>{url, startedAt, lastSeen}</code> (needs HOST_SECRET); GET returns it.',
+api:'<b>Discovery API</b> — <code>+server.ts</code> + <code>Runtime Cache</code>. POST stores <code>{url, startedAt, lastSeen}</code> (needs HOST_SECRET); GET returns it.',
 cf:'<b>cloudflared quick tunnel</b> — public HTTPS/WSS URL, no port forwarding. URL changes every start, hence discovery.',
 srv:'<b>Game server</b> — Node 22+, ws, better-sqlite3. Lobby (32 max), relay, run validation, map timer + vote, PBs/top-10.'};
 $$('.node').forEach(n=>n.onclick=()=>{$('#nodeInfo').innerHTML=info[n.dataset.k];hl([n.id],[])});
 const flows={host:[
 ['Start game server on localhost:27015',['n-srv'],[]],
 ['Spawn cloudflared, parse *.trycloudflare.com URL',['n-srv','n-cf'],['e-tun']],
-['POST URL to /api/server with Bearer HOST_SECRET → Blob',['n-srv','n-api'],['e-post']],
+['POST URL to /api/server with Bearer HOST_SECRET → Runtime Cache',['n-srv','n-api'],['e-post']],
 ['Heartbeat re-POST every 60 s (lastSeen)',['n-srv','n-api'],['e-post']],
 ['SIGINT/SIGTERM → POST {url:null}',['n-srv','n-api'],['e-post']]],
 conn:[
@@ -192,7 +192,7 @@ const rm=[['Setup','Node 22+ via fnm; pnpm monorepo (apps/web, apps/server, pack
 ['Four maps','aurora, ember, meadow, circuit with themes, procedural materials, zone outlines','content'],
 ['Audio','All WebAudio-synthesised sounds','content'],
 ['Server + netcode','Server, protocol, interpolation, join/leave, 32 cap, solo fallback + reconnect','online'],
-['Hosting','npm run host → server + cloudflared + URL registration; /api/server with Blob + HOST_SECRET','online'],
+['Hosting','npm run host → server + cloudflared + URL registration; /api/server with Runtime Cache + HOST_SECRET','online'],
 ['Multiplayer features','Run validation, SQLite PBs + top-10, chat + commands, Tab scoreboard, spectate','online'],
 ['Rotation + voting','15-min timer, vote panel, extend, !rtv, countdown (online + solo)','online'],
 ['Deploy + polish','Vercel prod deploy, playtest with friends, tune cvars and maps','ship']];

@@ -1,6 +1,6 @@
 # Architecture
 
-The static client is on Vercel. The lobby runs as one Node process on the host's PC, exposed as `wss://` through a Cloudflare quick tunnel. The tunnel URL is published to Vercel Blob every time the server starts.
+The static client is on Vercel. The lobby runs as one Node process on the host's PC, exposed as `wss://` through a Cloudflare quick tunnel. The tunnel URL is published to the Vercel Runtime Cache every time the server starts.
 
 ```
  Friends' browsers                    Vercel                         Host PC
@@ -8,7 +8,7 @@ The static client is on Vercel. The lobby runs as one Node process on the host's
 │ SvelteKit client │──────────────▶│ static client    │
 │ Three.js, physics│   GET         │                  │
 │ HUD, console     │──/api/server─▶│ discovery API    │◀── POST /api/server ──┐
-└────────┬─────────┘               │ (Vercel Blob)    │    (HOST_SECRET)      │
+└────────┬─────────┘               │ (Runtime Cache)  │    (HOST_SECRET)      │
          │                         └──────────────────┘                       │
          │  wss://<random>.trycloudflare.com/ws          ┌─────────────────┐  │
          └──────────────────────────────────────────────▶│ cloudflared     │  │
@@ -26,7 +26,7 @@ The static client is on Vercel. The lobby runs as one Node process on the host's
 | Part | Runs on | Tech | Job |
 | --- | --- | --- | --- |
 | Client | Vercel (static) | SvelteKit, Three.js, TypeScript | Rendering, movement simulation, HUD, console, solo fallback |
-| Discovery API | Vercel function | SvelteKit `+server.ts`, `@vercel/blob` | `POST /api/server` stores the tunnel URL (needs `HOST_SECRET`); `GET` returns it |
+| Discovery API | Vercel function | SvelteKit `+server.ts`, Vercel Runtime Cache | `POST /api/server` stores the tunnel URL (needs `HOST_SECRET`); `GET` returns it |
 | Game server | Host PC | Node 22+, `ws`, `better-sqlite3` | Lobby state, relay, run validation, map timer and vote, leaderboards |
 | Tunnel | Host PC | `cloudflared` quick tunnel | Public HTTPS/WSS URL with no port forwarding |
 | Database | Host PC | SQLite file | Accounts and sessions, guest players, personal bests, top-10 per map |
@@ -37,7 +37,7 @@ Run `./start.sh` from the repo root to host for the public Vercel site. It loads
 
 1. Start the game server on `localhost:27015`.
 2. Spawn `cloudflared tunnel --url http://localhost:27015` and parse the `https://*.trycloudflare.com` URL from its output.
-3. `POST` that URL to `https://<vercel-app>/api/server` with header `Authorization: Bearer <HOST_SECRET>`. The API writes `{ url, startedAt }` to a fixed Blob path.
+3. `POST` that URL to `https://<vercel-app>/api/server` with header `Authorization: Bearer <HOST_SECRET>`. The API keeps `{ url, startedAt, lastSeen }` in the Vercel Runtime Cache for 3 minutes.
 4. Every 60 s, re-post as a heartbeat (`lastSeen`).
 5. On shutdown (SIGINT/SIGTERM), post `{ url: null }` so clients skip the connection attempt.
 
@@ -51,9 +51,9 @@ Run `./start.sh` from the repo root to host for the public Vercel site. It loads
 
 ## One-time setup
 
-- Create a Vercel project and a Vercel Blob store; link the store to the project.
+- Create a Vercel project. No storage is needed: the discovery record lives in the Runtime Cache (regional, not durable; every heartbeat writes it again). The Hobby plan includes 200,000 writes and 1 million reads a month for all projects together; a host that never stops writes 43,200 times a month. A Blob store (2,000 writes a month) was used before and got suspended.
 - Set `HOST_SECRET` (random 32+ chars, enforced) in Vercel env vars and in `apps/server/.env`.
-- The Blob store provides `BLOB_READ_WRITE_TOKEN` to the project. Optional `BLOB_ACCESS` = `private` (default) or `public`, matching the store. The endpoint reads env via `process.env` because SvelteKit 3 deprecated `$env/dynamic/private`.
+- The endpoint reads env via `process.env` because SvelteKit 3 deprecated `$env/dynamic/private`.
 - `apps/server/.env` (see `.env.example`): `HOST_SECRET`, `DISCOVERY_URL`, `PORT` (27015), `DB_PATH` (default `apps/server/data/surf.db`), optional `CLOUDFLARED`, `ADMIN_USERNAMES` (admin accounts, default `tim`; [Admin and bans](#admin-and-bans)).
 - Set `DISCOVERY_URL` in `apps/server/.env` to the deployed Vercel app.
 - `cloudflared` is already installed at `~/.local/bin/cloudflared`.
