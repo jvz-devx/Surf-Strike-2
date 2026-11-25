@@ -38,6 +38,7 @@ import {
 	MAX_CHAT,
 	MAX_NAME,
 	MAX_PLAYERS,
+	MAX_VELOCITY_HARD,
 	modeOf,
 	POINTS_SCALE,
 	PROTOCOL_VERSION,
@@ -62,7 +63,7 @@ import { isClientTransport, WsClientTransport, type ClientTransport } from './tr
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
 import { observeRenderTime } from './modes/types.ts';
 import { MAX_REWIND_RTT_MS, PeerRtt } from './peer-rtt.ts';
-import { mapTeleport, nearPose, type ZoneKind } from './validation.ts';
+import { JUMP_SLACK, mapTeleport, nearPose, type ZoneKind } from './validation.ts';
 
 export { SNAPSHOT_HZ };
 /** Gamemode rule ticks (tag contact checks), at least the snapshot rate. */
@@ -169,6 +170,7 @@ interface Client {
 	targetId: number | null;
 	state: NetState | null;
 	pendingSpawn: Vec3 | null;
+	spawnAt: number;
 	spawnSeq: number;
 	spawnFrame: string | null;
 	spawnSentAt: number;
@@ -185,8 +187,6 @@ interface Client {
 }
 
 const ZONE_KINDS = new Set<ZoneKind>(['start', 'stage', 'checkpoint', 'end']);
-/** State packets are ordered. The first pose near the spawn acknowledges it without changing the wire format. */
-const SPAWN_ACK_RADIUS = 64;
 const SPAWN_RETRY_MS = 250;
 const PLAYER_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 
@@ -560,6 +560,7 @@ export class Lobby {
 			targetId: null,
 			state: null,
 			pendingSpawn: null,
+			spawnAt: 0,
 			spawnSeq: 0,
 			spawnFrame: null,
 			spawnSentAt: 0,
@@ -1057,8 +1058,11 @@ export class Lobby {
 		const clientSeq = teleportSeq(state.flags);
 		let teleported = false;
 		if (c.pendingSpawn) {
-			// The first state after an ack still starts a new relay teleport generation.
-			if (c.spawnFrame && !nearPose(state, c.pendingSpawn, SPAWN_ACK_RADIUS)) return null;
+			const elapsed = Math.max(0, this.serverClock() - c.spawnAt) / 1000;
+			// Movement clamps each axis. Allow diagonal travel and the usual position slack.
+			const axisLimit = Math.min(mapCvars(this.map).sv_maxvelocity, MAX_VELOCITY_HARD);
+			const reach = Math.sqrt(3) * axisLimit * elapsed + JUMP_SLACK;
+			if (!nearPose(state, c.pendingSpawn, reach)) return null;
 			c.pendingSpawn = null;
 			c.spawnFrame = null;
 			teleported = true;
@@ -1352,7 +1356,8 @@ export class Lobby {
 			c.state = null;
 			c.spawnSeq = c.spawnSeq === 0xffff ? 1 : c.spawnSeq + 1;
 			c.spawnFrame = JSON.stringify({ ...msg, spawnSeq: c.spawnSeq });
-			c.spawnSentAt = this.serverClock();
+			c.spawnAt = this.serverClock();
+			c.spawnSentAt = c.spawnAt;
 			this.sendRaw(c, c.spawnFrame);
 			return;
 		}

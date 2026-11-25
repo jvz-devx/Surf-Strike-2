@@ -165,6 +165,39 @@ describe('zombies mode', () => {
 		await a.waitFor('leave', (m) => m.id === selfId);
 	});
 
+	it('requires plausible movement for the first pose after a spawn ack', async () => {
+		const b = new TestClient(server.port);
+		clients.push(b);
+		const { selfId } = await b.hello('Spawn pose');
+		try {
+			const { ev, spawnSeq } = await b.waitFor('zm', (m) => m.ev.e === 'spawn');
+			assert.equal(ev.e, 'spawn');
+			assert.ok(spawnSeq);
+			const peer = [...server.lobby.clients].find((p) => p.id === selfId)!;
+			const generation = peer.relayTeleportSeq;
+			const { x, y, z } = ev;
+
+			b.send({ type: 'spawnAck', seq: spawnSeq });
+			clock += 16;
+			b.sendState(netState(1, x + 4096, { y, z, flags: FLAG_TELEPORTED }));
+			await b.barrier();
+			assert.equal(peer.spawnFrame, null);
+			assert.equal(peer.state?.tick, undefined);
+			assert.equal(peer.relayTeleportSeq, generation);
+			assert.ok(peer.pendingSpawn);
+
+			clock += 250;
+			b.sendState(netState(2, x + 128, { y, z }));
+			await b.barrier();
+			assert.equal(peer.state?.tick, 2);
+			assert.equal(peer.pendingSpawn, null);
+			assert.equal(peer.relayTeleportSeq, (generation + 1) & 0xff);
+		} finally {
+			b.close();
+			await a.waitFor('leave', (m) => m.id === selfId);
+		}
+	});
+
 	it('pistol: 4 body hits kill (hit markers, kill feed), a headshot kills at once', async () => {
 		const z = game().spawnZombie({ x: spawn.x + 500, y: spawn.y, z: spawn.z })!;
 		z.yaw = 180;
