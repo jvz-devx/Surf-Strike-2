@@ -49,6 +49,7 @@ import { Casino } from './casino.ts';
 import { HELP_LINES, parseCommand } from './commands.ts';
 import type { AccountRow, BanRow, Db } from './db.ts';
 import { Economy } from './economy.ts';
+import type { LobbyMetricsHooks } from './metrics.ts';
 import { Shop } from './shop.ts';
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
 import type { ZoneKind } from './validation.ts';
@@ -60,7 +61,9 @@ export const SCOREBOARD_MS = 1000;
 export const ROTATION_MS = 100;
 export const PING_MS = 2000;
 export const TIME_LEFT_MS = 5000;
-export const HELLO_TIMEOUT_MS = 10_000;
+export const HELLO_TIMEOUT_MS = 5_000;
+/** Maximum open sockets awaiting `hello` (separate from the 32 player slots). */
+export const MAX_PENDING_CONNECTIONS = 16;
 
 /** Per-second limits: above `limit` messages are dropped, above `kick` the client is kicked. */
 export const RATE = {
@@ -86,8 +89,14 @@ export interface LobbyOptions {
 	/** Start interval timers (snapshot, scoreboard, rotation, ping). Default true. */
 	timers?: boolean;
 	maxPlayers?: number;
-	/** Connected clients allowed per IP address (ipKey); 0 = no limit (default; `pnpm host` sets 3). */
+	/** Pre-hello WebSocket connections allowed (separate from `maxPlayers`). Default 16. */
+	maxPending?: number;
+	/** Close sockets that do not send `hello` within this many ms. Default 5000. */
+	helloTimeoutMs?: number;
+	/** Connected clients allowed per IP address (ipKey); 0 = no limit (default; `pnpm host` and production set 3). */
 	maxPerIp?: number;
+	/** Optional runtime metrics hooks (/metrics). */
+	metrics?: LobbyMetricsHooks;
 	log?: (msg: string) => void;
 	/** Seconds per map (default MAP_DURATION); dev testing only, see server.ts. */
 	mapDuration?: number;
@@ -159,9 +168,14 @@ export class Lobby {
 	private readonly maps: Map<string, MapDef>;
 	private readonly db: Db;
 	private readonly now: () => number;
-	private readonly maxPlayers: number;
+	readonly maxPlayers: number;
+	private readonly maxPending: number;
+	private readonly helloTimeoutMs: number;
 	private readonly maxPerIp: number;
+	private readonly metrics?: LobbyMetricsHooks;
 	private readonly log: (msg: string) => void;
+	private readonly loginFailsByIp = new AttemptLimiter(AUTH_LIMITS.loginFailsPerConnection * 2);
+	private readonly registersByIp = new AttemptLimiter(AUTH_LIMITS.registersPerConnection * 2);
 	private map: MapDef;
 	private timers: NodeJS.Timeout[] = [];
 	private lastTimeLeftSent = 0;
@@ -190,7 +204,10 @@ export class Lobby {
 		this.db = opts.db;
 		this.now = opts.now ?? Date.now;
 		this.maxPlayers = opts.maxPlayers ?? MAX_PLAYERS;
+		this.maxPending = opts.maxPending ?? MAX_PENDING_CONNECTIONS;
+		this.helloTimeoutMs = opts.helloTimeoutMs ?? HELLO_TIMEOUT_MS;
 		this.maxPerIp = opts.maxPerIp ?? 0;
+		this.metrics = opts.metrics;
 		this.log = opts.log ?? ((m) => console.log(m));
 		this.accounts = new Accounts(this.db, () => this.now());
 		this.stats = new AccountStats(this.db, opts.playClock ?? opts.now, this.log);
@@ -262,6 +279,7 @@ export class Lobby {
 
 	/** Advance gamemode rules (timer-driven at MODE_TICK_HZ; public for tests). */
 	tickMode(): void {
+		this.metrics?.recordModeTick();
 		this.mode.tick();
 		this.economy.tick();
 		this.casino.tick();
@@ -397,13 +415,33 @@ export class Lobby {
 		return n;
 	}
 
+	/** Open sockets that have not completed `hello` yet. */
+	get pendingCount(): number {
+		let n = 0;
+		for (const c of this.clients) if (!c.helloed) n++;
+		return n;
+	}
+
+	/** Largest WebSocket send queue across all connected sockets (bytes). */
+	maxBufferedBytes(): number {
+		let max = 0;
+		for (const c of this.clients) {
+			if (c.socket.bufferedAmount > max) max = c.socket.bufferedAmount;
+		}
+		return max;
+	}
+
 	close(): void {
 		this.closing = true;
 		for (const t of this.timers) clearInterval(t);
 		this.timers = [];
 		this.stats.close();
 		this.economy.close();
-		for (const c of this.clients) c.socket.close(1001, 'server shutting down');
+		for (const c of this.clients) {
+			if (c.helloTimer) clearTimeout(c.helloTimer);
+			c.helloTimer = null;
+			c.socket.close(1001, 'server shutting down');
+		}
 	}
 
 	// -----------------------------------------------------------------------
@@ -415,10 +453,24 @@ export class Lobby {
 			socket.close(1001, 'server shutting down');
 			return;
 		}
-		if (this.clients.size >= this.maxPlayers) {
+		if (this.playerCount >= this.maxPlayers) {
 			socket.send(JSON.stringify({ type: 'full' } satisfies ServerMessage));
 			socket.close(4003, 'server full');
 			return;
+		}
+		if (this.pendingCount >= this.maxPending) {
+			socket.send(JSON.stringify({ type: 'full' } satisfies ServerMessage));
+			socket.close(4003, 'too many pending connections');
+			return;
+		}
+		if (this.maxPerIp > 0 && ip !== null) {
+			const key = ipKey(ip);
+			let pendingFromIp = 0;
+			for (const o of this.clients) if (!o.helloed && o.ip !== null && ipKey(o.ip) === key) pendingFromIp++;
+			if (pendingFromIp >= Math.max(1, this.maxPerIp)) {
+				socket.close(CLOSE_IP_LIMIT, 'too many pending connections from this network');
+				return;
+			}
 		}
 		const c: Client = {
 			socket,
@@ -445,8 +497,11 @@ export class Lobby {
 			closed: false
 		};
 		c.helloTimer = setTimeout(() => {
-			if (!c.helloed) socket.close(4000, 'hello timeout');
-		}, HELLO_TIMEOUT_MS);
+			if (!c.helloed) {
+				socket.close(4000, 'hello timeout');
+				this.onClose(c);
+			}
+		}, this.helloTimeoutMs);
 		this.clients.add(c);
 		socket.on('message', (data, isBinary) => {
 			try {
@@ -629,6 +684,12 @@ export class Lobby {
 		const guest = this.guestNameFor(typeof msg.name === 'string' ? msg.name : '', msg.playerId);
 		const guestName = guest.name;
 		if (resumed) this.dropAccountDuplicates(c, resumed.account.id);
+		// Re-check player cap after dropping duplicates in case pending sockets raced for the last slot.
+		if (this.playerCount >= this.maxPlayers) {
+			this.send(c, { type: 'full' });
+			c.socket.close(4003, 'server full');
+			return;
+		}
 		// After the duplicates are gone, so a reload or account takeover never counts twice.
 		if (this.ipFull(c)) {
 			this.log(`too many connections from one address: #${c.id}`);
@@ -712,10 +773,16 @@ export class Lobby {
 		if (c.accountId !== null) return fail(`Already logged in as ${c.name}. Log out first.`);
 		const username = typeof msg.username === 'string' ? msg.username.slice(0, 256) : '';
 		const password = typeof msg.password === 'string' ? msg.password : '';
+		const ipBucket = c.ip !== null ? ipKey(c.ip) : null;
 		if (msg.type === 'register') {
 			const t = this.now();
-			if (c.registers.blocked('conn', t)) return fail(TOO_MANY);
+			if (c.registers.blocked('conn', t) || (ipBucket !== null && this.registersByIp.blocked(ipBucket, t))) {
+				return fail(TOO_MANY);
+			}
 			c.registers.hit('conn', t);
+			if (ipBucket !== null) this.registersByIp.hit(ipBucket, t);
+		} else if (ipBucket !== null && this.loginFailsByIp.blocked(ipBucket, this.now())) {
+			return fail(TOO_MANY);
 		}
 		c.authBusy = true;
 		let outcome: Awaited<ReturnType<Accounts['login']>>;
@@ -729,6 +796,9 @@ export class Lobby {
 		}
 		if (c.closed || this.closing || c.accountId !== null) return;
 		if (!outcome.ok) {
+			if (msg.type === 'login' && ipBucket !== null && outcome.error !== TOO_MANY) {
+				this.loginFailsByIp.hit(ipBucket, this.now());
+			}
 			this.log(`${msg.type} failed #${c.id}`);
 			return fail(outcome.error);
 		}
@@ -1081,6 +1151,7 @@ export class Lobby {
 	// Periodic sends
 
 	sendSnapshot(): void {
+		this.metrics?.recordSnapshotTick();
 		const entries: SnapshotEntry[] = [];
 		for (const c of this.clients) {
 			if (c.helloed && !c.spectating && c.state) entries.push({ id: c.id, ...c.state });
@@ -1131,8 +1202,12 @@ export class Lobby {
 	private sendRaw(c: Client, data: string | Buffer, reliable = false): void {
 		if (c.socket.readyState !== c.socket.OPEN) return;
 		// Drop frames to clients with a large backlog instead of buffering forever.
-		if (typeof data !== 'string' && !reliable && c.socket.bufferedAmount > 1 << 20) return;
+		if (typeof data !== 'string' && !reliable && c.socket.bufferedAmount > 1 << 20) {
+			this.metrics?.recordFrameDropped();
+			return;
+		}
 		c.socket.send(data);
+		this.metrics?.recordBytesSent(typeof data === 'string' ? Buffer.byteLength(data) : data.byteLength);
 	}
 
 	private send(c: Client, msg: ServerMessage): void {
