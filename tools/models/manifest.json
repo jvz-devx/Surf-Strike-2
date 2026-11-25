@@ -1,0 +1,16 @@
+{
+	"_": "Generated weapon model build (tools/models/build.sh; today only the knife, the guns are script-built in tools/models/procedural/). turn: degrees about the vertical that point the bore forward; cut: boxes in the canonical frame (three axes, muzzle at the origin, length 1, the stock towards +z) whose faces are removed; tube: an optic opened along its axis, faces with a vertex closer than r to the axis (x, y) between z0 and z1 removed and the cut edge laid on that circle; paint: base colour rectangles (x, y, w, h in the 2048 px source texture) blurred until markings are unreadable; yaw: degrees about the vertical after the bore alignment; shift: the muzzle point moved by (x, y) onto the bore; src: the raw file (default <id>.glb).",
+	"fp": {
+		"base": 1024,
+		"normal": 1024,
+		"orm": 512,
+		"simplify": 1,
+		"error": 0.0005
+	},
+	"models": {
+		"knife": {
+			"turn": 180,
+			"align": false
+		}
+	}
+}
