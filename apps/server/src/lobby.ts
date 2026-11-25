@@ -506,7 +506,7 @@ export class Lobby {
 
 	/** Called synchronously before the HTTP upgrade. */
 	upgradeStatus(ip: string | null): 503 | 429 | null {
-		if (this.closing || this.playerCount >= this.maxPlayers || this.pendingCount >= this.maxPending) return 503;
+		if (this.closing || this.pendingCount >= this.maxPending) return 503;
 		if (this.maxPendingPerIp > 0 && this.countFromIp(ip, false) >= this.maxPendingPerIp) return 429;
 		return null;
 	}
@@ -741,7 +741,7 @@ export class Lobby {
 		const guest = this.guestNameFor(typeof msg.name === 'string' ? msg.name : '', msg.playerId);
 		const guestName = guest.name;
 		if (resumed) this.dropAccountDuplicates(c, resumed.account.id);
-		// Re-check player cap after dropping duplicates in case pending sockets raced for the last slot.
+		// Check the player cap after dropping duplicate connections.
 		if (this.playerCount >= this.maxPlayers) {
 			this.send(c, { type: 'full' });
 			c.socket.close(4003, 'server full');

@@ -94,6 +94,7 @@ describe('TRUST_PROXY and clientIp', () => {
 		assert.equal(clientIp(fakeReq('10.52.0.9', { 'x-forwarded-for': '203.0.113.7' }), tp), null);
 		assert.throws(() => parseTrustProxy('cf:10.52.0.0/'), /Invalid TRUST_PROXY/);
 		assert.throws(() => parseTrustProxy('cf:private'), /Invalid TRUST_PROXY/);
+		assert.throws(() => parseTrustProxy('cf'), /TRUST_PROXY/);
 	});
 
 	it('rejects missing or invalid visitor headers from trusted Cloudflare peers before upgrade', async () => {
@@ -130,6 +131,32 @@ describe('TRUST_PROXY and clientIp', () => {
 });
 
 describe('ALLOWED_ORIGINS', () => {
+	it('uses ORIGIN for same-origin upgrades behind TLS termination', async (t) => {
+		const original = process.env.ORIGIN;
+		process.env.ORIGIN = 'https://public.example';
+		t.after(() => {
+			if (original === undefined) delete process.env.ORIGIN;
+			else process.env.ORIGIN = original;
+		});
+		const server = await startServer({ ...LOCAL_SERVER, allowedOrigins: 'same-origin' });
+		try {
+			const client = new TestClient(server.port, { origin: 'https://public.example' });
+			assert.equal((await client.hello('Visitor')).map, 'surf_a');
+			await assert.rejects(
+				new TestClient(server.port, { origin: `http://127.0.0.1:${server.port}` }).open(),
+				/Unexpected server response: 403/
+			);
+			await assert.rejects(
+				new TestClient(server.port, {
+					origin: 'https://wrong.example', host: 'wrong.example', 'x-forwarded-proto': 'https'
+				}).open(),
+				/Unexpected server response: 403/
+			);
+		} finally {
+			await server.close();
+		}
+	});
+
 	it('parses allow-list and checks origins including same-origin', () => {
 		assert.equal(parseAllowedOrigins(undefined), null);
 		assert.equal(isOriginAllowed({ headers: {} }, null), true);
@@ -214,6 +241,34 @@ describe('pre-hello caps, hello timeout, metrics, web handler, and graceful shut
 			assert.equal(server.lobby.pendingCount, 0);
 		} finally {
 			first.destroy();
+			await server.close();
+		}
+	});
+
+	it('sends full and closes with 4003 at the player cap while keeping pending caps', async () => {
+		const server = await startServer({ ...LOCAL_SERVER, maxPlayers: 1, maxPending: 2, maxPendingPerIp: 1 });
+		try {
+			const player = new TestClient(server.port);
+			await player.hello('Player', 'same-player');
+			const extra = new TestClient(server.port);
+			await extra.open();
+			await assert.rejects(new TestClient(server.port).open(), /Unexpected server response: 429/);
+			const otherIp = new TestClient(server.port, { 'cf-connecting-ip': '198.51.100.10' });
+			await otherIp.open();
+			await assert.rejects(
+				new TestClient(server.port, { 'cf-connecting-ip': '198.51.100.11' }).open(),
+				/Unexpected server response: 503/
+			);
+			extra.send({ type: 'hello', version: 1, playerId: 'extra-player', name: 'Extra' });
+			await extra.waitFor('full');
+			await extra.until(() => extra.closed);
+			assert.equal(extra.closeCode, 4003);
+			assert.equal(server.lobby.playerCount, 1);
+			await otherIp.hello('Player', 'same-player');
+			await player.until(() => player.closed);
+			assert.equal(player.closeCode, 4002);
+			assert.equal(server.lobby.playerCount, 1);
+		} finally {
 			await server.close();
 		}
 	});

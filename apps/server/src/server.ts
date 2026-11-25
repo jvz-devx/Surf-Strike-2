@@ -70,6 +70,8 @@ export interface GameServer {
 	lobby: Lobby;
 	db: Db;
 	metrics: ServerMetrics;
+	/** Fail readiness and reject upgrades while the listener remains open. */
+	beginDrain(): void;
 	close(): Promise<void>;
 }
 
@@ -113,6 +115,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 				: opts.allowedOrigins;
 	const publicLimits = opts.publicHost || process.env.NODE_ENV === 'production';
 	const maxPerIp =
+	const rawOrigin = process.env.ORIGIN?.trim();
+	const publicOrigin = allowedOrigins?.sameOrigin && rawOrigin ? URL.parse(rawOrigin) : undefined;
+	if (publicOrigin === null || (publicOrigin && publicOrigin.protocol !== 'http:' && publicOrigin.protocol !== 'https:')) {
+		throw new Error('ORIGIN must be a valid HTTP or HTTPS URL');
+	}
 		opts.maxPerIp ??
 		parseOptionalInt(process.env.MAX_PER_IP, 'MAX_PER_IP', 0) ??
 		(publicLimits ? DEFAULT_PROD_MAX_PER_IP : 0);
@@ -215,7 +222,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 		if (draining) return reject(503);
 		const path = (req.url ?? '/').split('?')[0];
 		if (path !== '/ws') return reject(404);
-		if (!isOriginAllowed(req, allowedOrigins)) return reject(403);
+		if (!isOriginAllowed(req, allowedOrigins, publicOrigin?.origin)) return reject(403);
 		const ip = clientIp(req, trustProxy);
 		const peer = normalizeIp(req.socket.remoteAddress);
 		if (trustProxy.requireVisitorIp && peer && trustProxy.isTrusted(peer) && ip === null) return reject(403);
@@ -244,10 +251,13 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 			? startBackupSchedule(db, { dir: backupDir, intervalMs: backupIntervalMs, keep: backupKeep, log: opts.log })
 			: null;
 
+	const beginDrain = () => {
+		draining = true;
+	};
 	let closing: Promise<void> | null = null;
 	const close = (): Promise<void> => {
 		if (closing) return closing;
-		draining = true;
+		beginDrain();
 		closing = (async () => {
 			// Stop timers, flush playtime/economy, and send WebSocket close 1001 to every client.
 			lobby.close();
@@ -303,6 +313,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 		lobby,
 		db,
 		metrics,
+		beginDrain,
 		close
 	};
 }
