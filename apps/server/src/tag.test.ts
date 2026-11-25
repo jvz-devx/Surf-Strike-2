@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import type { MapDef, ServerMessage } from '@surf/shared';
-import { Status, TAG_IMMUNITY_SECS, TAG_INTERMISSION_SECS, TAG_ROUND_SECS } from '@surf/shared';
+import { FLAG_TELEPORTED, Status, TAG_IMMUNITY_SECS, TAG_INTERMISSION_SECS, TAG_ROUND_SECS } from '@surf/shared';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
 import { netState, sleep, TestClient, testMap } from './test-helpers.ts';
@@ -35,11 +35,10 @@ async function join(name: string) {
 const settle = () => sleep(40);
 
 /** Send a position and wait until the server has stored it. */
-async function moveTo(c: TestClient, x: number, y = 0, z = 0) {
-	let tick = 0;
+async function moveTo(c: TestClient, x: number, y = 0, z = 0, flags = 0) {
 	const id = c.of('welcome')[0]!.selfId;
 	const stored = () => [...server.lobby.clients].find((o) => o.id === id)?.state;
-	c.sendState(netState(++tick, x, { y, z, status: Status.Idle }));
+	c.sendState(netState(1, x, { y, z, flags, status: Status.Idle }));
 	const deadline = Date.now() + 2000;
 	while (!(stored()?.x === x && stored()?.y === y && stored()?.z === z)) {
 		if (Date.now() > deadline) throw new Error('state not stored');
@@ -144,6 +143,17 @@ describe('tag mode', () => {
 		await moveTo(b, 980, 0, 200);
 		assert.deepEqual((await tick(a)).it, [aId]);
 		await moveTo(b, 2000);
+	});
+
+	it('remembers a teleport even if another state packet arrives before the tag check', async () => {
+		await moveTo(a, 0);
+		await moveTo(b, -50);
+		clock += 100;
+		await tick(a);
+		await moveTo(b, 49, 0, 0, FLAG_TELEPORTED);
+		await moveTo(b, 50);
+		clock += 31.25;
+		assert.deepEqual((await tick(a)).it, [aId]);
 	});
 
 	it('!top and !pb answer with the tag score', async () => {

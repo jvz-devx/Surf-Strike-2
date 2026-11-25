@@ -191,6 +191,28 @@ describe('TagGame tagging', () => {
 		expect(g.it).toEqual([1]);
 	});
 
+	it('tags when two players surfing at 1600 u/s cross between checks', () => {
+		const { g, now } = playing([1, 2]);
+		const pos = new Map([[1, at(-25)], [2, at(25)]]);
+		expect(g.update(now + 31.25, pos)).toEqual([]);
+		pos.set(1, at(25));
+		pos.set(2, at(-25));
+		expect(g.update(now + 62.5, pos)).toEqual([{ type: 'tag', by: 1, target: 2 }]);
+	});
+
+	it('ignores a crossing at separate heights or across a teleport', () => {
+		const { g, now } = playing([1, 2]);
+		const pos = new Map([[1, at(-25)], [2, at(25, 0, 80)]]);
+		expect(g.update(now + 31.25, pos)).toEqual([]);
+		pos.set(1, at(25));
+		pos.set(2, at(-25, 0, 80));
+		expect(g.update(now + 62.5, pos)).toEqual([]);
+		pos.set(2, at(-25));
+		expect(g.update(now + 93.75, pos)).toEqual([]);
+		pos.set(2, at(75));
+		expect(g.update(now + 125, pos, new Set([2]))).toEqual([]);
+	});
+
 	it('does not chain: a newly tagged IT cannot tag in the same update', () => {
 		const { g, now } = playing([1, 2, 3]);
 		const pos = new Map<number, TagPos | null>([

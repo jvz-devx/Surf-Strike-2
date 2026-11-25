@@ -3,10 +3,11 @@
  * `TagGame` rules run here on the latest state packets of every
  * non-spectating player; clients only display the result.
  */
-import type { MapRecordInfo, ScoreRow, ServerMessage, TagEvent, TagPos } from '@surf/shared';
+import type { MapRecordInfo, NetState, ScoreRow, ServerMessage, TagEvent, TagPos } from '@surf/shared';
 import {
 	buildSight,
 	FLAG_DUCKED,
+	FLAG_TELEPORTED,
 	HUNT_RANGE,
 	HuntTracker,
 	Status,
@@ -41,6 +42,7 @@ export class TagMode implements ServerMode {
 	readonly id = 'tag' as const;
 	readonly game: TagGame;
 	private lastSent = -Infinity;
+	private readonly teleported = new Set<number>();
 	/** Chases of the running round (docs/economy.md#chase-and-view). */
 	private readonly hunt: HuntTracker;
 	/** By playerId: an id can go to someone else. */
@@ -74,7 +76,9 @@ export class TagMode implements ServerMode {
 		this.tick();
 	}
 
-	state(): void {}
+	state(p: ModePlayer, s: NetState): void {
+		if (s.flags & FLAG_TELEPORTED) this.teleported.add(p.id);
+	}
 
 	zone(): void {}
 
@@ -120,7 +124,8 @@ export class TagMode implements ServerMode {
 			const s = p.state;
 			active.set(p.id, s ? { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0 } : null);
 		}
-		const events = this.game.update(now, active);
+		const events = this.game.update(now, active, this.teleported);
+		this.teleported.clear();
 		// Leaving or spectating ends "played from the start", also when coming back.
 		for (const [id, key] of this.starters) if (playing.get(id)?.playerId !== key) this.starters.delete(id);
 		for (const e of events) {

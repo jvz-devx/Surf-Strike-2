@@ -23,6 +23,8 @@ export const TAG_TWO_IT_PLAYERS = 8;
 export const TAG_MIN_PLAYERS = 2;
 /** How often the server checks for tags. */
 export const TAG_TICK_HZ = 32;
+/** A straight segment is only an estimate over the last one or two checks. */
+const TAG_MAX_SWEEP_MS = 2000 / TAG_TICK_HZ;
 /** Players shown in the round-end announcement. */
 export const TAG_PODIUM = 3;
 
@@ -61,6 +63,33 @@ export function tagTouch(a: TagPos, b: TagPos, range = TAG_RANGE): boolean {
 	const dy = a.y - b.y;
 	if (dx * dx + dy * dy > range * range) return false;
 	return a.z <= b.z + hullHeight(b) && b.z <= a.z + hullHeight(a);
+}
+
+/** Closest horizontal approach while the players' vertical hulls overlap. */
+function sweptTagDistance(a0: TagPos, a: TagPos, b0: TagPos, b: TagPos, start: number, range: number): number {
+	const x = a0.x - b0.x;
+	const y = a0.y - b0.y;
+	const z = a0.z - b0.z;
+	const dx = a.x - b.x - x;
+	const dy = a.y - b.y - y;
+	const dz = a.z - b.z - z;
+
+	// Each gap is positive when one player's feet are above the other's hull.
+	// Clip the time interval so both gaps are nonpositive at the same time.
+	let end = 1;
+	for (const [before, after] of [
+		[z - hullHeight(b0), z + dz - hullHeight(b)],
+		[-z - hullHeight(a0), -z - dz - hullHeight(a)]
+	] as const) {
+		if (before > 0 && after > 0) return Infinity;
+		if (before > 0) start = Math.max(start, before / (before - after));
+		else if (after > 0) end = Math.min(end, before / (before - after));
+	}
+	if (start > end) return Infinity;
+	const len2 = dx * dx + dy * dy;
+	const t = len2 > 0 ? Math.max(start, Math.min(end, -(x * dx + y * dy) / len2)) : start;
+	const horizontal = (x + dx * t) ** 2 + (y + dy * t) ** 2;
+	return horizontal <= range * range ? horizontal + (z + dz * t) ** 2 : Infinity;
 }
 
 /** The player hull at feet origin `o` overlaps box `b` (teleport triggers). */
@@ -106,6 +135,7 @@ interface TagPlayer {
 	scoreMs: number;
 	it: boolean;
 	immuneUntil: number;
+	previous: TagPos | null;
 }
 
 export class TagGame {
@@ -170,12 +200,17 @@ export class TagGame {
 	/**
 	 * Advance to `now`. `active` holds every non-spectating player in the map
 	 * with their latest position (null = no state received yet: counts as a
-	 * player but cannot tag or be tagged).
+	 * player but cannot tag or be tagged). A teleport breaks the movement segment.
 	 */
-	update(now: number, active: ReadonlyMap<number, TagPos | null>): TagEvent[] {
+	update(now: number, active: ReadonlyMap<number, TagPos | null>, teleported?: ReadonlySet<number>): TagEvent[] {
 		const events: TagEvent[] = [];
+		const from = this.last;
 		this.accrue(now);
 		this.syncPlayers(active, events);
+		for (const id of teleported ?? []) {
+			const p = this.players.get(id);
+			if (p) p.previous = null;
+		}
 
 		if (active.size < this.minPlayers) {
 			if (this.phase !== 'waiting') {
@@ -185,6 +220,7 @@ export class TagGame {
 				for (const p of this.players.values()) {
 					p.it = false;
 					p.immuneUntil = 0;
+					p.previous = null;
 				}
 				events.push({ type: 'waiting', cancelled });
 			}
@@ -201,7 +237,13 @@ export class TagGame {
 					p.immuneUntil = 0;
 				}
 				this.startCountdown(now, events);
-			} else this.checkTags(now, active, events);
+			} else {
+				this.checkTags(now, from, active, events);
+				for (const [id, p] of this.players) {
+					const pos = active.get(id);
+					p.previous = pos ? { ...pos } : null;
+				}
+			}
 		}
 		return events;
 	}
@@ -224,13 +266,15 @@ export class TagGame {
 			this.players.delete(id);
 		}
 		for (const id of active.keys()) {
-			if (!this.players.has(id)) this.players.set(id, { scoreMs: 0, it: false, immuneUntil: 0 });
+			if (!this.players.has(id)) this.players.set(id, { scoreMs: 0, it: false, immuneUntil: 0, previous: null });
 		}
 		if (this.phase !== 'playing' || lostIts === 0 || active.size < this.minPlayers) return;
 		const runners = [...this.players.keys()].filter((id) => !this.players.get(id)!.it);
 		for (let i = 0; i < lostIts && runners.length > 0; i++) {
 			const id = this.pick(runners);
-			this.players.get(id)!.it = true;
+			const p = this.players.get(id)!;
+			p.it = true;
+			p.previous = null;
 			events.push({ type: 'newIt', id });
 		}
 	}
@@ -250,6 +294,7 @@ export class TagGame {
 			p.scoreMs = 0;
 			p.it = false;
 			p.immuneUntil = 0;
+			p.previous = null;
 		}
 		const n = Math.min(itCount(ids.length), ids.length - 1);
 		for (let i = 0; i < n; i++) this.players.get(this.pick(ids))!.it = true;
@@ -262,7 +307,7 @@ export class TagGame {
 		return ids.splice(i, 1)[0]!;
 	}
 
-	private checkTags(now: number, active: ReadonlyMap<number, TagPos | null>, events: TagEvent[]): void {
+	private checkTags(now: number, from: number, active: ReadonlyMap<number, TagPos | null>, events: TagEvent[]): void {
 		// Snapshot: a player tagged this update cannot tag in the same update.
 		for (const taggerId of this.it) {
 			const tagger = this.players.get(taggerId)!;
@@ -274,8 +319,13 @@ export class TagGame {
 			for (const [id, p] of this.players) {
 				if (p.it || p.immuneUntil > now) continue;
 				const b = active.get(id);
-				if (!b || !tagTouch(a, b, this.range)) continue;
-				const d = (a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2;
+				if (!b) continue;
+				let d = Infinity;
+				if (tagTouch(a, b, this.range)) d = (a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2;
+				else if (tagger.previous && p.previous && now > from && now - from <= TAG_MAX_SWEEP_MS) {
+					const start = Math.max(0, (p.immuneUntil - from) / (now - from));
+					d = sweptTagDistance(tagger.previous, a, p.previous, b, start, this.range);
+				}
 				if (d < bestD || (d === bestD && best !== null && id < best)) {
 					best = id;
 					bestD = d;
