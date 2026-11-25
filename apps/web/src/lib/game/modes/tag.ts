@@ -23,7 +23,7 @@ export class TagMode implements ClientMode {
 	}
 
 	restart(): void {
-		if (this.state?.phase === 'playing') return this.host.notice('!r is disabled during a tag round.');
+		if (this.state?.phase === 'playing') return this.host.notice("You can't respawn during a tag round.");
 		this.respawn();
 	}
 

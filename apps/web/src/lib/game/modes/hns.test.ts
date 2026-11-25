@@ -253,7 +253,7 @@ describe('HnsMode', () => {
 			mode.restart();
 		}
 		expect(log.teleports).toHaveLength(1);
-		expect(log.notices).toEqual(Array(2).fill('!r is disabled during a hide and seek round.'));
+		expect(log.notices).toEqual(Array(2).fill("You can't respawn during a hide and seek round."));
 	});
 
 	it('puts a spectator who comes back into play at a spawn, also during a round', () => {

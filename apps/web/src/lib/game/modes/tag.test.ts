@@ -155,7 +155,7 @@ describe('TagMode', () => {
 		state({ phase: 'playing' }, 200);
 		mode.restart();
 		expect(log.teleports).toHaveLength(3);
-		expect(log.notices).toEqual(['!r is disabled during a tag round.']);
+		expect(log.notices).toEqual(["You can't respawn during a tag round."]);
 	});
 
 	it('puts a spectator who comes back into play at a spawn, also during a round', () => {

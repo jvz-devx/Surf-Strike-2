@@ -24,7 +24,7 @@ export class HnsMode implements ClientMode {
 	}
 
 	restart(): void {
-		if (!this.client.canRespawn()) return this.host.notice('!r is disabled during a hide and seek round.');
+		if (!this.client.canRespawn()) return this.host.notice("You can't respawn during a hide and seek round.");
 		this.respawn();
 	}
 
