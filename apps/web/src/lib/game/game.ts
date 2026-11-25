@@ -219,6 +219,8 @@ export class Game implements CommandContext {
 	private sampler = new SubtickSampler();
 	/** Timestamp (ms) of the DOM input event being handled, -1 outside one. */
 	private inputTime = -1;
+	/** The newest tick moved the player (false: frozen or down, no movement sounds). */
+	private moves = true;
 	private teleported = true;
 	private snapPending = false;
 	private mouse = { dx: 0, dy: 0 };
@@ -1231,6 +1233,7 @@ export class Game implements CommandContext {
 			c.pitch = this.pitch;
 			c.yaw = this.yaw;
 			const sv = this.client.moveCvars ? this.client.moveCvars(end) : this.sv;
+			this.moves = sv !== null;
 			if (sv) playerMove(this.world, p, c, sv, TICK_INTERVAL);
 			else playerRest(p);
 			this.client.tick(now, end);
@@ -1342,7 +1345,7 @@ export class Game implements CommandContext {
 			onGround: this.player.onGround,
 			surfing: this.player.surfing,
 			ducked: this.player.ducked,
-			active: !this.spec
+			active: !this.spec && this.moves
 		});
 		if (this.renderer) this.renderer.zombies.casings.collision = this.world;
 		this.renderer?.render(now / 1000);
