@@ -94,6 +94,7 @@ describe('TRUST_PROXY and clientIp', () => {
 		assert.equal(clientIp(fakeReq('10.52.0.9', { 'x-forwarded-for': '203.0.113.7' }), tp), null);
 		assert.throws(() => parseTrustProxy('cf:10.52.0.0/'), /Invalid TRUST_PROXY/);
 		assert.throws(() => parseTrustProxy('cf:private'), /Invalid TRUST_PROXY/);
+		assert.throws(() => parseTrustProxy('cf'), /TRUST_PROXY/);
 	});
 
 	it('rejects missing or invalid visitor headers from trusted Cloudflare peers before upgrade', async () => {
