@@ -7,6 +7,12 @@ import { WebSocketServer } from 'ws';
 import type { MapDef } from '@surf/shared';
 import { PROTOCOL_VERSION, RTV_BLOCK, TICK_RATE } from '@surf/shared';
 import { parseAdminUsernames } from './admin.ts';
+import {
+	DEFAULT_BACKUP_INTERVAL_MS,
+	DEFAULT_BACKUP_KEEP,
+	startBackupSchedule,
+	type BackupSchedule
+} from './backup.ts';
 import { Db } from './db.ts';
 import { Lobby, MODE_TICK_HZ } from './lobby.ts';
 import type { LobbyOptions } from './lobby.ts';
@@ -45,6 +51,12 @@ export interface ServerOptions extends Omit<LobbyOptions, 'maps' | 'db'> {
 	allowedOrigins?: AllowedOrigins | string | null;
 	/** SvelteKit adapter-node handler function or path to `handler.js` (default: WEB_HANDLER env). */
 	webHandler?: WebHandler | string;
+	/** Directory for hourly online SQLite backups via `db.backup()` (default: BACKUP_DIR env, disabled when unset). */
+	backupDir?: string;
+	/** Backup interval in ms (default: BACKUP_INTERVAL_MS env or 3600000). */
+	backupIntervalMs?: number;
+	/** Number of newest backups to keep (default: BACKUP_KEEP env or 48). */
+	backupKeep?: number;
 	/** Grace period (ms) for open WebSockets to close cleanly with 1001 on shutdown. */
 	closeGraceMs?: number;
 }
@@ -103,6 +115,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 	const maxPending = opts.maxPending ?? parseOptionalInt(process.env.MAX_PENDING_CONNECTIONS, 'MAX_PENDING_CONNECTIONS', 1);
 	const helloTimeoutMs = opts.helloTimeoutMs ?? parseOptionalInt(process.env.HELLO_TIMEOUT_MS, 'HELLO_TIMEOUT_MS', 100);
 	const webHandler = await resolveWebHandler(opts.webHandler ?? (process.env.WEB_HANDLER?.trim() || undefined));
+	const backupDir = opts.backupDir ?? (process.env.BACKUP_DIR?.trim() || undefined);
+	const backupIntervalMs =
+		opts.backupIntervalMs ?? parseOptionalInt(process.env.BACKUP_INTERVAL_MS, 'BACKUP_INTERVAL_MS', 1_000) ?? DEFAULT_BACKUP_INTERVAL_MS;
+	const backupKeep =
+		opts.backupKeep ?? parseOptionalInt(process.env.BACKUP_KEEP, 'BACKUP_KEEP', 1) ?? DEFAULT_BACKUP_KEEP;
 	const closeGraceMs = opts.closeGraceMs ?? DEFAULT_CLOSE_GRACE_MS;
 
 	const db = new Db(dbPath);
@@ -202,6 +219,10 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 		throw err;
 	}
 	const addr = http.address() as AddressInfo;
+	const backups: BackupSchedule | null =
+		backupDir && dbPath !== ':memory:'
+			? startBackupSchedule(db, { dir: backupDir, intervalMs: backupIntervalMs, keep: backupKeep, log: opts.log })
+			: null;
 
 	let closing: Promise<void> | null = null;
 	const close = (): Promise<void> => {
@@ -248,6 +269,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 				});
 				http.closeAllConnections();
 			});
+			if (backups) await backups.stop();
 			metrics.close();
 			db.close();
 		})();
