@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { NetState } from '@surf/shared';
+import { withTeleportSeq, type NetState } from '@surf/shared';
 import { parseDiscovery, serverOverride, toWsUrl } from './discovery.js';
-import { emptySample, lerpAngle, SnapshotBuffer } from './interp.js';
+import { emptySample, lerpAngle, MAX_EXTRAP_MS, SnapshotBuffer } from './interp.js';
 
 describe('discovery URLs', () => {
 	it('converts http(s) to ws(s) and appends /ws', () => {
@@ -52,23 +52,39 @@ describe('snapshot interpolation', () => {
 		expect(out.x).toBeCloseTo(150);
 		expect(out.yaw).toBeCloseTo(20);
 	});
-	it('clamps outside the buffered range', () => {
+	it('clamps before buffer, extrapolates up to maxExtrapMs, and holds past the cap', () => {
 		const b = new SnapshotBuffer();
 		const out = emptySample();
 		b.push(st(10), 100);
 		b.push(st(20), 200);
 		b.sample(50, out);
 		expect(out.x).toBe(10);
+		expect(b.lastUnderrun).toBe(false);
+		// Within 50 ms cap: linearly extrapolates using vx = 20 u/s.
+		b.sample(225, out);
+		expect(out.x).toBeCloseTo(20 + 20 * 0.025, 5);
+		expect(b.lastUnderrun).toBe(true);
+		expect(b.lastExtrapMs).toBeCloseTo(25, 5);
+		// Past 50 ms cap: holds at the capped pose and reports freeze (lastExtrapMs = 0).
 		b.sample(500, out);
-		expect(out.x).toBe(20);
+		expect(out.x).toBeCloseTo(20 + 20 * (MAX_EXTRAP_MS / 1000), 5);
+		expect(b.lastUnderrun).toBe(true);
+		expect(b.lastExtrapMs).toBe(0);
 	});
-	it('snaps across teleports', () => {
+	it('snaps across teleports by distance or teleport counter even below snapDistance', () => {
 		const b = new SnapshotBuffer();
 		const out = emptySample();
 		b.push(st(0), 0);
 		b.push(st(5000), 100);
 		b.sample(10, out);
 		expect(out.x).toBe(5000);
+
+		// Short 400 u teleport (< 1024 snapDistance) without FLAG_TELEPORTED bit, caught via teleport counter.
+		const b2 = new SnapshotBuffer();
+		b2.push({ ...st(0), tick: 1, flags: withTeleportSeq(0, 0) }, 0);
+		b2.push({ ...st(400), tick: 3, flags: withTeleportSeq(0, 1) }, 31.25);
+		b2.sample(15, out);
+		expect(out.x).toBe(400);
 	});
 	it('keeps arrival times monotonic', () => {
 		const b = new SnapshotBuffer();

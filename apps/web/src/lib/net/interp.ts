@@ -3,10 +3,12 @@
  * monotonic timeline with per-player `NetState.tick` spacing to remove
  * 64->32 Hz aliasing and uplink jitter (docs/architecture.md#netcode).
  */
-import { INTERP_DELAY_MS, TICK_RATE, type NetState } from '@surf/shared';
+import { FLAG_TELEPORTED, INTERP_DELAY_MS, teleportSeq, TICK_RATE, type NetState } from '@surf/shared';
 
 /** Shared with the server's lag compensation (packages/shared protocol.ts). */
 export { INTERP_DELAY_MS };
+/** Max velocity extrapolation horizon (ms) when a stall outruns the interpolation buffer. */
+export const MAX_EXTRAP_MS = 50;
 const CAPACITY = 32;
 const TICK_MS = 1000 / TICK_RATE;
 const ANCHOR_WINDOW = 32;
@@ -70,9 +72,11 @@ export class SnapshotBuffer {
 
 	/** Teleport threshold: larger jumps snap instead of interpolating. */
 	snapDistance = 1024;
+	/** Max linear velocity extrapolation past the newest buffered sample (ms). */
+	maxExtrapMs = MAX_EXTRAP_MS;
 	/** True when the last `sample` ran past the newest buffered snapshot. */
 	lastUnderrun = false;
-	/** How many ms the last `sample` extrapolated past the newest snapshot (0 when not extrapolating). */
+	/** How many ms the last `sample` actively extrapolated past the newest snapshot (0 when holding/frozen past cap). */
 	lastExtrapMs = 0;
 	/** How many ms `renderMs` exceeded the newest buffered snapshot on the last `sample`. */
 	lastOverrunMs = 0;
@@ -208,6 +212,7 @@ export class SnapshotBuffer {
 		this.lastUnderrun = false;
 		this.lastExtrapMs = 0;
 		this.lastOverrunMs = 0;
+		let extrapSec = 0;
 		if (renderMs <= a.t) {
 			b = a;
 		} else if (renderMs >= this.buf[n - 1]!.t) {
@@ -216,6 +221,10 @@ export class SnapshotBuffer {
 			if (over > 0) {
 				this.lastUnderrun = true;
 				this.lastOverrunMs = over;
+				const clamped = Math.min(over, this.maxExtrapMs);
+				extrapSec = clamped / 1000;
+				// Actively extrapolating within the cap; past the cap the avatar holds at the capped pose (freeze).
+				this.lastExtrapMs = over <= this.maxExtrapMs ? clamped : 0;
 			}
 		} else {
 			for (let i = 1; i < n; i++) {
@@ -233,10 +242,17 @@ export class SnapshotBuffer {
 		const dx = sb.x - sa.x;
 		const dy = sb.y - sa.y;
 		const dz = sb.z - sa.z;
-		if (dx * dx + dy * dy + dz * dz > this.snapDistance * this.snapDistance) t = 1;
-		out.x = sa.x + dx * t;
-		out.y = sa.y + dy * t;
-		out.z = sa.z + dz * t;
+		if (
+			a !== b &&
+			(teleportSeq(sa.flags) !== teleportSeq(sb.flags) ||
+				(sb.flags & FLAG_TELEPORTED) !== 0 ||
+				dx * dx + dy * dy + dz * dz > this.snapDistance * this.snapDistance)
+		) {
+			t = 1;
+		}
+		out.x = sa.x + dx * t + (extrapSec > 0 ? sb.vx * extrapSec : 0);
+		out.y = sa.y + dy * t + (extrapSec > 0 ? sb.vy * extrapSec : 0);
+		out.z = sa.z + dz * t + (extrapSec > 0 ? sb.vz * extrapSec : 0);
 		out.vx = sa.vx + (sb.vx - sa.vx) * t;
 		out.vy = sa.vy + (sb.vy - sa.vy) * t;
 		out.vz = sa.vz + (sb.vz - sa.vz) * t;

@@ -68,11 +68,12 @@ import { GameFullscreen } from '../input/fullscreen.js';
 import { isBrowserShortcut } from '../input/guard.js';
 import { Input } from '../input/input.js';
 import { isMoveAction, SubtickSampler } from '../input/subtick.js';
+import { AdaptiveDelay } from '../net/adaptive.js';
 import type { NetClient } from '../net/client.js';
 import { ServerClock } from '../net/clock.js';
 import { Connection } from '../net/connection.js';
 import { serverOverride } from '../net/discovery.js';
-import { emptySample, INTERP_DELAY_MS, SnapshotBuffer, type Sample } from '../net/interp.js';
+import { emptySample, SnapshotBuffer, type Sample } from '../net/interp.js';
 import { NetStats } from '../net/stats.js';
 import { emptyPose } from '../render/players.js';
 import { GameRenderer } from '../render/renderer.js';
@@ -277,6 +278,8 @@ export class Game implements CommandContext {
 	private trendAt = 0;
 	private trendSpeed = 0;
 	private serverClock = new ServerClock();
+	private adaptiveDelay = new AdaptiveDelay();
+	private lastRenderServerMs = 0;
 	private lastClientPing = 0;
 	private netStats = new NetStats();
 	private lastNetGraph = 0;
@@ -1097,6 +1100,8 @@ export class Game implements CommandContext {
 			get renderer() { return game.renderer; },
 			get online() { return game.mode === 'online'; },
 			get selfId() { return game.selfId; },
+			get interpDelayMs() { return game.adaptiveDelay.currentMs; },
+			get renderServerTimeMs() { return game.lastRenderServerMs; },
 			get viewId() { return game.viewId(); },
 			get voteOpen() { return !!game.hud.vote && !game.hud.vote.result; },
 			get ghostStore() { return game.ghostStore; },
@@ -1404,16 +1409,23 @@ export class Game implements CommandContext {
 	}
 
 	private updateRemotes(now: number, dtMs: number): void {
+		const delayMs = this.adaptiveDelay.update(now, dtMs);
+		const renderAt = this.serverClock.serverTime(now) - delayMs;
+		this.lastRenderServerMs = renderAt;
+		this.netStats.setInterpDelay(delayMs);
 		if (this.remotes.size === 0) return;
-		const renderAt = this.serverClock.serverTime(now) - INTERP_DELAY_MS;
 		const players = this.renderer?.players;
 		const specTarget = this.spec && !this.spec.freeFly ? this.spec.targetId : null;
 		let anyUnderrun = false;
 		let anyExtrap = false;
+		let maxOverrun = 0;
 		for (const rm of this.remotes.values()) {
 			rm.hasSample = rm.buf.sample(renderAt, rm.sample);
 			if (rm.hasSample && !rm.spectating && !rm.buf.sourceIdle && now - rm.buf.lastArrival < 3000) {
-				if (rm.buf.lastUnderrun) anyUnderrun = true;
+				if (rm.buf.lastUnderrun) {
+					anyUnderrun = true;
+					if (rm.buf.lastOverrunMs > maxOverrun) maxOverrun = rm.buf.lastOverrunMs;
+				}
 				if (rm.buf.lastExtrapMs > 0) anyExtrap = true;
 			}
 			if (!players) continue;
@@ -1442,6 +1454,7 @@ export class Game implements CommandContext {
 			players.setPose(rm.id, pose, visible);
 			this.client.dress?.(players, rm, visible, now);
 		}
+		if (maxOverrun > 0) this.adaptiveDelay.observeUnderrun(now, maxOverrun, this.serverClock.rtt);
 		this.netStats.recordFrame(now, dtMs, anyUnderrun, anyExtrap);
 	}
 
@@ -2069,13 +2082,15 @@ export class Game implements CommandContext {
 		this.renderer?.players.clear();
 		this.remotes.clear();
 		this.serverClock.reset();
+		this.adaptiveDelay.reset(m.snapshotHz);
+		this.lastRenderServerMs = 0;
 		if (m.snapshotHz && m.snapshotHz > 0) this.serverClock.setNominalSnapHz(m.snapshotHz);
 		if (m.serverTime !== undefined) this.serverClock.seed(now, m.serverTime);
 		this.lastClientPing = now;
 		client.send({ type: 'ping', t: now });
 		this.netStats.reset();
 		if (m.snapshotHz && m.snapshotHz > 0) this.netStats.setNominalSnapHz(m.snapshotHz);
-		this.netStats.setInterpDelay(INTERP_DELAY_MS);
+		this.netStats.setInterpDelay(this.adaptiveDelay.currentMs);
 		this.hud.ban = null;
 		this.hud.coins = null;
 		this.hud.multiplier = null;
@@ -2107,6 +2122,13 @@ export class Game implements CommandContext {
 			entries: obs.accepted ? frame.entries : undefined
 		});
 		if (!obs.accepted) return;
+		this.adaptiveDelay.observeSnapshot(arrival, {
+			jitterMs: this.serverClock.jitter,
+			rttMs: this.serverClock.rtt,
+			arrivalGapMs: obs.arrivalGapMs,
+			transitExcessMs: obs.transitExcessMs,
+			seqGap: obs.seqGap
+		});
 		for (const e of frame.entries) {
 			if (e.id === this.selfId) continue;
 			this.remote(e.id).buf.push(e, frame.serverTimeMs, arrival);
@@ -2171,6 +2193,8 @@ export class Game implements CommandContext {
 		this.hud.modeState = null;
 		this.remotes.clear();
 		this.serverClock.reset();
+		this.adaptiveDelay.reset();
+		this.lastRenderServerMs = 0;
 		this.netStats.reset();
 		this.renderer?.players.clear();
 		this.records = null;

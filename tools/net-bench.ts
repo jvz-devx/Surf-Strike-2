@@ -27,6 +27,7 @@ import {
 } from '../packages/shared/src/index.ts';
 import { startServer } from '../apps/server/src/server.ts';
 import { FixedStep } from '../apps/web/src/lib/game/loop.ts';
+import { AdaptiveDelay } from '../apps/web/src/lib/net/adaptive.ts';
 import { ServerClock } from '../apps/web/src/lib/net/clock.ts';
 import { emptySample, SnapshotBuffer } from '../apps/web/src/lib/net/interp.ts';
 import { NetStats } from '../apps/web/src/lib/net/stats.ts';
@@ -518,13 +519,15 @@ async function runScenario(def: ScenarioDef, durationSec: number): Promise<Scena
 			ws.send(encodeState(st));
 		}
 
-		// Observer tracks target using the real production ServerClock + SnapshotBuffer + NetStats.
+		// Observer tracks target using the real production ServerClock + AdaptiveDelay + SnapshotBuffer + NetStats.
 		const clock = new ServerClock();
+		const adaptive = new AdaptiveDelay({ snapshotHz: observer.snapshotHz ?? SNAPSHOT_HZ });
 		if (observer.snapshotHz) clock.setNominalSnapHz(observer.snapshotHz);
 		if (observer.serverTime !== undefined) clock.seed(observer.welcomeArrival, observer.serverTime);
 		const buf = new SnapshotBuffer();
 		const stats = new NetStats();
 		if (observer.snapshotHz) stats.setNominalSnapHz(observer.snapshotHz);
+		stats.setInterpDelay(adaptive.currentMs);
 		const sample = emptySample();
 
 		const gaps: number[] = [];
@@ -573,6 +576,13 @@ async function runScenario(def: ScenarioDef, durationSec: number): Promise<Scena
 				entries: obs.accepted ? frame.entries : undefined
 			});
 			if (!obs.accepted) return;
+			adaptive.observeSnapshot(arr, {
+				jitterMs: clock.jitter,
+				rttMs: clock.rtt,
+				arrivalGapMs: obs.arrivalGapMs,
+				transitExcessMs: obs.transitExcessMs,
+				seqGap: obs.seqGap
+			});
 			const te = frame.entries.find((e) => e.id === target.selfId);
 			if (te) buf.push(te, frame.serverTimeMs, arr);
 		});
@@ -641,12 +651,14 @@ async function runScenario(def: ScenarioDef, durationSec: number): Promise<Scena
 			const now = performance.now();
 			const dt = now - lastObsFrame;
 			lastObsFrame = now;
-			const interpMs = INTERP_DELAY_MS;
+			const interpMs = adaptive.update(now, dt);
+			stats.setInterpDelay(interpMs);
 			const renderAt = clock.serverTime(now) - interpMs;
 			const ok = buf.sample(renderAt, sample);
 			if (!ok) return;
 			const underrun = buf.lastUnderrun;
 			const extrapolating = buf.lastExtrapMs > 0;
+			if (underrun) adaptive.observeUnderrun(now, buf.lastOverrunMs, clock.rtt);
 			stats.recordFrame(now, dt, underrun, extrapolating);
 			if (now - startMs >= warmupMs) {
 				frames.push({
