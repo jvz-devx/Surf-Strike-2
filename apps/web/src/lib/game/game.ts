@@ -1287,6 +1287,9 @@ export class Game implements CommandContext {
 		const s = this.netState;
 		s.tick = this.tick;
 		s.spawnSeq = this.spawnSeq;
+		const mode = this.gameMode.id;
+		const combat = mode === 'infected' || mode === 'hns' || mode === 'zombies';
+		s.renderServerTimeMs = combat && this.serverClock.isSynced && this.lastRenderServerMs > 0 ? this.lastRenderServerMs : undefined;
 		s.x = p.origin.x;
 		s.y = p.origin.y;
 		s.z = p.origin.z;

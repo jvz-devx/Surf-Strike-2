@@ -52,7 +52,8 @@ Before starting, `./start.sh` and `pnpm host` also check `FIXED_SERVER_URL` (if 
 2. Check `?server=<url>`. If set, connect directly to that WebSocket URL.
 3. In a self-hosted build (`SURF_ADAPTER=node`), connect directly to `wss://<host>/ws` (or `ws://` on HTTP) on the same origin without calling `/api/server`.
 4. Otherwise (`adapter-vercel`), `GET /api/server`. If `url` is null or `lastSeen` is older than 3 minutes, stay solo and show "Offline — solo" in the HUD. If present, open `wss://<tunnel>/ws`.
-5. On disconnect, fall back to solo on the same map. Retry discovery every 10 s.
+5. Enter online mode after a `welcome` with the same protocol version. On a mismatch, show a reload notice and wait 60 s before trying again.
+6. On disconnect, fall back to solo on the same map. The usual retry interval is 10 s.
 
 ## One-time setup
 
@@ -68,8 +69,8 @@ Before starting, `./start.sh` and `pnpm host` also check `FIXED_SERVER_URL` (if 
 
 Each client simulates its own movement at 64 Hz with zero input lag. The server trusts positions, validates timed race runs, and relays everyone's state to everyone else.
 
-- **Wire protocol (`PROTOCOL_VERSION = 2`, `packages/shared/src/protocol.ts`):**
-  - **Client to server (`BIN_STATE`, 47 B at 64 Hz):** full float32 position, velocity, view angles, tick number, status/stage/runTicks, and `flags` (ducked, on ground, teleported bit, an 8-bit teleport generation, and a 16-bit spawn acknowledgement).
+- **Wire protocol (`PROTOCOL_VERSION = 3`, `packages/shared/src/protocol.ts`):**
+  - **Client to server (`BIN_STATE`, 47 or 55 B at 64 Hz):** float32 position, velocity and angles, tick, status, stage, run time, flags, an 8-bit teleport generation and a 16-bit spawn sequence. Combat clients append the last rendered server timestamp as a float64 once synchronized.
   - **Server to clients (`BIN_SNAPSHOT` v2, default 32 Hz):** 13-byte header (`kind`, `snapFlags`, `count`, 16-bit wrapping `seq`, float64 monotonic `serverTimeMs`), followed by quantized player entries: 28 bytes/player in non-race modes (`i24` position at 1/8 unit, `i16` velocity at 1 u/s, `u16` pitch/yaw, flags with teleport counter, status) or 32 bytes/player in race modes (`+ u8 stage, u24 runTicks`, toggled automatically via `snapFlags`). A full 32-player snapshot is 909 B (combat) or 1,037 B (race), fitting inside a single TCP segment (1,420 B MSS) and leaving headroom for a single QUIC datagram (≤ 1,150 B).
   - **JSON reliable events:** chat, zone hits, run finished, votes, map change, join/leave, shop/casino, mode events, and clock pings.
 - **Server time base and tick de-aliasing (`apps/web/src/lib/net/clock.ts`, `interp.ts`):**
@@ -89,7 +90,7 @@ Each client simulates its own movement at 64 Hz with zero input lag. The server 
   - `tools/net-bench.ts` runs the real server and headless 64 Hz bots through a deterministic userspace TCP-ordered delay/jitter/loss/burst proxy (`pnpm --filter server exec tsx ../../tools/net-bench.ts [--duration 5] [--hz 32|64]`).
 - **Round-trip time.** The lobby sends a WebSocket control ping with a random challenge on join and every 500 ms. A challenge accepts one reply within two seconds. Combat uses the lowest RTT measured over the last five seconds, with a 50 ms fallback and a 150 ms cap. The scoreboard reports the uncapped estimate. The JSON ping remains available to clients and its echo does not affect combat timing.
 - **Tag.** At 32 Hz the server checks for contact at the current poses and along the players' movement between checks. Contact requires horizontal proximity, overlap at each player's hull height, and a clear line through the overlap. The server skips sweeping after a teleport, an implausible displacement, or a state or rule check gap longer than 62.5 ms.
-- **Combat teleports.** Every state carries the client's 8-bit teleport generation. The lobby accepts a discontinuity when a map trigger and landing are plausible or when the state acknowledges a server-issued spawn. It sends a separate validated generation to observers. After a spawn, the mode keeps the spawn pose until the client echoes the matching 16-bit sequence near that position. The lobby resends the same spawn message every 250 ms while awaiting acknowledgement. Clients apply each spawn sequence once.
+- **Combat teleports.** Every state carries the client's 8-bit teleport generation. The lobby accepts a discontinuity when a map trigger and landing are plausible or when the state acknowledges a server-issued spawn. It sends a separate validated generation to observers. A state that echoes the matching spawn sequence within 64 units of the spawn can also acknowledge it. The lobby resends the same spawn message every 250 ms while awaiting acknowledgement. Clients apply each spawn once and send `spawnAck { seq }` on every delivery of that sequence. A matching ack lets the first state start a fresh relay teleport generation even if the player has moved beyond the spawn radius.
 - **Run validation:** the client sends zone events with tick numbers. The server checks:
   - zones were entered in order (start, stages in order, end);
   - elapsed ticks roughly match wall-clock time (±5%);
@@ -102,20 +103,23 @@ Each client simulates its own movement at 64 Hz with zero input lag. The server 
 
 ### Render timestamps for lag compensation
 
-The client attaches `renderServerTimeMs` to `fire`, `knife`, and `throwKnife`. The server accepts timestamps no older than the shooter's filtered RTT plus 200 ms of interpolation and 32 ms of slack. It bounds accepted times by the mode's history and resolves invalid claims against the current pose. Before the first fresh RTT sample or when a timestamp is absent, each mode uses its existing bounded rewind. Infected uses the timestamp for gun and melee hits and the immediate segment of a thrown knife. The knife then flies on the live server simulation. Hide and Seek checks current and rewound poses. Zombie Run maps server time to the AI simulation tick and samples relayed player poses at the same time.
+The client sends `renderServerTimeMs` in combat states and with `fire`, `knife`, and `throwKnife`. The server estimates each connection's render offset from recent states and attacks. The estimate can change at the client's adaptive-delay slew rates with allowance for clock drift. Timestamp claims and legacy ticks use the same window around that estimate. The mode's history and the filtered RTT plus 200 ms of interpolation and 32 ms of slack apply a hard cap. An invalid timestamp uses the established estimate, or the current pose if the server has no estimate.
+
+Infected uses rewind for gun and melee hits and the immediate segment of a thrown knife. The knife then flies on the live server simulation. Hide and Seek checks current and rewound poses. Zombie Run maps server time to the AI simulation tick and uses the same sender-tick sample timing as the renderer to rewind relayed player poses.
 
 ## Protocol sketch
 
 | Direction | Message | Encoding |
 | --- | --- | --- |
 | S→C | `serverIdentity { serverId }` immediately after the upgrade. Clients that negotiate `surf-server-identity` wait for this frame before sending hello. | JSON |
-| C→S | `hello { playerId, name, version, token? }` (`token`: stored session, auto-login; `version = 2`) | JSON |
-| S→C | `welcome { serverId, selfId, map, mode, mapTimeLeft, players[], cvars, records, account, serverTime?, snapshotHz? }` (`account`: `{ username, admin }` or `null` for guests; `serverTime` seeds client clock sync; `snapshotHz` reports the active snapshot rate) | JSON |
+| C→S | `hello { playerId, name, version, token? }` (`token`: stored session, auto-login; `version = 3`) | JSON |
+| S→C | `welcome { version, serverId, selfId, map, mode, mapTimeLeft, players[], cvars, records, account, serverTime?, snapshotHz? }` (`account`: `{ username, admin }` or `null` for guests; `serverTime` seeds client clock sync; `snapshotHz` reports the active snapshot rate) | JSON |
 | C→S / S→C | `ping { t }` / `pong { t, serverTime }` (1 Hz client clock sync) | JSON |
 | S→C | `maps { enabled[] }`: maps players may pick (votes, Change map); right after `welcome` and to everyone on every change | JSON |
 | C→S | `register { username, password }`, `login { username, password }`, `logout {}` (any time after `welcome`, on the open socket) | JSON |
 | S→C | `auth { ok: true, username, token?, records?, admin? }` / `auth { ok: false, error }` (`username: null` = logged out; also sent with `ok: false` after a `welcome` whose hello token was rejected) | JSON |
-| C→S | `BIN_STATE` (type 1, 47 B: tick, float32 pos/vel/angles, flags incl. 8-bit teleport generation, status, stage, runTicks) | binary, 64 Hz |
+| C→S | `BIN_STATE` (type 1, 47 B base, with an optional 8 B combat render timestamp) | binary, 64 Hz |
+| C→S | `spawnAck { seq }` (acknowledges a server spawn independently of the movement rate limit) | JSON |
 | S→C | `BIN_SNAPSHOT` v2 (type 2: 13 B header with `seq` + `serverTimeMs`, then 28 B/player combat or 32 B/player race quantized entries; ≤ 1,037 B for 32 players, droppable under backlog) | binary, 32 Hz (or 64 Hz) |
 | C→S | `zone { kind, index, tick }` | JSON |
 | S→C | `runResult { ticks, rank, pb, record, splits, records }` (`records`: the runner's PB, rank and map record after the run, PB or not) | JSON |

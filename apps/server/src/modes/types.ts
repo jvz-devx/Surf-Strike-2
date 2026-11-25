@@ -4,7 +4,7 @@
  * (timer/zones/leaderboards for race, rounds/tagging for tag, scoreboard
  * rows) lives behind `ServerMode`. One instance per map; replaced on map change.
  */
-import { clampRenderTime } from '@surf/shared';
+import { clampRenderTime, RENDER_DELAY_GROW_RATE, RENDER_DELAY_SHRINK_RATE, RENDER_TIME_SLACK_MS, renderTimeBudgetMs } from '@surf/shared';
 import type { ClientMessage, GameModeId, MapDef, MapRecordInfo, NetState, ScoreRow, ServerMessage, SnapshotEntry } from '@surf/shared';
 import type { Stillness } from '../activity.ts';
 import type { Command } from '../commands.ts';
@@ -98,13 +98,67 @@ export interface ServerMode {
 /** Client messages the lobby forwards to the mode as they are. */
 export type ModeClientMessage = Extract<ClientMessage, { type: 'fire' | 'reload' | 'loadout' | 'throwKnife' | 'placeBeacon' | 'callMoab' | 'knife' }>;
 
-/** An absent claim or an unmeasured RTT uses the mode's fallback. An invalid claim uses the current pose. */
-export function renderRewindMs(claim: unknown, now: number, p: ModePlayer, historyMs: number): number | undefined {
-	if (claim === undefined) return undefined;
-	if (typeof claim !== 'number' || !Number.isFinite(claim)) return 0;
-	const at = clampRenderTime(claim, now, p.ping, historyMs);
-	if (at === null) return 0;
-	return p.hasRttSample === false ? undefined : now - at;
+/** State packets arrive at 64 Hz. Briefly keep using their estimate during an uplink stall. */
+const RENDER_STATE_FRESH_MS = 100;
+/** A packet after a pause cannot spend the whole pause steering the estimate. */
+const RENDER_MAX_STEP_MS = 50;
+/** Allow the clock estimate to move as well as the client's interpolation delay. */
+const RENDER_CLOCK_RATE = 0.04;
+
+class RenderTimeline {
+	private offset: number | undefined;
+	private updatedAt = -Infinity;
+	private stateAt = -Infinity;
+
+	private update(age: number, now: number): void {
+		const dt = Math.min(RENDER_MAX_STEP_MS, Math.max(0, now - this.updatedAt));
+		const offset = this.offset ?? age;
+		const lo = offset - (RENDER_DELAY_SHRINK_RATE + RENDER_CLOCK_RATE) * dt;
+		const hi = offset + (RENDER_DELAY_GROW_RATE + RENDER_CLOCK_RATE) * dt;
+		this.offset = Math.max(lo, Math.min(hi, age));
+		this.updatedAt = now;
+	}
+
+	observeState(age: number, now: number): void {
+		this.update(age, now);
+		this.stateAt = now;
+	}
+
+	rewind(age: number | null, now: number, max: number): number {
+		const offset = this.offset ?? age ?? 0;
+		if (age === null) return Math.min(max, offset);
+		if (now - this.stateAt > RENDER_STATE_FRESH_MS) this.update(age, now);
+		// Use the existing window for this attack, before it can move the estimate.
+		return Math.min(max, Math.max(offset - RENDER_TIME_SLACK_MS, Math.min(offset + RENDER_TIME_SLACK_MS, age)));
+	}
+}
+
+const renderTimelines = new WeakMap<ModePlayer, RenderTimeline>();
+
+function renderTimeline(p: ModePlayer): RenderTimeline {
+	let timeline = renderTimelines.get(p);
+	if (!timeline) renderTimelines.set(p, (timeline = new RenderTimeline()));
+	return timeline;
+}
+
+export function observeRenderTime(claim: number, now: number, p: ModePlayer): void {
+	if (p.hasRttSample === false) return;
+	const rtt = p.ping;
+	const at = clampRenderTime(claim, now, rtt, renderTimeBudgetMs(rtt));
+	if (at !== null) renderTimeline(p).observeState(now - at, now);
+}
+
+/** Timestamp and tick-based attacks share the connection's window and the hard RTT cap. */
+export function renderRewindMs(claim: unknown, now: number, p: ModePlayer, historyMs: number, fallbackMs: number): number {
+	const rtt = p.ping;
+	const max = Math.min(historyMs, renderTimeBudgetMs(rtt));
+	let age: number | null;
+	if (claim === undefined || p.hasRttSample === false) age = Math.max(0, Math.min(max, fallbackMs));
+	else {
+		const at = typeof claim === 'number' ? clampRenderTime(claim, now, rtt, historyMs) : null;
+		age = at === null ? null : now - at;
+	}
+	return renderTimeline(p).rewind(age, now, max);
 }
 
 export const EMPTY_RECORDS: MapRecordInfo = Object.freeze({

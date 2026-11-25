@@ -60,6 +60,7 @@ import type { LobbyMetricsHooks } from './metrics.ts';
 import { Shop } from './shop.ts';
 import { isClientTransport, WsClientTransport, type ClientTransport } from './transport.ts';
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
+import { observeRenderTime } from './modes/types.ts';
 import { MAX_REWIND_RTT_MS, PeerRtt } from './peer-rtt.ts';
 import { mapTeleport, nearPose, type ZoneKind } from './validation.ts';
 
@@ -640,6 +641,7 @@ export class Lobby {
 			const s = this.combatState(c, received);
 			if (!s) return;
 			c.state = s;
+			if (s.renderServerTimeMs !== undefined) observeRenderTime(s.renderServerTimeMs, this.serverClock(), c);
 			this.economy.state(c, received);
 			this.mode.state(c, s);
 			return;

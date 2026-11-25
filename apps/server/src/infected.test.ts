@@ -18,6 +18,7 @@ import {
 	VIEW_HEIGHT,
 	WEAPONS
 } from '@surf/shared';
+import { AdaptiveDelay } from '../../web/src/lib/net/adaptive.ts';
 import type { InfectedMode } from './modes/infected.ts';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
@@ -191,14 +192,13 @@ describe('infected mode', () => {
 
 		const n = a.c.messages.length;
 		b.c.send({ type: 'spectate', targetId: a.id });
-		await settle();
-		assert.equal(lastState(a.c).phase, 'waiting');
+		await a.c.waitFor('modeState', (m) => m.mode === 'infected' && m.phase === 'waiting', n);
 		assert.equal(chats(a.c, /round cancelled\. Infected needs 2\+ players/, n).length, 1);
 		assert.equal(mode().scoreRows().find((r) => r.id === b.id)!.status, Status.Spectating);
 
+		const rejoinFrom = a.c.messages.length;
 		b.c.send({ type: 'spectate', targetId: null });
-		await settle();
-		assert.equal(lastState(a.c).phase, 'grace');
+		await a.c.waitFor('modeState', (m) => m.mode === 'infected' && m.phase === 'grace', rejoinFrom);
 		// The cancelled grace did not use up round 1.
 		assert.equal(lastState(a.c).round, 1);
 		assert.equal(lastState(a.c).loadout, 'barrett');
@@ -557,7 +557,7 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 	const survivorsOf = () => lastState(ps.Ann!.c).players.filter((p) => p.team === 'survivor').map((p) => byId(p.id));
 	const toPhase = (phase: InfState['phase'], maxMs: number) => runUntil(() => game().phase === phase, maxMs);
 
-	it('round 1 (barrett): lag compensation by ping + view delay (tick 2^31-1), gun kill + scavenger, Patient Zero infects', async ({ mock }) => {
+	it('round 1 (barrett): adaptive delay under jitter still lands the seen hit, gun kill + scavenger, Patient Zero infects', async ({ mock }) => {
 		for (const name of ['Ann', 'Ben', 'Cat', 'Dan']) await join(name);
 		const { Ann: a, Ben: b, Cat: c, Dan: d } = ps as Record<string, P>;
 		assert.equal(a!.c.of('welcome')[0]!.mode, 'infected');
@@ -594,14 +594,33 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		assert.equal(game().secondaryOf(b!.id)!.mag, 11, 'the pistol fired');
 		assert.equal(events(b!.c, 'hit', n).length, 0, 'no ping: misses the old spot');
 		await run(200);
-		// Re-stage with a 100 ms RTT. A 266 ms v2 claim reaches the old pose beyond the 216 ms fallback.
+		// Start with a clean 100 ms RTT, then let the real client delay grow during a snapshot stall.
 		await moveTo(a!, -400, 1350);
-		await run(500);
-		await moveTo(a!, -400, 1500);
-		await run(250);
 		simulatedRtt = 100;
+		const delay = new AdaptiveDelay();
+		const frameMs = 1000 / 64;
+		const reportView = async (first: number, last: number) => {
+			for (let tick = first; tick <= last; tick++) {
+				clock += frameMs;
+				if (tick % 2 === 0) server.lobby.tickMode();
+				const previousDelay = delay.currentMs;
+				delay.update(clock, frameMs);
+				const { x, y, z } = b!.pos;
+				const uplinkJitter = tick % 3 === 0 ? 8 : 0;
+				const renderServerTimeMs = clock - simulatedRtt - frameMs - previousDelay - uplinkJitter;
+				b!.c.sendState(netState(tick, x, { y, z, renderServerTimeMs }));
+				b!.c.send({ type: 'ping', t: tick });
+				await b!.c.waitFor('pong', (p) => p.t === tick);
+				assert.equal(lobbyClient(b!).state?.renderServerTimeMs, renderServerTimeMs);
+			}
+		};
+		await reportView(10, 41);
+		await moveTo(a!, -400, 1500);
+		delay.observeSnapshot(clock, { jitterMs: 24, rttMs: simulatedRtt, arrivalGapMs: 180, transitExcessMs: 160, seqGap: 2 });
+		await reportView(42, 57);
+		assert.ok(delay.currentMs > 140 && delay.currentMs < delay.targetMs, 'the client is still increasing its delay');
 		const m = b!.c.messages.length;
-		b!.c.send({ type: 'fire', weapon: 'pistol', origin: o, dir, tick: 0x7fffffff, renderServerTimeMs: clock - 266 });
+		b!.c.send({ type: 'fire', weapon: 'pistol', origin: o, dir, tick: 0x7fffffff, renderServerTimeMs: clock - simulatedRtt - frameMs - delay.currentMs });
 		await settle();
 		assert.deepEqual(
 			events(b!.c, 'hit', m).map((h) => [h.targetId, h.kill]),
@@ -733,11 +752,13 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		await moveTo(alpha, -400, 1350);
 		await moveTo(shooter, 200, 1350);
 		const n = shooter.c.messages.length;
+		const witnessedFrom = alpha.c.messages.length;
 		fireAt(shooter, headOf(alpha), 'striker');
 		await settle();
 		assert.equal(events(shooter.c, 'kill', n).length, 1);
 		assert.equal(events(shooter.c, 'hit', n).length, 1, 'pellets add up to one hit');
-		assert.equal(events(ps.Ann!.c, 'shot', n).length + events(shooter.c, 'shot', n).length, 1, 'one shot event (to everyone but the shooter)');
+		assert.equal(events(alpha.c, 'shot', witnessedFrom).length, 1, 'one shot event for the other player');
+		assert.equal(events(shooter.c, 'shot', n).length, 0, 'the shooter plays its own shot locally');
 		assert.equal(game().primaryOf(shooter.id)!.mag, 11);
 		assert.equal(
 			events(shooter.c, 'ammo', n).find((e) => e.scavenger)!.reserve,

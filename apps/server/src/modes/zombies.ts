@@ -12,8 +12,6 @@ import {
 	FLAG_DUCKED,
 	FLAG_TELEPORTED,
 	mapCvars,
-	MAX_RENDER_INTERPOLATION_MS,
-	RENDER_TIME_SLACK_MS,
 	REPEAT_MS,
 	Status,
 	WEAPONS,
@@ -112,8 +110,7 @@ export class ZombiesMode implements ServerMode {
 		switch (msg.type) {
 			case 'fire': {
 				const serverNow = this.host.serverNow?.() ?? now;
-				const rewind = renderRewindMs(msg.renderServerTimeMs, serverNow, p, ZM_HISTORY_MS);
-				const timing = this.shotTiming(msg.tick, serverNow, p.ping, rewind);
+				const timing = this.shotTiming(msg, serverNow, p);
 				const res = this.game.fire(p.id, { weapon: msg.weapon, origin: msg.origin, dir: msg.dir, ...timing }, now);
 				this.dispatch(res.events);
 				return;
@@ -128,12 +125,12 @@ export class ZombiesMode implements ServerMode {
 		}
 	}
 
-	private shotTiming(tick: number, now: number, rtt: number, rewind?: number): { tick: number; playerRenderTime: number } {
-		const oldest = now - Math.min(ZM_HISTORY_MS, rtt + MAX_RENDER_INTERPOLATION_MS + RENDER_TIME_SLACK_MS);
-		const requested = Number.isFinite(tick) ? this.zombieFrameValue('tick', tick) : undefined;
-		const playerRenderTime = rewind === undefined ? Math.max(oldest, requested ?? now) : now - rewind;
-		const wantedTick = rewind === 0 ? this.game.tick : this.zombieFrameValue('at', playerRenderTime) ?? this.game.tick;
-		return { tick: wantedTick, playerRenderTime };
+	private shotTiming(msg: Extract<ModeClientMessage, { type: 'fire' }>, now: number, p: ModePlayer): { tick: number; playerRenderTime: number } {
+		const requested = Number.isFinite(msg.tick) ? this.zombieFrameValue('tick', msg.tick) : undefined;
+		const rewind = renderRewindMs(msg.renderServerTimeMs, now, p, ZM_HISTORY_MS, now - (requested ?? now));
+		const playerRenderTime = now - rewind;
+		const tick = rewind === 0 ? this.game.tick : this.zombieFrameValue('at', playerRenderTime) ?? this.game.tick;
+		return { tick, playerRenderTime };
 	}
 
 	/** Interpolate between actual BIN_ZOMBIES send times and their fractional sim ticks. */

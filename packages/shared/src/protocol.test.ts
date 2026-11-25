@@ -100,6 +100,17 @@ describe('protocol v2 binary codec', () => {
 		expect(decodeState(nanBuf)).toBeNull();
 	});
 
+	it('extends combat states with a render timestamp and accepts the original state size', () => {
+		const { id: _id, ...state } = makeEntry(1);
+		const renderServerTimeMs = 2_000_000_000.125;
+		const timed = encodeState({ ...state, renderServerTimeMs });
+		expect(timed.byteLength).toBe(STATE_SIZE + 8);
+		expect(decodeState(timed)).toEqual({ ...state, renderServerTimeMs });
+		expect(decodeState(timed.slice(0, STATE_SIZE))).toEqual(state);
+		new DataView(timed).setFloat64(STATE_SIZE, Infinity, true);
+		expect(decodeState(timed)).toEqual(state);
+	});
+
 	it('round-trips BIN_SNAPSHOT v2 with serverTimeMs, sequence number, and quantized fields', () => {
 		const entries: SnapshotEntry[] = [
 			makeEntry(1, {

@@ -565,6 +565,8 @@ export const BIN_GHOST = 3;
 export interface NetState {
 	/** Last applied server spawn, echoed in every client state. Zero means none. */
 	spawnSeq?: number;
+	/** Last server timestamp rendered by this client, sent in combat states. */
+	renderServerTimeMs?: number;
 	tick: number;
 	x: number;
 	y: number;
@@ -582,6 +584,7 @@ export interface NetState {
 
 const STATE_BODY = 4 + 4 * 8 + 1 + 1 + 1 + 4 + 2 + 1; // 46
 export const STATE_SIZE = 1 + STATE_BODY;
+const TIMED_STATE_SIZE = STATE_SIZE + 8;
 
 /** Snapshot v2 position quantisation: int24 at 1/8 unit (±1,048,576 u covers all maps). */
 export const SNAP_POS_SCALE = 8;
@@ -648,15 +651,17 @@ function readBody(v: DataView, o: number): NetState {
 }
 
 export function encodeState(s: NetState): ArrayBuffer {
-	const buf = new ArrayBuffer(STATE_SIZE);
+	const renderTime = s.renderServerTimeMs;
+	const buf = new ArrayBuffer(renderTime === undefined ? STATE_SIZE : TIMED_STATE_SIZE);
 	const v = new DataView(buf);
 	v.setUint8(0, BIN_STATE);
 	writeBody(v, 1, s);
+	if (renderTime !== undefined) v.setFloat64(STATE_SIZE, renderTime, true);
 	return buf;
 }
 
 export function decodeState(buf: ArrayBuffer | Uint8Array): NetState | null {
-	if (buf.byteLength !== STATE_SIZE) return null;
+	if (buf.byteLength !== STATE_SIZE && buf.byteLength !== TIMED_STATE_SIZE) return null;
 	const v = toDataView(buf);
 	if (v.getUint8(0) !== BIN_STATE) return null;
 	const s = readBody(v, 1);
@@ -671,6 +676,10 @@ export function decodeState(buf: ArrayBuffer | Uint8Array): NetState | null {
 		!Number.isFinite(s.yaw)
 	) {
 		return null;
+	}
+	if (v.byteLength === TIMED_STATE_SIZE) {
+		const renderTime = v.getFloat64(STATE_SIZE, true);
+		if (Number.isFinite(renderTime)) s.renderServerTimeMs = renderTime;
 	}
 	return s;
 }

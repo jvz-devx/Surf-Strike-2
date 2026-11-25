@@ -15,6 +15,7 @@ import {
 	INF_PERK_KILLS,
 	INF_ROUND_SECS,
 	INF_SECONDARY,
+	INF_STEP_MS,
 	INF_UAV_INTERVAL_MS,
 	InfectedGame,
 	INFECTED_PAY,
@@ -179,13 +180,10 @@ export class InfectedMode implements ServerMode {
 		switch (input.type) {
 			case 'fire': {
 				const { weapon, origin, dir } = input;
-				const claim = renderRewindMs(input.renderServerTimeMs, this.host.serverNow?.() ?? now, p, INF_HISTORY_MS);
-				// Fall back to the legacy rewind budget when the client has no usable timing yet.
-				const rewindMs = claim ?? infRewindMs(p.ping);
-				const res =
-					claim !== undefined || input.tick === null
-						? this.game.fire(p.id, { weapon, origin, dir, tick: this.game.tick, rewindMs }, now)
-						: this.game.fire(p.id, { weapon, origin, dir, tick: clampFireTick(input.tick, this.game.tick, rewindMs) }, now);
+				const fallback = infRewindMs(p.ping);
+				const legacy = input.tick === null ? fallback : (this.game.tick - clampFireTick(input.tick, this.game.tick, fallback)) * INF_STEP_MS;
+				const rewindMs = renderRewindMs(input.renderServerTimeMs, this.host.serverNow?.() ?? now, p, INF_HISTORY_MS, legacy);
+				const res = this.game.fire(p.id, { weapon, origin, dir, tick: this.game.tick, rewindMs }, now);
 				// Holding an angle and shooting is playing (docs/economy.md): a real shot of a gun, not a swing.
 				if (res.ok && this.game.phase === 'playing' && WEAPONS[weapon].magazine > 0) this.host.economy.acted(p.id);
 				this.dispatch(res.events);
@@ -201,7 +199,7 @@ export class InfectedMode implements ServerMode {
 				break;
 			case 'throwKnife': {
 				// Rewind the immediate spawn segment. Subsequent flight uses current poses.
-				const rewind = renderRewindMs(input.renderServerTimeMs, this.host.serverNow?.() ?? now, p, INF_HISTORY_MS);
+				const rewind = renderRewindMs(input.renderServerTimeMs, this.host.serverNow?.() ?? now, p, INF_HISTORY_MS, 0);
 				const res = this.game.throwKnife(p.id, input.origin, input.dir, now, rewind);
 				this.dispatch(res.events);
 				break;

@@ -7,15 +7,11 @@
  * buffer), slews smoothly so remote render time stays strictly monotonic, and
  * shrinks slowly once the link stays clean.
  */
-import { MAX_RENDER_INTERPOLATION_MS, SNAPSHOT_HZ } from '@surf/shared';
+import { MAX_RENDER_INTERPOLATION_MS, RENDER_DELAY_GROW_RATE, RENDER_DELAY_SHRINK_RATE, SNAPSHOT_HZ } from '@surf/shared';
 
 export const ADAPTIVE_MIN_MS = 50;
 export const ADAPTIVE_MAX_MS = MAX_RENDER_INTERPOLATION_MS;
 
-/** Max growth rate (ms of delay added per ms of wall time): <=0.35 keeps renderServerTime advancing >=0.65x. */
-const GROW_RATE = 0.35;
-/** Shrink rate (ms of delay removed per ms of wall time): ~6 ms/s (0.6% speed-up, imperceptible). */
-const SHRINK_RATE = 0.006;
 /** Clean time required before the stall headroom starts decaying. */
 const CLEAN_HOLD_MS = 3000;
 /** Rate at which stall headroom decays after CLEAN_HOLD_MS (ms per ms). */
@@ -126,9 +122,9 @@ export class AdaptiveDelay {
 		}
 		const target = this.targetMs;
 		if (target > this.delayMs) {
-			this.delayMs = Math.min(target, this.delayMs + dt * GROW_RATE);
+			this.delayMs = Math.min(target, this.delayMs + dt * RENDER_DELAY_GROW_RATE);
 		} else if (target < this.delayMs) {
-			this.delayMs = Math.max(target, this.delayMs - dt * SHRINK_RATE);
+			this.delayMs = Math.max(target, this.delayMs - dt * RENDER_DELAY_SHRINK_RATE);
 		}
 		return this.delayMs;
 	}
