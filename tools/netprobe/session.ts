@@ -9,6 +9,7 @@ export interface Welcome {
 	selfId: number;
 	map: string;
 	mode?: string;
+	mapTimeLeft?: number;
 	serverTime?: number;
 	snapshotHz?: number;
 }
@@ -45,6 +46,7 @@ export class Peer {
 	constructor(url: URL, relay: Relay | null, name: string, version: number, handlers: PeerHandlers) {
 		const options: ClientOptions = {
 			handshakeTimeout: 8_000,
+			origin: url.origin.replace(/^ws/, 'http'),
 			perMessageDeflate: true,
 			maxPayload: 4 << 20
 		};

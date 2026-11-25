@@ -82,13 +82,13 @@ function fmt(n: number | null, places = 1): string {
 
 type Observer = Result['observers'][number];
 
-function rows(o: Observer): Record<string, string> {
+function rows(o: Observer, run: Result): Record<string, string> {
 	const s = o.interArrivalMs;
 	const pct = (ms: number) => fmt(o.measuredBotMs ? 100 * ms / o.measuredBotMs : null, 2);
 	const stalls = (episodes: Observer['freezes']) =>
 		`${fmt(episodes.totalMs, 0)} / ${pct(episodes.totalMs)}% / ${episodes.over100Ms}`;
 	return {
-		'Position error RMS / p95 (u)': `${fmt(o.positionErrorU.rms)} / ${fmt(o.positionErrorU.p95)}`,
+		'Position error RMS / p99 (u)': `${fmt(o.positionErrorU.rms)} / ${fmt(o.positionErrorU.p99)}`,
 		'Path error RMS (u)': fmt(o.pathErrorU.rms),
 		'Target delay p50 (ms)': fmt(o.configuredDelayMs.p50),
 		'Effective delay p50 / p95 (ms)': `${fmt(o.effectiveDelayMs.p50)} / ${fmt(o.effectiveDelayMs.p95)}`,
@@ -97,6 +97,9 @@ function rows(o: Observer): Record<string, string> {
 		'Freeze total bot-ms / % / >100ms': stalls(o.freezes),
 		'Teleport slides / expected': `${o.teleports.slides} / ${o.teleports.expected}`,
 		'Snapshot spacing p50 / p95 / p99 / max (ms)': [s.p50, s.p95, s.p99, s.max].map((n) => fmt(n)).join(' / '),
+		'Snapshot payload bytes total / mean': run.snapshotBytes == null
+			? 'n/a'
+			: `${run.snapshotBytes} / ${fmt(run.snapshotBytes / run.receivedSnapshots)}`,
 		'WebSocket RTT p50 / p95 (ms)': `${fmt(o.rttMs.p50)} / ${fmt(o.rttMs.p95)}`,
 		'Observer frame interval p95 / p99 (ms)': `${fmt(o.frameIntervalsMs.p95)} / ${fmt(o.frameIntervalsMs.p99)}`
 	};
@@ -134,7 +137,7 @@ async function main(): Promise<void> {
 		console.log(`Base v${base.protocol}: ${base.url}\nTest v${test.protocol}: ${test.url}`);
 		for (const left of base.observers) {
 			const right = test.observers.find((o) => o.fps === left.fps);
-			if (right) table({ [`Base ${left.fps} Hz`]: rows(left), [`Test ${right.fps} Hz`]: rows(right) });
+			if (right) table({ [`Base ${left.fps} Hz`]: rows(left, base), [`Test ${right.fps} Hz`]: rows(right, test) });
 		}
 		if (!base.observers.some((left) => test.observers.some((right) => right.fps === left.fps))) {
 			throw new Error('Results have no observer frame rate in common');
@@ -160,7 +163,7 @@ async function main(): Promise<void> {
 		const file = resolve(options.out, `${stamp}-${host}-${profile}.json`);
 		await writeFile(file, JSON.stringify(result, null, 2) + '\n', { flag: 'wx' });
 		console.log(`v${result.protocol}, ${result.settings.bots} bots, ${fmt(result.actualSeconds)} s, ${result.receivedSnapshots} snapshots`);
-		table(Object.fromEntries(result.observers.map((o) => [`${o.fps} Hz`, rows(o)])));
+		table(Object.fromEntries(result.observers.map((o) => [`${o.fps} Hz`, rows(o, result)])));
 		console.log(file);
 	} finally {
 		process.off('SIGINT', interrupt);

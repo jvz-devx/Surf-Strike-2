@@ -64,6 +64,9 @@ export async function runProbe(config: Config, signal: AbortSignal) {
 	let startMap = before.map;
 	let startMode = before.mode;
 	let received = 0;
+	let snapshotBytes = 0;
+	let startMapTimeLeft: number | null = null;
+	let snapshotHz: number | null = null;
 	let malformed = 0;
 	let measuredStart = Infinity;
 	let measuredEnd = Infinity;
@@ -100,6 +103,7 @@ export async function runProbe(config: Config, signal: AbortSignal) {
 				}
 				if (measuring) {
 					received++;
+					snapshotBytes += data.byteLength;
 					for (const { metrics } of renderers) {
 						if (lastArrival >= measuredStart) metrics?.interArrival.add(arrival - lastArrival);
 					}
@@ -130,6 +134,8 @@ export async function runProbe(config: Config, signal: AbortSignal) {
 		const observerWelcome = await observerPeer.welcome;
 		startMap = observerWelcome.map;
 		startMode = observerWelcome.mode ?? before.mode;
+	startMapTimeLeft = observerWelcome.mapTimeLeft ?? null;
+		snapshotHz = observerWelcome.snapshotHz ?? null;
 		const start = performance.now();
 		measuredStart = start + WARMUP_MS;
 		stopAt = measuredEnd = measuredStart + config.seconds * 1000;
@@ -225,11 +231,14 @@ export async function runProbe(config: Config, signal: AbortSignal) {
 		protocol: before.version,
 		startMap,
 		startMode,
+		startMapTimeLeft,
+		snapshotHz,
 		playersBefore: before.players,
 		actualSeconds,
 		settings,
 		sentStates,
 		receivedSnapshots: received,
+		snapshotBytes,
 		malformedSnapshots: malformed,
 		mapChanges,
 		relay: relay?.stats ?? null,
