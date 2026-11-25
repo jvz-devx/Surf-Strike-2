@@ -83,8 +83,12 @@ export class HnsClient {
 
 	/** !r is only for free roam; it would break hiding/freeze rules in a round. */
 	canRespawn(): boolean {
-		const p = this.phase;
-		return p === 'solo' || p === 'waiting' || p === 'starting' || p === 'ended';
+		return !this.inRound;
+	}
+
+	/** A round is being played (hiding or seeking): who joins now, or comes back from spectating, seeks. */
+	get inRound(): boolean {
+		return this.phase === 'hiding' || this.phase === 'seeking';
 	}
 
 	onModeState(m: HnsModeState, now: number): void {
