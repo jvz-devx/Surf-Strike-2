@@ -4,18 +4,22 @@
  * lag-compensated hits, player health) runs here on the latest state packets;
  * clients send `fire`/`reload`/`loadout` and display the results.
  */
-import type { MapRecordInfo, NetState, ScoreRow, ServerMessage, ZmEvent } from '@surf/shared';
+import type { MapRecordInfo, NetState, ScoreRow, ServerMessage, SnapshotEntry, ZmEvent } from '@surf/shared';
 import {
 	buildCollisionWorld,
 	decayed,
 	encodeZombies,
 	FLAG_DUCKED,
+	FLAG_TELEPORTED,
 	mapCvars,
+	MAX_RENDER_INTERPOLATION_MS,
+	RENDER_TIME_SLACK_MS,
 	REPEAT_MS,
 	Status,
 	WEAPONS,
 	WEAPON_IDS,
 	ZombiesGame,
+	ZM_HISTORY_MS,
 	ZOMBIE_HP,
 	ZOMBIES_PAY,
 	zmEventRoute,
@@ -33,6 +37,11 @@ export const ZM_STATE_MIN_MS = 250;
 export type ZombiesModeOptions = Pick<ZombiesGameOptions, 'countdownSecs' | 'endSecs' | 'maxZombies' | 'spawnIntervalScale'>;
 
 
+interface ZombieFrameTime {
+	tick: number;
+	at: number;
+}
+
 const LOADOUT_HINT = WEAPON_IDS.map((w) => `${WEAPONS[w].slot} ${WEAPONS[w].label}`).join(' · ');
 
 function clock(secs: number): string {
@@ -46,6 +55,7 @@ export class ZombiesMode implements ServerMode {
 	readonly game: ZombiesGame;
 	private lastSent = -Infinity;
 	private dirty = true;
+	private readonly zombieFrameTimes: ZombieFrameTime[] = [];
 
 	constructor(
 		private readonly host: ModeHost,
@@ -59,7 +69,8 @@ export class ZombiesMode implements ServerMode {
 			cvars: mapCvars(map),
 			now: host.now(),
 			rng: () => host.rng(),
-			lenient: true
+			lenient: true,
+			relayedPlayerHistory: true
 		});
 	}
 
@@ -81,7 +92,11 @@ export class ZombiesMode implements ServerMode {
 	}
 
 	state(p: ModePlayer, s: NetState): void {
-		this.game.setPlayerPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0, yaw: s.yaw });
+		this.game.setPlayerPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0, yaw: s.yaw }, (s.flags & FLAG_TELEPORTED) !== 0);
+	}
+
+	snapshot(entries: readonly SnapshotEntry[], now: number): void {
+		this.game.recordPlayerSnapshot(entries, now);
 	}
 
 	zone(): void {}
@@ -96,7 +111,8 @@ export class ZombiesMode implements ServerMode {
 		const now = this.host.now();
 		switch (msg.type) {
 			case 'fire': {
-				const res = this.game.fire(p.id, { weapon: msg.weapon, origin: msg.origin, dir: msg.dir, tick: Number(msg.tick) }, now);
+				const timing = this.shotTiming(msg.tick, now, p.ping);
+				const res = this.game.fire(p.id, { weapon: msg.weapon, origin: msg.origin, dir: msg.dir, ...timing }, now);
 				this.dispatch(res.events);
 				return;
 			}
@@ -108,6 +124,32 @@ export class ZombiesMode implements ServerMode {
 				this.dirty = true;
 				return;
 		}
+	}
+
+	private shotTiming(tick: number, now: number, rtt: number): { tick: number; playerRenderTime: number } {
+		const oldest = now - Math.min(ZM_HISTORY_MS, rtt + MAX_RENDER_INTERPOLATION_MS + RENDER_TIME_SLACK_MS);
+		// Protocol v2 can supply a validated render server time here directly.
+		const requested = Number.isFinite(tick) ? this.zombieFrameValue('tick', tick) : undefined;
+		const playerRenderTime = Math.max(oldest, requested ?? now);
+		const oldestTick = this.zombieFrameValue('at', oldest) ?? this.game.tick;
+		const wantedTick = this.zombieFrameValue('at', playerRenderTime) ?? this.game.tick;
+		return { tick: Math.max(Math.ceil(oldestTick), Math.round(wantedTick)), playerRenderTime };
+	}
+
+	/** Interpolate between actual BIN_ZOMBIES send times and their fractional sim ticks. */
+	private zombieFrameValue(key: keyof ZombieFrameTime, value: number): number | undefined {
+		const other = key === 'tick' ? 'at' : 'tick';
+		const frames = this.zombieFrameTimes;
+		const first = frames[0];
+		if (!first || value <= first[key]) return first?.[other];
+		for (let i = 1; i < frames.length; i++) {
+			const b = frames[i]!;
+			if (b[key] < value) continue;
+			const a = frames[i - 1]!;
+			const f = (value - a[key]) / (b[key] - a[key]);
+			return a[other] + (b[other] - a[other]) * f;
+		}
+		return frames.at(-1)?.[other];
 	}
 
 	command(p: ModePlayer, cmd: Command): boolean {
@@ -155,13 +197,18 @@ export class ZombiesMode implements ServerMode {
 			this.dirty = false;
 			this.host.broadcast(this.stateMessage());
 		}
-		this.sendZombies();
+		this.sendZombies(now);
 	}
 
 	/** BIN_ZOMBIES snapshot (every mode tick, 32 Hz; droppable under backlog like player snapshots). */
-	sendZombies(): void {
+	sendZombies(now = this.host.now()): void {
 		const g = this.game;
 		if (g.zombies.size === 0 && g.phase !== 'playing' && g.phase !== 'ended') return;
+		const times = this.zombieFrameTimes;
+		if (times.at(-1)?.tick !== g.tick) {
+			times.push({ tick: g.tick, at: now });
+			while (times.length > 2 && times[1]!.at < now - ZM_HISTORY_MS) times.shift();
+		}
 		const list: ZombieNet[] = [];
 		for (const z of g.zombies.values()) {
 			const o = z.body.origin;

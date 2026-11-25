@@ -19,6 +19,7 @@ import type {
 	ServerMessage,
 	RichEntry,
 	SnapshotEntry,
+	Vec3,
 	VoteOption
 } from '@surf/shared';
 import {
@@ -28,6 +29,8 @@ import {
 	mapTitle,
 	encodeSnapshot,
 	decodeState,
+	FLAG_TELEPORTED,
+	isRaceMode,
 	mapCvars as sharedMapCvars,
 	MapRotation,
 	MAX_CHAT,
@@ -53,14 +56,15 @@ import { TickScheduler } from './scheduler.ts';
 import { Shop } from './shop.ts';
 import { isClientTransport, WsClientTransport, type ClientTransport } from './transport.ts';
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
-import type { ZoneKind } from './validation.ts';
+import { MAX_REWIND_RTT_MS, PeerRtt } from './peer-rtt.ts';
+import { mapTeleport, nearPose, type ZoneKind } from './validation.ts';
 
 export { SNAPSHOT_HZ };
 /** Gamemode rule ticks (tag contact checks), at least the snapshot rate. */
 export const MODE_TICK_HZ = TAG_TICK_HZ;
 export const SCOREBOARD_MS = 1000;
 export const ROTATION_MS = 100;
-export const PING_MS = 2000;
+export const PING_MS = 500;
 export const TIME_LEFT_MS = 5000;
 export const HELLO_TIMEOUT_MS = 10_000;
 
@@ -147,7 +151,9 @@ interface Client {
 	spectating: boolean;
 	targetId: number | null;
 	state: NetState | null;
+	pendingSpawn: Vec3 | null;
 	ping: number;
+	rtt: PeerRtt;
 	/** Worn cosmetics (docs/economy.md#shop); the default look for guests. */
 	loadout: Loadout;
 	rate: { state: Window; chat: Window; json: Window; shop: Window; casino: Window };
@@ -156,6 +162,8 @@ interface Client {
 }
 
 const ZONE_KINDS = new Set<ZoneKind>(['start', 'stage', 'checkpoint', 'end']);
+/** State packets are ordered. The first pose near the spawn acknowledges it without changing the wire format. */
+const SPAWN_ACK_RADIUS = 64;
 const PLAYER_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 
 /** Full cvars for a map: its gamemode's profile, then the map's overrides. */
@@ -482,7 +490,11 @@ export class Lobby {
 			spectating: false,
 			targetId: null,
 			state: null,
-			ping: 0,
+			pendingSpawn: null,
+			get ping() {
+				return Math.min(MAX_REWIND_RTT_MS, this.rtt.estimate(performance.now()));
+			},
+			rtt: new PeerRtt(),
 			loadout: emptyLoadout(),
 			rate: { state: new Window(), chat: new Window(), json: new Window(), shop: new Window(), casino: new Window() },
 			helloTimer: null,
@@ -498,6 +510,9 @@ export class Lobby {
 			} catch (err) {
 				this.log(`error handling message from #${c.id}: ${(err as Error).message}`);
 			}
+		});
+		transport.onPong?.((challenge) => {
+			if (c.helloed) c.rtt.pong(challenge, performance.now());
 		});
 		transport.onClose(() => this.onClose(c));
 		transport.onError(() => transport.terminate());
@@ -544,10 +559,12 @@ export class Lobby {
 			const n = c.rate.state.hit(t);
 			if (n > RATE.state.kick) return this.kick(c, 'state flood');
 			if (n > RATE.state.limit || !c.helloed || c.spectating) return;
-			const s = decodeState(data);
+			const received = decodeState(data);
+			if (!received) return;
+			const s = this.combatState(c, received);
 			if (!s) return;
 			c.state = s;
-			this.economy.state(c, s);
+			this.economy.state(c, received);
 			this.mode.state(c, s);
 			return;
 		}
@@ -642,12 +659,6 @@ export class Lobby {
 					this.send(c, { type: 'pong', t: msg.t, serverTime: this.serverClock() });
 				}
 				return;
-			case 'pong':
-				if (typeof msg.t === 'number' && Number.isFinite(msg.t)) {
-					const rtt = t - msg.t;
-					if (rtt >= 0 && rtt < 60_000) c.ping = c.ping === 0 ? rtt : c.ping * 0.7 + rtt * 0.3;
-				}
-				return;
 			default:
 				return;
 		}
@@ -712,6 +723,7 @@ export class Lobby {
 			serverTime: this.serverClock(),
 			snapshotHz: this.snapHz
 		});
+		this.ping(c, performance.now());
 		this.send(c, this.admin.mapsMessage());
 		if (!resumed && guest.taken) {
 			this.systemTo(c, `That name belongs to a registered account. Log in to use it; playing as ${guestName}.`);
@@ -933,6 +945,18 @@ export class Lobby {
 		this.setSpectate(c, true, target.id);
 	}
 
+	/** Only server spawns and plausible map teleports break the combat pose history. */
+	private combatState(c: Client, state: NetState): NetState | null {
+		if (isRaceMode(this.mode.id)) return state;
+		if (c.pendingSpawn) {
+			if (!nearPose(state, c.pendingSpawn, SPAWN_ACK_RADIUS)) return null;
+			c.pendingSpawn = null;
+			return { ...state, flags: state.flags | FLAG_TELEPORTED };
+		}
+		if (!(state.flags & FLAG_TELEPORTED) || mapTeleport(this.map, c.state, state)) return state;
+		return { ...state, flags: state.flags & ~FLAG_TELEPORTED };
+	}
+
 	private setSpectate(c: Client, spectating: boolean, targetId: number | null): void {
 		if (spectating) {
 			const target = [...this.clients].find((o) => o.id === targetId && o !== c && o.helloed && !o.spectating);
@@ -946,6 +970,7 @@ export class Lobby {
 		c.targetId = targetId;
 		if (changed) {
 			c.state = null;
+			c.pendingSpawn = null;
 			if (spectating) this.rotation.removeVoter(String(c.id));
 		}
 		this.broadcast({ type: 'spectating', id: c.id, spectating, targetId });
@@ -1109,6 +1134,7 @@ export class Lobby {
 		for (const c of this.clients) {
 			if (!c.helloed) continue;
 			c.state = null;
+			c.pendingSpawn = null;
 			this.send(c, {
 				type: 'mapChange',
 				map: map.id,
@@ -1131,11 +1157,13 @@ export class Lobby {
 	// Periodic sends
 
 	sendSnapshot(): void {
+		const now = this.now();
 		const entries: SnapshotEntry[] = [];
 		for (const c of this.clients) {
 			if (c.helloed && !c.spectating && c.state) entries.push({ id: c.id, ...c.state });
 		}
 		if (entries.length === 0) return;
+		this.mode.snapshot?.(entries, now);
 		this.snapshotSeq = (this.snapshotSeq + 1) & 0xffff;
 		const buf = Buffer.from(encodeSnapshot(entries, this.serverClock(), this.snapshotSeq));
 		for (const c of this.clients) if (c.helloed) this.sendRaw(c, buf);
@@ -1150,6 +1178,7 @@ export class Lobby {
 			const totals = c && c.accountId !== null ? this.stats.totals(c.accountId) : null;
 			return {
 				...r,
+				ping: c ? Math.round(c.rtt.estimate(performance.now())) : r.ping,
 				pointsTotal: totals?.pointsTotal ?? null,
 				playtimeSecs: totals?.playtimeSecs ?? null,
 				// Read fresh: awards, purchases, loot boxes, casino and admins all change it.
@@ -1172,8 +1201,14 @@ export class Lobby {
 	}
 
 	sendPings(): void {
-		const t = Math.round(performance.now());
-		this.broadcast({ type: 'ping', t });
+		const now = performance.now();
+		for (const c of this.clients) if (c.helloed) this.ping(c, now);
+	}
+
+	private ping(c: Client, now: number): void {
+		if (!c.transport.open) return;
+		c.transport.ping?.(c.rtt.probe(now));
+		this.send(c, { type: 'ping', t: now });
 	}
 
 	// -----------------------------------------------------------------------
@@ -1185,7 +1220,11 @@ export class Lobby {
 	}
 
 	private send(c: Client, msg: ServerMessage): void {
-		c.transport.sendReliable(JSON.stringify(msg));
+		if ((msg.type === 'hns' || msg.type === 'inf' || msg.type === 'zm') && msg.ev.e === 'spawn' && msg.ev.id === c.id) {
+			c.pendingSpawn = 'pos' in msg.ev ? msg.ev.pos : { x: msg.ev.x, y: msg.ev.y, z: msg.ev.z };
+			c.state = null;
+		}
+		this.sendRaw(c, JSON.stringify(msg));
 	}
 
 	private broadcast(msg: ServerMessage, except?: Client | number): void {

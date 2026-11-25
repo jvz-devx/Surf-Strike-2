@@ -23,6 +23,8 @@ export interface ClientTransport {
 	/** Send a droppable binary frame (snapshots, BIN_ZOMBIES). Returns false if dropped or closed. */
 	sendUnreliable(data: Uint8Array): boolean;
 	onMessage(cb: (data: Buffer, isBinary: boolean) => void): void;
+	ping?(challenge: string): void;
+	onPong?(cb: (challenge: string) => void): void;
 	onClose(cb: () => void): void;
 	onError(cb: () => void): void;
 	close(code?: number, reason?: string): void;
@@ -77,6 +79,14 @@ export class WsClientTransport implements ClientTransport {
 
 	onMessage(cb: (data: Buffer, isBinary: boolean) => void): void {
 		this.ws.on('message', (data, isBinary) => cb(data as Buffer, isBinary));
+	}
+
+	ping(challenge: string): void {
+		if (this.open) this.ws.ping(challenge);
+	}
+
+	onPong(cb: (challenge: string) => void): void {
+		this.ws.on('pong', (data) => cb(data.toString()));
 	}
 
 	onClose(cb: () => void): void {

@@ -5,7 +5,7 @@
  * event with the server wall-clock time; it returns a verdict on `end`.
  */
 import type { MapDef, NetState, Spawn, Vec3 } from '@surf/shared';
-import { DUCK_HULL_MAX, FLAG_DUCKED, FLAG_TELEPORTED, HULL_MAX, HULL_MIN, MAX_VELOCITY_HARD, SURF_CVARS, teleportSeq, TICK_RATE } from '@surf/shared';
+import { DUCK_HULL_MAX, FLAG_DUCKED, FLAG_TELEPORTED, HULL_MAX, HULL_MIN, hnsSpawns, hullInBox, mapCvars, MAX_VELOCITY_HARD, SURF_CVARS, tagSpawns, teleportSeq, TICK_RATE } from '@surf/shared';
 
 /** Allowed relative error between run ticks and wall-clock time. */
 export const TIME_TOLERANCE = 0.05;
@@ -27,6 +27,40 @@ export type Verdict =
 interface Box {
 	min: Vec3;
 	max: Vec3;
+}
+
+export function nearPose(a: Vec3, b: Vec3, radius: number): boolean {
+	return (a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2 <= radius * radius;
+}
+
+/** A client-side map teleport must lead from an eligible trigger to one of its landings. */
+export function mapTeleport(map: MapDef, prev: NetState | null, state: NetState): boolean {
+	if (!prev) return false;
+	// The client applies the teleport in the same movement tick as entry. Its
+	// immediately preceding pose can be up to a movement step outside the box.
+	const maxvel = Math.min(mapCvars(map).sv_maxvelocity, MAX_VELOCITY_HARD);
+	const step = (v: number) => Math.max(-maxvel, Math.min(maxvel, v)) / TICK_RATE;
+	const projected = { x: prev.x + step(prev.vx), y: prev.y + step(prev.vy), z: prev.z + step(prev.vz) };
+	const stance = (state.flags & FLAG_DUCKED) !== 0;
+	for (const zone of map.zones) {
+		if (zone.type !== 'teleport') continue;
+		// Allow acceleration, a crouch change, and wire quantization around the trigger.
+		const box = {
+			min: { x: zone.min.x - 8, y: zone.min.y - 8, z: zone.min.z - 8 },
+			max: { x: zone.max.x + 8, y: zone.max.y + 8, z: zone.max.z + 8 }
+		};
+		if (!hullInBox(prev, stance, box) && !hullInBox(projected, stance, box)) continue;
+		let destinations: readonly Spawn[];
+		if (zone.dest) destinations = [zone.dest];
+		else if (map.kind === 'hns') {
+			const { hiders, seekers } = hnsSpawns(map);
+			destinations = [...hiders, ...seekers];
+		} else if (map.kind === 'tag' || map.kind === 'infected') destinations = tagSpawns(map);
+		else continue;
+		// Movement already at the landing cannot renew the discontinuity.
+		if (destinations.some(({ pos }) => nearPose(state, pos, 16) && !nearPose(prev, pos, 16))) return true;
+	}
+	return false;
 }
 
 export class RunValidator {
@@ -149,14 +183,7 @@ export class RunValidator {
 	}
 
 	private nearRespawn(s: NetState): boolean {
-		const r2 = TELEPORT_RADIUS * TELEPORT_RADIUS;
-		for (const p of this.respawns) {
-			const dx = s.x - p.x;
-			const dy = s.y - p.y;
-			const dz = s.z - p.z;
-			if (dx * dx + dy * dy + dz * dz <= r2) return true;
-		}
-		return false;
+		return this.respawns.some((pos) => nearPose(s, pos, TELEPORT_RADIUS));
 	}
 
 	private inEnd(s: NetState): boolean {

@@ -11,6 +11,7 @@ import {
 	decayed,
 	FLAG_DUCKED,
 	FLAG_ON_GROUND,
+	FLAG_TELEPORTED,
 	INF_PERK_KILLS,
 	INF_ROUND_SECS,
 	INF_SECONDARY,
@@ -144,18 +145,22 @@ export class InfectedMode implements ServerMode {
 
 	state(p: ModePlayer, s: NetState): void {
 		// The view and the motion too: the hit body leans, runs, jumps and aims as the drawn one does.
-		this.game.setPlayerPos(p.id, {
-			x: s.x,
-			y: s.y,
-			z: s.z,
-			ducked: (s.flags & FLAG_DUCKED) !== 0,
-			yaw: s.yaw,
-			pitch: s.pitch,
-			vx: s.vx,
-			vy: s.vy,
-			vz: s.vz,
-			onGround: (s.flags & FLAG_ON_GROUND) !== 0
-		});
+		this.game.setPlayerPos(
+			p.id,
+			{
+				x: s.x,
+				y: s.y,
+				z: s.z,
+				ducked: (s.flags & FLAG_DUCKED) !== 0,
+				yaw: s.yaw,
+				pitch: s.pitch,
+				vx: s.vx,
+				vy: s.vy,
+				vz: s.vz,
+				onGround: (s.flags & FLAG_ON_GROUND) !== 0
+			},
+			(s.flags & FLAG_TELEPORTED) !== 0
+		);
 	}
 
 	zone(): void {}
