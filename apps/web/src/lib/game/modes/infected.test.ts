@@ -134,6 +134,15 @@ describe('InfectedMode', () => {
 		expect(s.host.notice).toHaveBeenCalledWith('Infected rounds restart by themselves (use !rtv to change map).');
 	});
 
+	it('chat restart leaves a spectator where they are, as R does', () => {
+		const s = setup();
+		s.phase('waiting');
+		s.host.spec = { targetId: 9, freeFly: false, pos: ZERO };
+		s.mode.chatRestart();
+		expect(s.host.teleport).not.toHaveBeenCalled();
+		expect(s.host.notice).not.toHaveBeenCalled();
+	});
+
 	it('back into play after spectating: a map spawn, also during a round', () => {
 		const s = setup();
 		s.phase('playing');

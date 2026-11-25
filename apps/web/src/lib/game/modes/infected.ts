@@ -90,10 +90,11 @@ export class InfectedMode implements ClientMode {
 		this.client.reload(now);
 	}
 
-	/** Solo (and while the server waits for players) respawns; online rounds restart by themselves. */
+	/** Solo (and while the server waits for players) respawns, not a spectator; online rounds restart by themselves. */
 	chatRestart(): void {
-		if (this.client.localFallouts) this.respawn();
-		else this.host.notice('Infected rounds restart by themselves (use !rtv to change map).');
+		if (this.client.localFallouts) {
+			if (!this.host.spec) this.respawn();
+		} else this.host.notice('Infected rounds restart by themselves (use !rtv to change map).');
 	}
 
 	respawn(): void {
