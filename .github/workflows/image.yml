@@ -33,23 +33,9 @@ jobs:
         env:
           OWNER: ${{ github.repository_owner }}
           REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
           SHA: ${{ github.sha }}
-        run: |
-          image="ghcr.io/${OWNER,,}/surf-strike-2"
-          branch="${REF_NAME#feat/}"
-          branch="${branch,,}"
-          branch="$(printf '%s' "$branch" | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
-          short_sha="${SHA:0:7}"
-          {
-            echo "image=${image}"
-            echo "tags<<EOF"
-            echo "${image}:${branch}"
-            echo "${image}:sha-${short_sha}"
-            if [ "${REF_NAME}" = "master" ]; then
-              echo "${image}:latest"
-            fi
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+        run: bash tools/image-tags.sh
 
       - name: Build and push image
         id: build
