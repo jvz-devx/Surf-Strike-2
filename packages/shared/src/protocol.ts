@@ -209,6 +209,7 @@ export type ClientMessage =
 	| { type: 'changeMap'; mapId: string } // lone player only (docs/gameplay.md)
 	| { type: 'spectate'; targetId: number | null } // null = leave spectate
 	| { type: 'name'; name: string }
+	| { type: 'ping'; t: number }
 	| { type: 'pong'; t: number }
 	/** Race maps: ask for the map's record ghost; answered with a BIN_GHOST frame (docs/gameplay.md#ghosts). */
 	| { type: 'getGhost'; map: string }
@@ -363,6 +364,10 @@ export type ServerMessage =
 			records: MapRecordInfo;
 			/** Logged-in account (hello token accepted), null for guests. Absent on old servers. */
 			account?: AccountInfo | null;
+			/** Server monotonic clock (ms) when `welcome` was sent (clock sync seed). */
+			serverTime?: number;
+			/** Active server snapshot rate (Hz); defaults to SNAPSHOT_HZ when absent. */
+			snapshotHz?: number;
 	  }
 	| { type: 'full' }
 	| { type: 'join'; player: PlayerInfo }
@@ -435,6 +440,8 @@ export type ServerMessage =
 	/** `richest`: the accounts with the most coins, richest first, online or not (absent on older servers). */
 	| { type: 'scoreboard'; rows: ScoreRow[]; richest?: RichEntry[] }
 	| { type: 'ping'; t: number }
+	/** Reply to a client `ping`: echoes `t` and carries the server monotonic time (ms). */
+	| { type: 'pong'; t: number; serverTime: number }
 	/**
 	 * Reply to register/login/logout, or to a rejected hello token.
 	 * ok with a username: logged in (`token` is new on register/login);

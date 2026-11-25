@@ -69,6 +69,7 @@ import { isBrowserShortcut } from '../input/guard.js';
 import { Input } from '../input/input.js';
 import { isMoveAction, SubtickSampler } from '../input/subtick.js';
 import type { NetClient } from '../net/client.js';
+import { ServerClock } from '../net/clock.js';
 import { Connection } from '../net/connection.js';
 import { serverOverride } from '../net/discovery.js';
 import { emptySample, INTERP_DELAY_MS, SnapshotBuffer, type Sample } from '../net/interp.js';
@@ -275,6 +276,8 @@ export class Game implements CommandContext {
 	private fpsSince = 0;
 	private trendAt = 0;
 	private trendSpeed = 0;
+	private serverClock = new ServerClock();
+	private lastClientPing = 0;
 	private netStats = new NetStats();
 	private lastNetGraph = 0;
 
@@ -1342,6 +1345,10 @@ export class Game implements CommandContext {
 		let end = now - this.step.accMs - (n - 1) * stepMs;
 		for (let i = 0; i < n; i++, end += stepMs) this.simTick(now, end - stepMs, end);
 
+		if (this.mode === 'online' && now - this.lastClientPing >= 1000) {
+			this.lastClientPing = now;
+			this.net?.send({ type: 'ping', t: now });
+		}
 		if (this.mode === 'solo' && this.rotation && now - this.lastRotationUpdate >= 100) {
 			this.lastRotationUpdate = now;
 			for (const ev of this.rotation.update(now, 1)) this.onRotationEvent(ev, now);
@@ -1398,14 +1405,14 @@ export class Game implements CommandContext {
 
 	private updateRemotes(now: number, dtMs: number): void {
 		if (this.remotes.size === 0) return;
-		const renderAt = now - INTERP_DELAY_MS;
+		const renderAt = this.serverClock.serverTime(now) - INTERP_DELAY_MS;
 		const players = this.renderer?.players;
 		const specTarget = this.spec && !this.spec.freeFly ? this.spec.targetId : null;
 		let anyUnderrun = false;
 		let anyExtrap = false;
 		for (const rm of this.remotes.values()) {
 			rm.hasSample = rm.buf.sample(renderAt, rm.sample);
-			if (rm.hasSample && !rm.spectating && now - rm.buf.lastArrival < 3000) {
+			if (rm.hasSample && !rm.spectating && !rm.buf.sourceIdle && now - rm.buf.lastArrival < 3000) {
 				if (rm.buf.lastUnderrun) anyUnderrun = true;
 				if (rm.buf.lastExtrapMs > 0) anyExtrap = true;
 			}
@@ -1970,6 +1977,11 @@ export class Game implements CommandContext {
 			case 'ping':
 				this.net?.send({ type: 'pong', t: m.t });
 				break;
+			case 'pong': {
+				const rtt = this.serverClock.observePong(m.t, now, m.serverTime);
+				if (rtt >= 0) this.netStats.recordRtt(rtt);
+				break;
+			}
 			case 'auth':
 				this.onAuth(m);
 				if (m.ok && m.username === null) this.hud.coins = null;
@@ -2056,7 +2068,13 @@ export class Game implements CommandContext {
 		this.hud.rtvCooldown = null;
 		this.renderer?.players.clear();
 		this.remotes.clear();
+		this.serverClock.reset();
+		if (m.snapshotHz && m.snapshotHz > 0) this.serverClock.setNominalSnapHz(m.snapshotHz);
+		if (m.serverTime !== undefined) this.serverClock.seed(now, m.serverTime);
+		this.lastClientPing = now;
+		client.send({ type: 'ping', t: now });
 		this.netStats.reset();
+		if (m.snapshotHz && m.snapshotHz > 0) this.netStats.setNominalSnapHz(m.snapshotHz);
 		this.netStats.setInterpDelay(INTERP_DELAY_MS);
 		this.hud.ban = null;
 		this.hud.coins = null;
@@ -2081,15 +2099,17 @@ export class Game implements CommandContext {
 
 	private onSnapshot(frame: SnapshotFrame, arrival: number): void {
 		if (this.mode !== 'online') return;
+		const obs = this.serverClock.observeSnapshot(arrival, frame.serverTimeMs, frame.seq);
 		this.netStats.recordSnapshot(arrival, {
 			serverTimeMs: frame.serverTimeMs,
 			seq: frame.seq,
 			selfId: this.selfId,
-			entries: frame.entries
+			entries: obs.accepted ? frame.entries : undefined
 		});
+		if (!obs.accepted) return;
 		for (const e of frame.entries) {
 			if (e.id === this.selfId) continue;
-			this.remote(e.id).buf.push(e, arrival);
+			this.remote(e.id).buf.push(e, frame.serverTimeMs, arrival);
 		}
 	}
 
@@ -2150,6 +2170,7 @@ export class Game implements CommandContext {
 		this.hud.richest = [];
 		this.hud.modeState = null;
 		this.remotes.clear();
+		this.serverClock.reset();
 		this.netStats.reset();
 		this.renderer?.players.clear();
 		this.records = null;

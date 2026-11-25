@@ -27,6 +27,7 @@ import {
 } from '../packages/shared/src/index.ts';
 import { startServer } from '../apps/server/src/server.ts';
 import { FixedStep } from '../apps/web/src/lib/game/loop.ts';
+import { ServerClock } from '../apps/web/src/lib/net/clock.ts';
 import { emptySample, SnapshotBuffer } from '../apps/web/src/lib/net/interp.ts';
 import { NetStats } from '../apps/web/src/lib/net/stats.ts';
 
@@ -428,10 +429,13 @@ function percentile(sorted: number[], p: number): number {
 	return sorted[idx]!;
 }
 
-async function connectClient(port: number, name: string): Promise<{ ws: WsSocket; selfId: number }> {
+async function connectClient(
+	port: number,
+	name: string
+): Promise<{ ws: WsSocket; selfId: number; serverTime?: number; snapshotHz?: number; welcomeArrival: number }> {
 	const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
 	ws.binaryType = 'arraybuffer';
-	const selfId = await new Promise<number>((ok, fail) => {
+	const welcome = await new Promise<{ selfId: number; serverTime?: number; snapshotHz?: number; welcomeArrival: number }>((ok, fail) => {
 		const timeout = setTimeout(() => fail(new Error(`welcome timeout for ${name}`)), 5000);
 		ws.once('open', () => {
 			ws.send(JSON.stringify({ type: 'hello', playerId: crypto.randomUUID(), name, version: PROTOCOL_VERSION }));
@@ -442,7 +446,7 @@ async function connectClient(port: number, name: string): Promise<{ ws: WsSocket
 			if (msg.type === 'welcome') {
 				clearTimeout(timeout);
 				ws.off('message', onMsg);
-				ok(msg.selfId);
+				ok({ selfId: msg.selfId, serverTime: msg.serverTime, snapshotHz: msg.snapshotHz, welcomeArrival: performance.now() });
 			}
 		};
 		ws.on('message', onMsg);
@@ -451,7 +455,7 @@ async function connectClient(port: number, name: string): Promise<{ ws: WsSocket
 			fail(err);
 		});
 	});
-	return { ws, selfId };
+	return { ws, ...welcome };
 }
 
 async function runScenario(def: ScenarioDef, durationSec: number): Promise<ScenarioResult> {
@@ -514,9 +518,13 @@ async function runScenario(def: ScenarioDef, durationSec: number): Promise<Scena
 			ws.send(encodeState(st));
 		}
 
-		// Observer tracks target using the real production SnapshotBuffer + NetStats.
+		// Observer tracks target using the real production ServerClock + SnapshotBuffer + NetStats.
+		const clock = new ServerClock();
+		if (observer.snapshotHz) clock.setNominalSnapHz(observer.snapshotHz);
+		if (observer.serverTime !== undefined) clock.seed(observer.welcomeArrival, observer.serverTime);
 		const buf = new SnapshotBuffer();
 		const stats = new NetStats();
+		if (observer.snapshotHz) stats.setNominalSnapHz(observer.snapshotHz);
 		const sample = emptySample();
 
 		const gaps: number[] = [];
@@ -525,6 +533,14 @@ async function runScenario(def: ScenarioDef, durationSec: number): Promise<Scena
 		let snapCount = 0;
 		let totalInBytes = 0;
 
+		observer.ws.send(JSON.stringify({ type: 'ping', t: performance.now() }));
+		const pingTimer = setInterval(() => {
+			if (observer.ws.readyState === WebSocket.OPEN) {
+				observer.ws.send(JSON.stringify({ type: 'ping', t: performance.now() }));
+			}
+		}, 1000);
+		timers.push(pingTimer);
+
 		observer.ws.on('message', (data, isBinary) => {
 			const arr = performance.now();
 			const bytes = isBinary ? (data as ArrayBuffer).byteLength : Buffer.byteLength(Buffer.from(data as ArrayBuffer));
@@ -532,9 +548,12 @@ async function runScenario(def: ScenarioDef, durationSec: number): Promise<Scena
 			stats.recordTraffic('in', bytes, arr);
 			if (!isBinary) {
 				const msg = JSON.parse(Buffer.from(data as ArrayBuffer).toString('utf8')) as ServerMessage;
-				if (msg.type === 'scoreboard') {
+				if (msg.type === 'pong') {
+					const rtt = clock.observePong(msg.t, arr, msg.serverTime);
+					if (rtt >= 0) stats.recordRtt(rtt);
+				} else if (msg.type === 'scoreboard') {
 					const row = msg.rows.find((r) => r.id === observer.selfId);
-					if (row) stats.recordRtt(row.ping);
+					if (row && stats.rtt < 0) stats.recordRtt(row.ping);
 				}
 				return;
 			}
@@ -546,14 +565,16 @@ async function runScenario(def: ScenarioDef, durationSec: number): Promise<Scena
 			snapCount++;
 			if (Number.isFinite(lastSnapArr)) gaps.push(arr - lastSnapArr);
 			lastSnapArr = arr;
+			const obs = clock.observeSnapshot(arr, frame.serverTimeMs, frame.seq);
 			stats.recordSnapshot(arr, {
 				serverTimeMs: frame.serverTimeMs,
 				seq: frame.seq,
 				selfId: observer.selfId,
-				entries: frame.entries
+				entries: obs.accepted ? frame.entries : undefined
 			});
+			if (!obs.accepted) return;
 			const te = frame.entries.find((e) => e.id === target.selfId);
-			if (te) buf.push(te, arr);
+			if (te) buf.push(te, frame.serverTimeMs, arr);
 		});
 
 		// Target runs real FixedStep (64 Hz) driven by a 60 Hz frame cadence (same as browser rAF).
@@ -621,7 +642,8 @@ async function runScenario(def: ScenarioDef, durationSec: number): Promise<Scena
 			const dt = now - lastObsFrame;
 			lastObsFrame = now;
 			const interpMs = INTERP_DELAY_MS;
-			const ok = buf.sample(now - interpMs, sample);
+			const renderAt = clock.serverTime(now) - interpMs;
+			const ok = buf.sample(renderAt, sample);
 			if (!ok) return;
 			const underrun = buf.lastUnderrun;
 			const extrapolating = buf.lastExtrapMs > 0;

@@ -79,4 +79,40 @@ describe('snapshot interpolation', () => {
 		expect(out.x).toBe(0);
 		expect(b.size).toBe(2);
 	});
+	it('de-aliases 64->32 Hz tick spacing and drops duplicate ticks', () => {
+		const b = new SnapshotBuffer();
+		const out = emptySample();
+		const speed = 640; // 10 u per 64 Hz tick (15.625 ms)
+		const atTick = (tick: number): NetState => ({
+			...st(tick * 10),
+			tick,
+			vx: speed
+		});
+		// Snapshots arrive at uniform 31.25 ms server intervals, but sender ticks arrive as 2, 1, 3, 0 (dup), 4.
+		b.push(atTick(100), 1000, 5000);
+		b.push(atTick(102), 1031.25, 5031.25);
+		b.push(atTick(103), 1062.5, 5062.5);
+		b.push(atTick(106), 1093.75, 5093.75);
+		b.push(atTick(106), 1125.0, 5125.0); // duplicate tick: must be dropped while keeping lastArrival fresh
+		b.push(atTick(110), 1156.25, 5156.25);
+
+		expect(b.lastArrival).toBe(5156.25);
+		// Sample across the 1-tick/3-tick/dup region: velocity should stay constant at 640 u/s (10 u per 15.625 ms).
+		for (let t = 1005; t <= 1150; t += 10) {
+			expect(b.sample(t, out)).toBe(true);
+			const expectedX = 1000 + ((t - 1000) / 1000) * speed;
+			expect(Math.abs(out.x - expectedX)).toBeLessThan(1.5);
+		}
+	});
+	it('separates local arrival time from server timeline and detects idle sources', () => {
+		const b = new SnapshotBuffer();
+		b.push({ ...st(0), tick: 1 }, 1000, 9000);
+		b.push({ ...st(10), tick: 2 }, 1031.25, 9031.25);
+		expect(b.sourceIdle).toBe(false);
+		for (let i = 0; i < 8; i++) {
+			b.push({ ...st(10), tick: 2 }, 1062.5 + i * 31.25, 9062.5 + i * 31.25);
+		}
+		expect(b.sourceIdle).toBe(true);
+		expect(b.lastArrival).toBeCloseTo(9062.5 + 7 * 31.25);
+	});
 });

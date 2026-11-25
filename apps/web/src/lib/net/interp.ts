@@ -1,12 +1,20 @@
 /**
- * Remote-player interpolation buffer: snapshots are stored with their
- * arrival time and sampled ~100 ms in the past (docs/architecture.md#netcode).
+ * Remote-player interpolation buffer: snapshots are stamped on the server
+ * monotonic timeline with per-player `NetState.tick` spacing to remove
+ * 64->32 Hz aliasing and uplink jitter (docs/architecture.md#netcode).
  */
-import { INTERP_DELAY_MS, type NetState } from '@surf/shared';
+import { INTERP_DELAY_MS, TICK_RATE, type NetState } from '@surf/shared';
 
 /** Shared with the server's lag compensation (packages/shared protocol.ts). */
 export { INTERP_DELAY_MS };
 const CAPACITY = 32;
+const TICK_MS = 1000 / TICK_RATE;
+const ANCHOR_WINDOW = 32;
+/** Discontinuity threshold (ms) between observed `serverTime - tick*TICK_MS` and the current anchor. */
+const ANCHOR_JUMP_MS = 250;
+const ANCHOR_JUMP_CONFIRM = 3;
+/** Consecutive duplicate ticks before a sender is treated as paused/idle rather than link-starved. */
+const SOURCE_IDLE_DUPS = 8;
 
 export interface Sample {
 	x: number;
@@ -35,6 +43,12 @@ export function lerpAngle(a: number, b: number, t: number): number {
 	return a + d * t;
 }
 
+function medianOf(values: readonly number[]): number {
+	const sorted = values.slice().sort((a, b) => a - b);
+	const mid = sorted.length >> 1;
+	return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) * 0.5;
+}
+
 interface Entry {
 	t: number;
 	s: NetState;
@@ -42,6 +56,18 @@ interface Entry {
 
 export class SnapshotBuffer {
 	private buf: Entry[] = [];
+	/** Local client arrival timestamp (ms) of the last pushed snapshot, used for visibility timeouts. */
+	private lastLocalArrival = -Infinity;
+	/** Per-player tick spacing state: maps `tick * TICK_MS` onto the server timeline. */
+	private lastTick = -1;
+	private tickProgressed = false;
+	private tickAnchor = 0;
+	private readonly obsWin: number[] = [];
+	private obsIdx = 0;
+	private obsCount = 0;
+	private anchorJumpStreak = 0;
+	private dupStreak = 0;
+
 	/** Teleport threshold: larger jumps snap instead of interpolating. */
 	snapDistance = 1024;
 	/** True when the last `sample` ran past the newest buffered snapshot. */
@@ -51,29 +77,124 @@ export class SnapshotBuffer {
 	/** How many ms `renderMs` exceeded the newest buffered snapshot on the last `sample`. */
 	lastOverrunMs = 0;
 
-	push(state: NetState, arrivalMs: number): void {
+	/**
+	 * Push a remote player's state from a snapshot stamped `serverTimeMs`.
+	 * Pass `localArrivalMs` when `serverTimeMs` is on the server timeline so
+	 * `lastArrival` stays in the caller's local clock domain.
+	 */
+	push(state: NetState, serverTimeMs: number, localArrivalMs = serverTimeMs): void {
+		this.lastLocalArrival = localArrivalMs;
+
+		let sampleTime = serverTimeMs;
+		if (this.lastTick < 0) {
+			this.lastTick = state.tick;
+			this.resetAnchor(serverTimeMs - state.tick * TICK_MS);
+			this.dupStreak = 0;
+		} else {
+			const dt = state.tick - this.lastTick;
+			if (dt === 0) {
+				if (this.tickProgressed) {
+					// Same sim tick repeated by the 32 Hz snapshot loop: drop it so the avatar
+					// doesn't freeze for one snapshot then jump double speed on the next.
+					this.dupStreak++;
+					return;
+				}
+				// Constant-tick stream (e.g. idle test stub): fall back to serverTimeMs directly.
+				this.dupStreak = 0;
+			} else if (dt < 0) {
+				if (dt < -64) {
+					// Sender tick counter reset (reconnect/respawn/test reset): re-anchor cleanly.
+					this.lastTick = state.tick;
+					this.dupStreak = 0;
+					this.resetAnchor(serverTimeMs - state.tick * TICK_MS);
+				} else {
+					// Out-of-order / late tick: drop.
+					return;
+				}
+			} else {
+				this.tickProgressed = true;
+				this.lastTick = state.tick;
+				this.dupStreak = 0;
+
+				const obs = serverTimeMs - state.tick * TICK_MS;
+				const err = obs - this.tickAnchor;
+				if (Math.abs(err) > ANCHOR_JUMP_MS) {
+					this.anchorJumpStreak++;
+					if (this.anchorJumpStreak >= ANCHOR_JUMP_CONFIRM || Math.abs(err) > 1000) {
+						this.resetAnchor(obs);
+					}
+				} else {
+					this.anchorJumpStreak = 0;
+				}
+
+				if (this.anchorJumpStreak === 0) {
+					if (this.obsWin.length < ANCHOR_WINDOW) this.obsWin.push(obs);
+					else this.obsWin[this.obsIdx] = obs;
+					this.obsIdx = (this.obsIdx + 1) % ANCHOR_WINDOW;
+					this.obsCount++;
+
+					const med = medianOf(this.obsWin);
+					const delta = med - this.tickAnchor;
+					if (Math.abs(delta) > 0.01) {
+						// Slew faster while priming the first few samples, then cap to <=5% speed skew.
+						const priming = this.obsCount <= 8;
+						const maxRate = priming ? 0.35 : 0.05;
+						const maxStep = Math.min(priming ? 15 : 1.5, dt * TICK_MS * maxRate);
+						const gain = priming ? 0.35 : 0.08;
+						const step = Math.max(-maxStep, Math.min(maxStep, delta * gain));
+						this.tickAnchor += step;
+					}
+				}
+				sampleTime = this.tickAnchor + state.tick * TICK_MS;
+			}
+		}
+
 		const last = this.buf[this.buf.length - 1];
-		if (last && arrivalMs < last.t) arrivalMs = last.t;
-		this.buf.push({ t: arrivalMs, s: state });
+		if (last && sampleTime < last.t) sampleTime = last.t;
+		this.buf.push({ t: sampleTime, s: state });
 		if (this.buf.length > CAPACITY) this.buf.shift();
+	}
+
+	private resetAnchor(anchor: number): void {
+		this.tickAnchor = anchor;
+		this.obsWin.length = 0;
+		this.obsWin.push(anchor);
+		this.obsIdx = 1 % ANCHOR_WINDOW;
+		this.obsCount = 1;
+		this.anchorJumpStreak = 0;
 	}
 
 	get size(): number {
 		return this.buf.length;
 	}
 
+	/** Local arrival timestamp (ms) of the latest snapshot containing this player. */
 	get lastArrival(): number {
-		return this.buf.length ? this.buf[this.buf.length - 1].t : -Infinity;
+		return this.lastLocalArrival;
+	}
+
+	/** True when this remote player's sim tick has stopped advancing (e.g. backgrounded tab). */
+	get sourceIdle(): boolean {
+		return this.dupStreak >= SOURCE_IDLE_DUPS;
 	}
 
 	clear(): void {
 		this.buf.length = 0;
+		this.lastLocalArrival = -Infinity;
+		this.lastTick = -1;
+		this.tickProgressed = false;
+		this.tickAnchor = 0;
+		this.obsWin.length = 0;
+		this.obsIdx = 0;
+		this.obsCount = 0;
+		this.anchorJumpStreak = 0;
+		this.dupStreak = 0;
 		this.lastUnderrun = false;
 		this.lastExtrapMs = 0;
 		this.lastOverrunMs = 0;
 	}
 
-	/** Sample at `renderMs` (already delayed). Returns false when empty. */
+	/** Sample at `renderMs` (server time, already delayed). Returns false when empty. */
 	sample(renderMs: number, out: Sample): boolean {
 		const n = this.buf.length;
 		if (n === 0) {
@@ -82,15 +203,15 @@ export class SnapshotBuffer {
 			this.lastOverrunMs = 0;
 			return false;
 		}
-		let a = this.buf[0];
+		let a = this.buf[0]!;
 		let b = a;
 		this.lastUnderrun = false;
 		this.lastExtrapMs = 0;
 		this.lastOverrunMs = 0;
 		if (renderMs <= a.t) {
 			b = a;
-		} else if (renderMs >= this.buf[n - 1].t) {
-			a = b = this.buf[n - 1];
+		} else if (renderMs >= this.buf[n - 1]!.t) {
+			a = b = this.buf[n - 1]!;
 			const over = renderMs - b.t;
 			if (over > 0) {
 				this.lastUnderrun = true;
@@ -98,9 +219,9 @@ export class SnapshotBuffer {
 			}
 		} else {
 			for (let i = 1; i < n; i++) {
-				if (this.buf[i].t >= renderMs) {
-					a = this.buf[i - 1];
-					b = this.buf[i];
+				if (this.buf[i]!.t >= renderMs) {
+					a = this.buf[i - 1]!;
+					b = this.buf[i]!;
 					break;
 				}
 			}
@@ -128,7 +249,7 @@ export class SnapshotBuffer {
 		out.runTicks = Math.round(sa.runTicks + (sb.runTicks - sa.runTicks) * t);
 		// Drop entries no longer needed (keep one before renderMs).
 		let drop = 0;
-		while (drop + 1 < this.buf.length - 1 && this.buf[drop + 1].t <= renderMs) drop++;
+		while (drop + 1 < this.buf.length - 1 && this.buf[drop + 1]!.t <= renderMs) drop++;
 		if (drop > 0) this.buf.splice(0, drop);
 		return true;
 	}

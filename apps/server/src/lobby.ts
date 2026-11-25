@@ -597,6 +597,11 @@ export class Lobby {
 			}
 			case 'admin':
 				return this.admin.handle(c, msg.action);
+			case 'ping':
+				if (typeof msg.t === 'number' && Number.isFinite(msg.t)) {
+					this.send(c, { type: 'pong', t: msg.t, serverTime: this.serverClock() });
+				}
+				return;
 			case 'pong':
 				if (typeof msg.t === 'number' && Number.isFinite(msg.t)) {
 					const rtt = t - msg.t;
@@ -663,7 +668,9 @@ export class Lobby {
 			players,
 			cvars: mapCvars(this.map),
 			records: this.mode.records(c),
-			account: resumed ? { username: resumed.account.username, admin } : null
+			account: resumed ? { username: resumed.account.username, admin } : null,
+			serverTime: this.serverClock(),
+			snapshotHz: SNAPSHOT_HZ
 		});
 		this.send(c, this.admin.mapsMessage());
 		if (!resumed && guest.taken) {
