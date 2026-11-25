@@ -244,6 +244,34 @@ describe('pre-hello caps, hello timeout, metrics, web handler, and graceful shut
 		}
 	});
 
+	it('sends full and closes with 4003 at the player cap while keeping pending caps', async () => {
+		const server = await startServer({ ...LOCAL_SERVER, maxPlayers: 1, maxPending: 2, maxPendingPerIp: 1 });
+		try {
+			const player = new TestClient(server.port);
+			await player.hello('Player', 'same-player');
+			const extra = new TestClient(server.port);
+			await extra.open();
+			await assert.rejects(new TestClient(server.port).open(), /Unexpected server response: 429/);
+			const otherIp = new TestClient(server.port, { 'cf-connecting-ip': '198.51.100.10' });
+			await otherIp.open();
+			await assert.rejects(
+				new TestClient(server.port, { 'cf-connecting-ip': '198.51.100.11' }).open(),
+				/Unexpected server response: 503/
+			);
+			extra.send({ type: 'hello', version: 1, playerId: 'extra-player', name: 'Extra' });
+			await extra.waitFor('full');
+			await extra.until(() => extra.closed);
+			assert.equal(extra.closeCode, 4003);
+			assert.equal(server.lobby.playerCount, 1);
+			await otherIp.hello('Player', 'same-player');
+			await player.until(() => player.closed);
+			assert.equal(player.closeCode, 4002);
+			assert.equal(server.lobby.playerCount, 1);
+		} finally {
+			await server.close();
+		}
+	});
+
 	it('public defaults admit 12 players from one IP and cap pending peers separately', async () => {
 		const server = await startServer({ ...LOCAL_SERVER, publicHost: true });
 		const ip = { 'cf-connecting-ip': '198.51.100.10' };
