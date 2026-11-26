@@ -315,20 +315,46 @@ describe('a tick', () => {
 	});
 });
 
+const combatPose = { tick: 1, x: 0, y: 0, z: 512, vx: 1000, vy: 0, vz: 0, pitch: 0, yaw: 0, flags: 0, status: Status.Running, stage: 0, runTicks: 0 };
+
+it('draws the confirmed combat position immediately after a large predicted overshoot', () => {
+	const s = setup();
+	s.online(PROTOCOL_VERSION, 'zombies_lowtide');
+	const host = mode().host;
+	host.setWorld(buildCollisionWorld({ brushes: [] }));
+	const at = clock;
+	s.conn.snapshot({ seq: 1, serverTimeMs: at, entries: [{ ...combatPose, id: 2, sampleTimeMs: at }] }, clock);
+	for (let seq = 2; seq <= 6; seq++) {
+		s.frames(2);
+		s.conn.snapshot({ seq, serverTimeMs: clock, entries: [] }, clock);
+	}
+	const remote = host.remotes.get(2)!;
+	expect(remote.sample.x).toBe(MAX_EXTRAP_DISTANCE);
+	s.conn.snapshot({ seq: 7, serverTimeMs: clock, entries: [
+		{ ...combatPose, id: 2, tick: 7, x: 20, vx: 0, sampleTimeMs: at + 100 }
+	] }, clock);
+	let maxGap = 0;
+	for (let frame = 0; frame < 6; frame++) {
+		s.frames(1);
+		maxGap = Math.max(maxGap, Math.abs(remote.sample.x - 20));
+	}
+	expect(maxGap).toBe(0);
+	s.game.destroy();
+});
+
 it('sends the held combat frame timestamp and samples other targets on that timeline', () => {
 	const s = setup();
 	s.online(PROTOCOL_VERSION, 'zombies_lowtide');
 	mode().host.setWorld(buildCollisionWorld({ brushes: [] }));
 	mode().isDown = () => false;
 	const at = clock;
-	const state = { tick: 1, x: 0, y: 0, z: 512, vx: 1000, vy: 0, vz: 0, pitch: 0, yaw: 0, flags: 0, status: Status.Running, stage: 0, runTicks: 0 };
 	s.conn.snapshot({ seq: 1, serverTimeMs: at, entries: [
-		{ ...state, id: 2, sampleTimeMs: at },
-		{ ...state, id: 3, sampleTimeMs: at }
+		{ ...combatPose, id: 2, sampleTimeMs: at },
+		{ ...combatPose, id: 3, sampleTimeMs: at }
 	] }, clock);
 	s.frames(24);
 	s.conn.snapshot({ seq: 2, serverTimeMs: clock, entries: [
-		{ ...state, id: 3, tick: 24, x: clock - at, sampleTimeMs: clock }
+		{ ...combatPose, id: 3, tick: 24, x: clock - at, sampleTimeMs: clock }
 	] }, clock);
 	s.frames(2);
 	const host = mode().host;

@@ -204,12 +204,19 @@ export class SnapshotBuffer {
 	}
 
 	/** Sample at `renderMs` (server time, already delayed). Returns false when empty. */
-	sample(renderMs: number, out: Sample, world?: CollisionWorld, frameMs = renderMs): boolean {
+	sample(renderMs: number, out: Sample, world?: CollisionWorld, frameMs = renderMs, blendCorrections = true): boolean {
 		const newest = this.buf.at(-1);
 		if (!newest) return false;
 
 		this.readPose(renderMs, out, world);
 		const sampledAt = this.readAt;
+		const previousRenderMs = this.lastRenderMs;
+		this.lastRenderMs = sampledAt;
+		this.lastOverrunMs = Math.max(0, renderMs - newest.t);
+		this.lastUnderrun = this.lastOverrunMs > 0;
+		this.lastExtrapMs = this.lastUnderrun && sampledAt >= renderMs - 1e-6 ? sampledAt - newest.t : 0;
+		if (!blendCorrections) return true;
+
 		const epoch = this.readEpoch;
 		const dt = Math.max(0, frameMs - this.frameAt);
 		const offset = this.correction;
@@ -218,14 +225,14 @@ export class SnapshotBuffer {
 			offset.x = offset.y = offset.z = 0;
 		} else if (this.framePredicted && this.frameNewest !== newest.s) {
 			// Reevaluate the previous frame on the updated timeline to isolate the prediction error.
-			this.readPose(this.lastRenderMs, this.revised, world);
+			this.readPose(previousRenderMs, this.revised, world);
 			if (this.readEpoch === epoch) {
 				let dx = this.previousRaw.x - this.revised.x;
 				let dy = this.previousRaw.y - this.revised.y;
 				let dz = this.previousRaw.z - this.revised.z;
 				// A released hold can also skip a span of valid motion.
-				if (this.frameHeld && sampledAt > this.lastRenderMs + dt * 1.5) {
-					this.readPose(this.lastRenderMs + dt, this.revised, world);
+				if (this.frameHeld && sampledAt > previousRenderMs + dt * 1.5) {
+					this.readPose(previousRenderMs + dt, this.revised, world);
 					if (this.readEpoch === epoch) {
 						dx += this.revised.x - out.x;
 						dy += this.revised.y - out.y;
@@ -240,10 +247,6 @@ export class SnapshotBuffer {
 				}
 			}
 		}
-		this.lastRenderMs = sampledAt;
-		this.lastOverrunMs = Math.max(0, renderMs - newest.t);
-		this.lastUnderrun = this.lastOverrunMs > 0;
-		this.lastExtrapMs = this.lastUnderrun && sampledAt >= renderMs - 1e-6 ? sampledAt - newest.t : 0;
 		this.frameEpoch = epoch;
 		this.frameNewest = newest.s;
 		this.frameAt = frameMs;
