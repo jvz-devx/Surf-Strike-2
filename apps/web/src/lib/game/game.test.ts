@@ -3,7 +3,7 @@
  * ClientMode and stubs for the renderer, sound, input and network. The modes
  * have tests of their own.
  */
-import { buildCollisionWorld, decodeState, getMap, PROTOCOL_VERSION, Status, type ClientMessage, type CollisionWorld, type PlayerState, type ServerMessage } from '@surf/shared';
+import { buildCollisionWorld, decodeState, getMap, PROTOCOL_VERSION, Status, withTeleportSeq, type ClientMessage, type CollisionWorld, type PlayerState, type ServerMessage } from '@surf/shared';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClientMode, ClientModeHost } from './modes/types.js';
 
@@ -342,7 +342,38 @@ it('draws the confirmed combat position immediately after a large predicted over
 	s.game.destroy();
 });
 
-it('sends the held combat frame timestamp and samples other targets on that timeline', () => {
+it('keeps another combat player past their teleport when a late stop shortens a prediction', () => {
+	const s = setup();
+	s.online(PROTOCOL_VERSION, 'zombies_lowtide');
+	const host = mode().host;
+	host.setWorld(buildCollisionWorld({ brushes: [] }));
+	mode().isDown = () => false;
+	const at = clock;
+	const publish = (seq: number, entries: object[]) => s.conn.snapshot({ seq, serverTimeMs: clock, entries }, clock);
+	const other = { ...combatPose, id: 3, vx: 0 };
+	publish(1, [{ ...combatPose, id: 2, sampleTimeMs: at }, { ...other, sampleTimeMs: at }]);
+	s.frames(2);
+	publish(2, []);
+	s.frames(2);
+	const teleported = { ...other, x: 400, flags: withTeleportSeq(0, 1) };
+	publish(3, [{ ...teleported, tick: 5, sampleTimeMs: clock }]);
+	s.frames(2);
+	publish(4, [{ ...teleported, tick: 7, sampleTimeMs: clock }]);
+	s.frames(2);
+	publish(5, []);
+	s.frames(2);
+	const beforeStop = host.renderServerTimeMs;
+	expect(host.remotes.get(3)?.sample.x).toBe(400);
+
+	publish(6, [{ ...combatPose, id: 2, tick: 3, x: 20, vx: 0, sampleTimeMs: at + 31.25 }]);
+	s.frames(1);
+	expect(host.renderServerTimeMs).toBeGreaterThan(beforeStop);
+	expect(host.remotes.get(2)?.sample.x).toBe(20);
+	expect(host.remotes.get(3)?.sample.x).toBe(400);
+	s.game.destroy();
+});
+
+it('reports the held combat pose while other targets keep playing', () => {
 	const s = setup();
 	s.online(PROTOCOL_VERSION, 'zombies_lowtide');
 	mode().host.setWorld(buildCollisionWorld({ brushes: [] }));
@@ -360,8 +391,8 @@ it('sends the held combat frame timestamp and samples other targets on that time
 	const host = mode().host;
 	const held = at + MAX_EXTRAP_DISTANCE;
 	expect(host.remotes.get(2)?.sample.x).toBeCloseTo(MAX_EXTRAP_DISTANCE);
-	expect(host.remotes.get(3)?.sample.x).toBeCloseTo(MAX_EXTRAP_DISTANCE);
-	expect(host.renderServerTimeMs).toBe(held);
+	expect(host.remotes.get(3)?.sample.x).toBeCloseTo(host.renderServerTimeMs - at);
+	expect(host.renderServerTimeMs).toBeGreaterThan(held);
 	expect(decodeState(s.states.at(-1)!)?.renderServerTimeMs).toBe(held);
 	host.send({ type: 'knife', origin: { x: 0, y: 0, z: 0 }, dir: { x: 1, y: 0, z: 0 } });
 	expect(s.sent.at(-1)).toMatchObject({ type: 'knife', renderServerTimeMs: held });

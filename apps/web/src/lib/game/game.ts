@@ -284,6 +284,7 @@ export class Game implements CommandContext {
 	private serverClock = new ServerClock();
 	private adaptiveDelay = new AdaptiveDelay();
 	private lastRenderServerMs = 0;
+	private lastCombatPoseMs = 0;
 	private lastClientPing = 0;
 	private netStats = new NetStats();
 	private lastNetGraph = 0;
@@ -544,6 +545,7 @@ export class Game implements CommandContext {
 			r.buf.clear();
 			r.hasSample = false;
 		}
+		this.lastCombatPoseMs = 0;
 		this.netStats.resetPlayers();
 		if (this.mode === 'solo') {
 			this.records = null;
@@ -1115,7 +1117,7 @@ export class Game implements CommandContext {
 			myName: () => this.myName(),
 			name: (id) => this.remoteName(id),
 			send: (msg) => {
-				const renderServerTimeMs = game.lastRenderServerMs;
+				const renderServerTimeMs = game.lastCombatPoseMs;
 				if (game.serverClock.isSynced && renderServerTimeMs > 0 && (msg.type === 'fire' || msg.type === 'knife' || msg.type === 'throwKnife')) {
 					game.send({ ...msg, renderServerTimeMs });
 				} else game.send(msg);
@@ -1287,7 +1289,7 @@ export class Game implements CommandContext {
 		const s = this.netState;
 		s.tick = this.tick;
 		s.spawnSeq = this.spawnSeq;
-		s.renderServerTimeMs = this.usesRenderRewind && this.serverClock.isSynced && this.lastRenderServerMs > 0 ? this.lastRenderServerMs : undefined;
+		s.renderServerTimeMs = this.usesRenderRewind && this.serverClock.isSynced && this.lastCombatPoseMs > 0 ? this.lastCombatPoseMs : undefined;
 		s.x = p.origin.x;
 		s.y = p.origin.y;
 		s.z = p.origin.z;
@@ -1427,28 +1429,26 @@ export class Game implements CommandContext {
 
 	private updateRemotes(now: number, dtMs: number): void {
 		const delayMs = this.adaptiveDelay.update(now, dtMs);
-		const requestedAt = this.serverClock.renderTime(now, delayMs);
-		let renderAt = requestedAt;
+		const renderAt = this.serverClock.renderTime(now, delayMs);
 		const combat = this.usesRenderRewind;
-		if (combat) {
-			// Attacks carry one time for every target, including Zombie Run's AI.
-			for (const rm of this.remotes.values()) {
-				if (rm.spectating || rm.buf.sourceIdle || now - rm.buf.lastArrival >= 3000
-					|| (this.client.isDown?.(rm.id) ?? false)) continue;
-				renderAt = Math.min(renderAt, rm.buf.renderLimit(requestedAt, this.world));
-			}
-		}
 		this.lastRenderServerMs = renderAt;
+		this.lastCombatPoseMs = renderAt;
 		this.netStats.setInterpDelay(delayMs);
 		if (this.remotes.size === 0) return;
 		const players = this.renderer?.players;
 		const specTarget = this.spec && !this.spec.freeFly ? this.spec.targetId : null;
-		let anyUnderrun = renderAt < requestedAt;
+		let anyUnderrun = false;
 		let anyExtrap = false;
 		for (const rm of this.remotes.values()) {
 			rm.hasSample = rm.buf.sample(renderAt, rm.sample, this.world, now, !combat);
+			const down = this.client.isDown?.(rm.id) ?? false;
 			if (rm.hasSample && !rm.spectating && !rm.buf.sourceIdle && now - rm.buf.lastArrival < 3000) {
-				if (rm.buf.lastUnderrun) anyUnderrun = true;
+				if (rm.buf.lastUnderrun) {
+					anyUnderrun = true;
+					// Protocol v3 carries one rewind time. Keep held poses eligible for it
+					// without feeding their caps back into playback for other targets.
+					if (combat && !down) this.lastCombatPoseMs = Math.min(this.lastCombatPoseMs, rm.buf.lastRenderMs);
+				}
 				if (rm.buf.lastExtrapMs > 0) anyExtrap = true;
 			}
 			if (!players) continue;
@@ -1460,7 +1460,7 @@ export class Game implements CommandContext {
 				s.status !== Status.Spectating &&
 				rm.id !== specTarget &&
 				now - rm.buf.lastArrival < 3000 &&
-				!(this.client.isDown?.(rm.id) ?? false);
+				!down;
 			const pose = this.avatarPose;
 			pose.x = s.x;
 			pose.y = s.y;
@@ -2236,6 +2236,7 @@ export class Game implements CommandContext {
 		this.serverClock.reset();
 		this.adaptiveDelay.reset();
 		this.lastRenderServerMs = 0;
+		this.lastCombatPoseMs = 0;
 		this.netStats.reset();
 		this.renderer?.players.clear();
 		this.records = null;

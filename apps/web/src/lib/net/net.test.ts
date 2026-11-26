@@ -231,7 +231,6 @@ describe('snapshot interpolation', () => {
 		expect(held).toBeCloseTo(1000 + 13.96875 + 24);
 		expect(out.x).toBeCloseTo(43.96875);
 		expect(out.y).toBeCloseTo((held - 1000) * 0.5);
-		expect(b.renderLimit(1350, world)).toBeCloseTo(held);
 		b.sample(1350, out, world);
 		expect(b.lastRenderMs).toBeCloseTo(held);
 	});
@@ -246,7 +245,6 @@ describe('snapshot interpolation', () => {
 		b.push({ ...st(20), tick: 7, vx: 0, sampleTimeMs: 1100 }, 1100);
 		b.sample(1116, out, undefined, 1316);
 		expect(out.x).toBeCloseTo(20 + (extrapolated - 20 * MAX_EXTRAP_DISTANCE / 100) * 0.8);
-		expect(b.renderLimit(1200)).toBe(1125);
 		b.push({ ...st(400), tick: 8, vx: 0, flags: withTeleportSeq(0, 1), sampleTimeMs: 1130 }, 1130);
 		b.sample(1132, out, undefined, 1332);
 		expect(out.x).toBe(400);

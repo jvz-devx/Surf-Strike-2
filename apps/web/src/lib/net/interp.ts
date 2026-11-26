@@ -138,13 +138,6 @@ export class SnapshotBuffer {
 			|| (b.x - a.x) ** 2 + (b.y - a.y) ** 2 + (b.z - a.z) ** 2 > this.snapDistance ** 2;
 	}
 
-	/** Latest reachable timestamp for the requested frame, without advancing the buffer. */
-	renderLimit(renderMs: number, world?: CollisionWorld): number {
-		const newest = this.buf.at(-1);
-		if (!newest || renderMs <= newest.t) return renderMs;
-		return newest.t + this.predict(newest, this.buf.at(-2), renderMs - newest.t, this.predicted, world);
-	}
-
 	private predict(entry: Entry, prev: Entry | undefined, overMs: number, out: Vec3, world?: CollisionWorld): number {
 		const { s } = entry;
 		out.x = s.x;
