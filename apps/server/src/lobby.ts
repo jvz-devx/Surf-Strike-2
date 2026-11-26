@@ -38,6 +38,7 @@ import {
 	MAX_CHAT,
 	MAX_NAME,
 	MAX_PLAYERS,
+	MAX_REWIND_RTT_MS,
 	MAX_VELOCITY_HARD,
 	modeOf,
 	POINTS_SCALE,
@@ -64,7 +65,7 @@ import { Shop } from './shop.ts';
 import { isClientTransport, WsClientTransport, type ClientTransport } from './transport.ts';
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
 import { observeRenderTime } from './modes/types.ts';
-import { MAX_REWIND_RTT_MS, PeerRtt } from './peer-rtt.ts';
+import { PeerRtt } from './peer-rtt.ts';
 import { JUMP_SLACK, mapTeleport, nearPose, type ZoneKind } from './validation.ts';
 
 export { SNAPSHOT_HZ };

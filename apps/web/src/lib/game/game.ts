@@ -16,7 +16,9 @@ import {
 	formatTenths,
 	formatTicks,
 	getMap,
+	HNS_MAX_REWIND_MS,
 	hullInBox,
+	INF_HISTORY_MS,
 	CLOSE_IP_LIMIT,
 	MAP_IDS,
 	mapCvars,
@@ -24,6 +26,7 @@ import {
 	MAPS,
 	MapRotation,
 	MAX_CHAT,
+	MAX_REWIND_RTT_MS,
 	RTV_REQUEST_DURATION,
 	MAX_TICKS_PER_FRAME,
 	HULL_MIN,
@@ -34,6 +37,7 @@ import {
 	passwordError,
 	playerMove,
 	playerRest,
+	renderTimeBudgetMs,
 	usernameError,
 	mapTitle,
 	sanitizeLoadout,
@@ -45,6 +49,7 @@ import {
 	TICK_RATE,
 	VIEW_HEIGHT,
 	withTeleportSeq,
+	ZM_HISTORY_MS,
 	type AdminAction,
 	type ClientMessage,
 	type CollisionWorld,
@@ -1117,10 +1122,11 @@ export class Game implements CommandContext {
 			myName: () => this.myName(),
 			name: (id) => this.remoteName(id),
 			send: (msg) => {
-				const renderServerTimeMs = game.lastCombatPoseMs;
-				if (game.serverClock.isSynced && renderServerTimeMs > 0 && (msg.type === 'fire' || msg.type === 'knife' || msg.type === 'throwKnife')) {
-					game.send({ ...msg, renderServerTimeMs });
-				} else game.send(msg);
+				if (msg.type === 'fire' || msg.type === 'knife' || msg.type === 'throwKnife') {
+					const renderServerTimeMs = game.combatRenderClaim(performance.now());
+					if (renderServerTimeMs !== undefined) return game.send({ ...msg, renderServerTimeMs });
+				}
+				game.send(msg);
 			},
 			notice: (text) => this.notice(text),
 			print: (text, kind) => this.print(text, kind),
@@ -1279,17 +1285,17 @@ export class Game implements CommandContext {
 			}
 		}
 		// State goes out every tick: 64 Hz (docs/architecture.md).
-		if (this.mode === 'online') this.sendState();
+		if (this.mode === 'online') this.sendState(now);
 		this.tick++;
 	}
 
-	private sendState(): void {
+	private sendState(now = performance.now()): void {
 		if (!this.net) return;
 		const p = this.player;
 		const s = this.netState;
 		s.tick = this.tick;
 		s.spawnSeq = this.spawnSeq;
-		s.renderServerTimeMs = this.usesRenderRewind && this.serverClock.isSynced && this.lastCombatPoseMs > 0 ? this.lastCombatPoseMs : undefined;
+		s.renderServerTimeMs = this.combatRenderClaim(now);
 		s.x = p.origin.x;
 		s.y = p.origin.y;
 		s.z = p.origin.z;
@@ -1422,15 +1428,32 @@ export class Game implements CommandContext {
 		return n.z > 0.1 && n.z < 0.7 ? n : null;
 	}
 
-	private get usesRenderRewind(): boolean {
-		const mode = this.gameMode.id;
-		return mode === 'infected' || mode === 'hns' || mode === 'zombies';
+	private get combatHistoryMs(): number | undefined {
+		switch (this.gameMode.id) {
+			case 'infected': return INF_HISTORY_MS;
+			case 'hns': return HNS_MAX_REWIND_MS;
+			case 'zombies': return ZM_HISTORY_MS;
+		}
+	}
+
+	private combatRenderClaim(now: number): number | undefined {
+		const historyMs = this.combatHistoryMs;
+		if (historyMs === undefined || !this.serverClock.isSynced || this.lastCombatPoseMs <= 0) return undefined;
+		const ping = this.hud.scoreboard.find((row) => row.id === this.selfId)?.ping;
+		const recentRtt = this.serverClock.minRtt;
+		const pathRtt = Math.max(0, recentRtt >= 0 ? recentRtt : (ping ?? 0));
+		// Scoreboard ping is the server's transport estimate rounded to the nearest ms.
+		const rewindRtt = Math.min(MAX_REWIND_RTT_MS, ping === undefined ? pathRtt : Math.max(0, ping - 0.5));
+		const maxAge = Math.min(historyMs, renderTimeBudgetMs(rewindRtt));
+		// The clock envelope includes downlink transit, so add the full RTT for receipt.
+		const receiveAt = this.serverClock.serverTime(now) + pathRtt;
+		return Math.max(this.lastCombatPoseMs, receiveAt - maxAge);
 	}
 
 	private updateRemotes(now: number, dtMs: number): void {
 		const delayMs = this.adaptiveDelay.update(now, dtMs);
 		const renderAt = this.serverClock.renderTime(now, delayMs);
-		const combat = this.usesRenderRewind;
+		const combat = this.combatHistoryMs !== undefined;
 		this.lastRenderServerMs = renderAt;
 		this.lastCombatPoseMs = renderAt;
 		this.netStats.setInterpDelay(delayMs);

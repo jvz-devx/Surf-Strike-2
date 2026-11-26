@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { it } from 'node:test';
-import { INITIAL_RTT_MS, MAX_REWIND_RTT_MS, PeerRtt } from './peer-rtt.ts';
+import { MAX_REWIND_RTT_MS } from '@surf/shared';
+import { INITIAL_RTT_MS, PeerRtt } from './peer-rtt.ts';
 import { startServer } from './server.ts';
 import { TestClient, testMap } from './test-helpers.ts';
 

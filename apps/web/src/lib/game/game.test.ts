@@ -3,7 +3,7 @@
  * ClientMode and stubs for the renderer, sound, input and network. The modes
  * have tests of their own.
  */
-import { buildCollisionWorld, decodeState, getMap, PROTOCOL_VERSION, Status, withTeleportSeq, type ClientMessage, type CollisionWorld, type PlayerState, type ServerMessage } from '@surf/shared';
+import { buildCollisionWorld, clampRenderTime, decodeState, getMap, PROTOCOL_VERSION, Status, withTeleportSeq, ZM_HISTORY_MS, type ClientMessage, type CollisionWorld, type PlayerState, type ServerMessage } from '@surf/shared';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClientMode, ClientModeHost } from './modes/types.js';
 
@@ -383,9 +383,9 @@ it('reports the held combat pose while other targets keep playing', () => {
 		{ ...combatPose, id: 2, sampleTimeMs: at },
 		{ ...combatPose, id: 3, sampleTimeMs: at }
 	] }, clock);
-	s.frames(24);
+	s.frames(16);
 	s.conn.snapshot({ seq: 2, serverTimeMs: clock, entries: [
-		{ ...combatPose, id: 3, tick: 24, x: clock - at, sampleTimeMs: clock }
+		{ ...combatPose, id: 3, tick: 16, x: clock - at, sampleTimeMs: clock }
 	] }, clock);
 	s.frames(2);
 	const host = mode().host;
@@ -396,6 +396,36 @@ it('reports the held combat pose while other targets keep playing', () => {
 	expect(decodeState(s.states.at(-1)!)?.renderServerTimeMs).toBe(held);
 	host.send({ type: 'knife', origin: { x: 0, y: 0, z: 0 }, dir: { x: 1, y: 0, z: 0 } });
 	expect(s.sent.at(-1)).toMatchObject({ type: 'knife', renderServerTimeMs: held });
+	s.game.destroy();
+});
+
+it.each([
+	{ rtt: 40, ms: 272 },
+	{ rtt: 220, ms: 382 }
+])('bounds stale state and attack claims to $ms ms at $rtt ms RTT', ({ rtt, ms }) => {
+	const s = setup();
+	s.online(PROTOCOL_VERSION, 'zombies_lowtide');
+	const host = mode().host;
+	host.setWorld(buildCollisionWorld({ brushes: [] }));
+	const downlink = rtt / 2;
+	const at = clock - downlink;
+	s.conn.message({ type: 'pong', t: clock - rtt, serverTime: at });
+	s.conn.snapshot({ seq: 1, serverTimeMs: at, entries: [{ ...combatPose, id: 2, sampleTimeMs: at }] }, clock);
+	s.frames(22);
+	for (const frames of [2, 32]) {
+		s.frames(frames);
+		const receivedAt = clock + rtt - downlink;
+		const oldest = receivedAt - ms;
+		const held = host.remotes.get(2)!;
+		expect(held.sample.x).toBe(MAX_EXTRAP_DISTANCE);
+		expect(at + MAX_EXTRAP_DISTANCE).toBeLessThan(oldest);
+		const stateClaim = decodeState(s.states.at(-1)!)?.renderServerTimeMs;
+		expect(stateClaim).toBe(oldest);
+		host.send({ type: 'knife', origin: { x: 0, y: 0, z: 0 }, dir: { x: 1, y: 0, z: 0 } });
+		const attack = s.sent.at(-1);
+		expect(attack).toMatchObject({ type: 'knife', renderServerTimeMs: oldest });
+		expect(clampRenderTime(stateClaim!, receivedAt, Math.min(rtt, 150), ZM_HISTORY_MS)).toBe(oldest);
+	}
 	s.game.destroy();
 });
 

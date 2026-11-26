@@ -2,8 +2,6 @@ import { randomBytes } from 'node:crypto';
 
 /** Conservative RTT used while no recent transport probe has been answered. */
 export const INITIAL_RTT_MS = 50;
-/** Limit combat rewind even if a custom WebSocket client delays every pong. */
-export const MAX_REWIND_RTT_MS = 150;
 
 const PROBE_TIMEOUT_MS = 2000;
 const SAMPLE_WINDOW_MS = 5000;

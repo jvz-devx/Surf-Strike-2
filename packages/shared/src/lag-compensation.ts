@@ -1,3 +1,5 @@
+/** Limit how much transport RTT contributes to the combat rewind window. */
+export const MAX_REWIND_RTT_MS = 150;
 /** Largest client interpolation delay accepted by render-time rewind. */
 export const MAX_RENDER_INTERPOLATION_MS = 200;
 /** Allow for clock estimation and the frame between aiming and sending the shot. */
