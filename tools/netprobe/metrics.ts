@@ -1,5 +1,5 @@
 import type { Rendered } from './adapter.ts';
-import { BotPath, distance, type Point, type Teleport } from './path.ts';
+import { distance, type BotPath, type Point, type Teleport } from './path.ts';
 
 export class Series {
 	private values: number[] = [];
@@ -60,8 +60,10 @@ interface ObservedTeleport {
 	slide: boolean;
 }
 
+export type TruthPath = Pick<BotPath, 'at' | 'project' | 'teleports'>;
+
 interface BotMetrics {
-	path: BotPath;
+	path: TruthPath;
 	previous: Frame | null;
 	underruns: Runs;
 	freezes: Runs;
@@ -131,7 +133,7 @@ export class ObserverMetrics {
 	readonly rtt = new Series();
 	readonly frameIntervals = new Series();
 
-	constructor(paths: ReadonlyMap<number, BotPath>, measurementStart: number, measurementEnd: number) {
+	constructor(paths: ReadonlyMap<number, TruthPath>, measurementStart: number, measurementEnd: number) {
 		for (const [id, path] of paths) {
 			// Count teleports with a complete observation window.
 			const pending = path.teleports(measurementStart, measurementEnd - TELEPORT_WINDOW_MS).map((event) => ({ event, slide: false }));

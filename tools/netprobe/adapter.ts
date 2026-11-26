@@ -1,4 +1,4 @@
-import { decodeSnapshot, encodeState, INTERP_DELAY_MS, type NetState } from './wire-v1.ts';
+import { decodeSnapshot, encodeState, INTERP_DELAY_MS, type NetState, type SnapshotEntry } from './wire-v1.ts';
 import { emptySample, SnapshotBuffer } from './interp-v1.ts';
 import type { Point } from './path.ts';
 import type { ClockPong, Welcome } from './session.ts';
@@ -23,37 +23,39 @@ export interface Adapter {
 	observer(botIds: ReadonlySet<number>): Observer;
 }
 
-const v1: Adapter = {
-	encode: encodeState,
-	observer(botIds) {
-		const buffers = new Map<number, SnapshotBuffer>();
-		const pose = emptySample();
-		return {
-			snapshot(data, arrivalMs) {
-				const entries = decodeSnapshot(data);
-				if (!entries) return false;
-				for (const entry of entries) {
-					if (!botIds.has(entry.id)) continue;
-					let buffer = buffers.get(entry.id);
-					if (!buffer) buffers.set(entry.id, (buffer = new SnapshotBuffer()));
-					buffer.push(entry, arrivalMs);
-				}
-				return true;
-			},
-			render(id, nowMs) {
-				const buffer = buffers.get(id);
-				const target = nowMs - INTERP_DELAY_MS;
-				const underrun = !buffer || target > buffer.lastArrival;
-				const visible = buffer && nowMs - buffer.lastArrival < 3000 && buffer.sample(target, pose);
-				const point = visible ? { x: pose.x, y: pose.y, z: pose.z } : null;
-				return { point, delayMs: INTERP_DELAY_MS, underrun, held: underrun };
-			},
-			clear() {
-				buffers.clear();
+export function arrivalObserver(
+	botIds: ReadonlySet<number>,
+	decode: (data: ArrayBuffer) => SnapshotEntry[] | null = decodeSnapshot
+): Observer {
+	const buffers = new Map<number, SnapshotBuffer>();
+	const pose = emptySample();
+	return {
+		snapshot(data, arrivalMs) {
+			const entries = decode(data);
+			if (!entries) return false;
+			for (const entry of entries) {
+				if (!botIds.has(entry.id)) continue;
+				let buffer = buffers.get(entry.id);
+				if (!buffer) buffers.set(entry.id, (buffer = new SnapshotBuffer()));
+				buffer.push(entry, arrivalMs);
 			}
-		};
-	}
-};
+			return true;
+		},
+		render(id, nowMs) {
+			const buffer = buffers.get(id);
+			const target = nowMs - INTERP_DELAY_MS;
+			const underrun = !buffer || target > buffer.lastArrival;
+			const visible = buffer && nowMs - buffer.lastArrival < 3000 && buffer.sample(target, pose);
+			const point = visible ? { x: pose.x, y: pose.y, z: pose.z } : null;
+			return { point, delayMs: INTERP_DELAY_MS, underrun, held: underrun };
+		},
+		clear() {
+			buffers.clear();
+		}
+	};
+}
+
+const v1: Adapter = { encode: encodeState, observer: arrivalObserver };
 
 export async function adapterFor(version: number): Promise<Adapter> {
 	if (version === 1) return v1;

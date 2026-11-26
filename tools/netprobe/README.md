@@ -15,6 +15,18 @@ Bots use the browser's fixed-step accumulator at 64 Hz with a 60 Hz sender frame
 
 Protocol v1 uses the wire format and the unmodified interpolation logic from `a64f384`. The tool reads the protocol version from `/health` before connecting. For v2 and v3, the adapter loads the browser's server clock, adaptive delay and interpolation buffer. The adapter uses server-assigned sample times when present in v3 snapshots.
 
+## Record and replay
+
+```sh
+pnpm netprobe --url wss://HOST/ws --bots 8 --seconds 180 --trace
+pnpm netprobe replay path/to/run.trace.json
+pnpm --filter server exec tsx ../../tools/net-bench.ts --duration 45 --replay
+```
+
+`--trace` writes a separate file with the observer's raw snapshots, clock messages, and render-frame timestamps. It includes the warm-up and can grow by several megabytes per minute. The ordinary result JSON contains aggregates and cannot be replayed.
+
+On v2 and v3 captures, replay compares three controllers on the same received poses and frame cadence. `fixed` uses the v1 arrival-timed buffer with 100 ms delay. `previous` uses the adaptive controller and 50 ms extrapolation limit from `9f0a37c`. `tuned` follows the current browser code. A v1 capture only replays the fixed controller because its packets lack the server timestamps required by the adaptive controllers. Net-bench can run the same replay against its local impairment profiles.
+
 ## Metrics
 
 - **Position error** compares each rendered pose with the true pose at the observer's target delay. It includes transport and relay age, buffer timing error, and the effect of teleport timing. **Path error** is the remaining spatial error at the closest point on the known path within the last two seconds.

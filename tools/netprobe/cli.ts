@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { runProbe, type Config, type Result } from './run.ts';
+import { replayProbe, type ProbeTrace } from './trace.ts';
 
 const usage = `pnpm netprobe --url wss://HOST/ws [--bots 8] [--seconds 300]
   --fps 60,144     Observer render rates. Both use the same observer socket.
@@ -12,9 +13,11 @@ const usage = `pnpm netprobe --url wss://HOST/ws [--bots 8] [--seconds 300]
   --burst 180/8000
                   Hold traffic for 180 ms every 8000 ms.
   --seed 42       Reuse the pseudo-random delay sequence.
+  --trace         Save raw observer arrivals and render frames to a sidecar.
   --out DIR       JSON directory. Defaults to tools/netprobe/results.
 
-pnpm netprobe compare BASE.json TEST.json`;
+pnpm netprobe compare BASE.json TEST.json
+pnpm netprobe replay TRACE.json [TRACE.json ...]`;
 
 function numberOption(name: string, value: string, min: number, max: number, integer = false): number {
 	const n = Number(value);
@@ -28,7 +31,7 @@ function inputPath(path: string): string {
 	return resolve(process.env.INIT_CWD ?? process.cwd(), path);
 }
 
-function parseRun(args: string[]): { config: Config; out: string } | null {
+function parseRun(args: string[]): { config: Config; out: string; trace: boolean } | null {
 	const { values } = parseArgs({
 		args,
 		options: {
@@ -42,6 +45,7 @@ function parseRun(args: string[]): { config: Config; out: string } | null {
 			burst: { type: 'string' },
 			seed: { type: 'string', default: '42' },
 			out: { type: 'string' },
+			trace: { type: 'boolean', default: false },
 			help: { type: 'boolean', short: 'h' }
 		}
 	});
@@ -72,6 +76,7 @@ function parseRun(args: string[]): { config: Config; out: string } | null {
 			jitterMs: numberOption('jitter', values.jitter, 0, 1000),
 			seed: numberOption('seed', values.seed, 0, 0xffffffff, true)
 		},
+		trace: values.trace,
 		out: values.out ? inputPath(values.out) : fileURLToPath(new URL('./results/', import.meta.url))
 	};
 }
@@ -126,6 +131,22 @@ async function resultAt(path: string): Promise<Result> {
 
 async function main(): Promise<void> {
 	const args = process.argv.slice(2);
+	if (args[0] === 'replay') {
+		if (args.length < 2) throw new Error('Usage: pnpm netprobe replay TRACE.json [TRACE.json ...]');
+		for (const path of args.slice(1)) {
+			const trace = JSON.parse(await readFile(inputPath(path), 'utf8')) as ProbeTrace;
+			console.log(path);
+			for (const { fps, controllers } of replayProbe(trace)) {
+				console.log(`${fps} Hz, v${trace.protocol}`);
+				table(Object.fromEntries(Object.entries(controllers).map(([name, metrics]) => [name, {
+					'Effective delay p50 / p95 (ms)': `${fmt(metrics.effectiveDelayMs.p50)} / ${fmt(metrics.effectiveDelayMs.p95)}`,
+					'Freeze (bot-s)': fmt(metrics.freezes.totalMs / 1000, 3),
+					'Position error RMS (u)': fmt(metrics.positionErrorU.rms)
+				}])));
+			}
+		}
+		return;
+	}
 	if (args[0] === 'compare') {
 		if (args.length !== 3) throw new Error('Usage: pnpm netprobe compare BASE.json TEST.json');
 		const [base, test] = await Promise.all(args.slice(1).map(resultAt));
@@ -155,12 +176,18 @@ async function main(): Promise<void> {
 	process.once('SIGTERM', interrupt);
 	try {
 		await mkdir(options.out, { recursive: true });
-		const result = await runProbe(options.config, stop.signal);
+		const { result, trace } = await runProbe(options.config, stop.signal, options.trace);
 		const stamp = result.startedAt.replace(/[:.]/g, '-');
 		const host = new URL(result.url).hostname.replace(/[^a-zA-Z0-9.-]/g, '_');
 		const { lossPct, jitterMs, burst } = result.settings;
 		const profile = `loss${lossPct}-jitter${jitterMs}${burst ? `-burst${burst.durationMs}x${burst.periodMs}` : ''}`;
-		const file = resolve(options.out, `${stamp}-${host}-${profile}.json`);
+		const name = `${stamp}-${host}-${profile}`;
+		const file = resolve(options.out, `${name}.json`);
+		if (trace) {
+			const traceFile = resolve(options.out, `${name}.trace.json`);
+			await writeFile(traceFile, JSON.stringify(trace) + '\n', { flag: 'wx' });
+			console.log(traceFile);
+		}
 		await writeFile(file, JSON.stringify(result, null, 2) + '\n', { flag: 'wx' });
 		console.log(`v${result.protocol}, ${result.settings.bots} bots, ${fmt(result.actualSeconds)} s, ${result.receivedSnapshots} snapshots`);
 		table(Object.fromEntries(result.observers.map((o) => [`${o.fps} Hz`, rows(o, result)])));

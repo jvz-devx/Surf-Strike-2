@@ -5,6 +5,7 @@ import { ObserverMetrics } from './metrics.ts';
 import { BotPath } from './path.ts';
 import { startRelay, type Impairment, type Relay } from './relay.ts';
 import { Peer } from './session.ts';
+import type { TraceEvent, ProbeTrace } from './trace.ts';
 import { BIN_SNAPSHOT } from './wire-v1.ts';
 
 const TICK_RATE = 64;
@@ -48,8 +49,9 @@ function frameClock(start: number, fps: number) {
 	};
 }
 
-export async function runProbe(config: Config, signal: AbortSignal) {
+export async function runProbe(config: Config, signal: AbortSignal, recordTrace = false) {
 	const startedAt = new Date().toISOString();
+	const events: TraceEvent[] | undefined = recordTrace ? [] : undefined;
 	const before = await health(config.url, signal);
 	const adapter = await adapterFor(before.version);
 	const failed = new AbortController();
@@ -61,6 +63,7 @@ export async function runProbe(config: Config, signal: AbortSignal) {
 	const mapChanges: { elapsedMs: number; map: string }[] = [];
 	let observerPeer: Peer | undefined;
 	let relay: Relay | null = null;
+	let start = 0;
 	let startMap = before.map;
 	let startMode = before.mode;
 	let received = 0;
@@ -101,6 +104,7 @@ export async function runProbe(config: Config, signal: AbortSignal) {
 					malformed++;
 					return;
 				}
+				if (events && arrival <= measuredEnd) events.push([arrival, 'snapshot', Buffer.from(data).toString('base64')]);
 				if (measuring) {
 					received++;
 					snapshotBytes += data.byteLength;
@@ -118,6 +122,15 @@ export async function runProbe(config: Config, signal: AbortSignal) {
 			},
 			message(message, arrival) {
 				if (message.type === 'welcome' || message.type === 'pong') {
+					if (events && arrival <= measuredEnd) {
+						const timing = message.type === 'pong'
+							? { type: message.type, t: message.t, serverTime: message.serverTime }
+							: {
+								type: message.type, selfId: message.selfId, map: message.map,
+								serverTime: message.serverTime, snapshotHz: message.snapshotHz
+							};
+						events.push([arrival, 'timing', timing]);
+					}
 					for (const { observer } of renderers) observer.timingMessage?.(message, arrival);
 					if (message.type === 'welcome' && before.version >= 2) {
 						observerPeer?.clockPing(arrival);
@@ -126,6 +139,7 @@ export async function runProbe(config: Config, signal: AbortSignal) {
 				}
 				if (message.type === 'leave' && ids.has(message.id)) left.add(message.id);
 				if (message.type === 'mapChange') {
+					if (events && arrival <= measuredEnd) events.push([arrival, 'clear']);
 					if (Number.isFinite(measuredStart)) mapChanges.push({ elapsedMs: arrival - (measuredStart - WARMUP_MS), map: message.map });
 					for (const { observer } of renderers) observer.clear();
 				}
@@ -134,9 +148,9 @@ export async function runProbe(config: Config, signal: AbortSignal) {
 		const observerWelcome = await observerPeer.welcome;
 		startMap = observerWelcome.map;
 		startMode = observerWelcome.mode ?? before.mode;
-	startMapTimeLeft = observerWelcome.mapTimeLeft ?? null;
+		startMapTimeLeft = observerWelcome.mapTimeLeft ?? null;
 		snapshotHz = observerWelcome.snapshotHz ?? null;
-		const start = performance.now();
+		start = performance.now();
 		measuredStart = start + WARMUP_MS;
 		stopAt = measuredEnd = measuredStart + config.seconds * 1000;
 
@@ -183,9 +197,10 @@ export async function runProbe(config: Config, signal: AbortSignal) {
 				}
 				next = Math.min(next, bot.clock.next);
 			}
-			for (const { clock, metrics, observer } of renderFrames) {
+			for (const { clock, metrics, observer, fps } of renderFrames) {
 				if (now >= clock.next) {
 					const dt = clock.step(now);
+					events?.push([now, 'frame', fps, dt]);
 					observer.beginFrame?.(now, dt);
 					if (now >= measuredStart) metrics.frame(now - start, (id) => observer.render(id, now));
 				}
@@ -224,7 +239,11 @@ export async function runProbe(config: Config, signal: AbortSignal) {
 	}
 	if (received === 0) throw new Error(`No valid snapshots during measurement (${malformed} unreadable)`);
 	const { url, ...settings } = config;
-	return {
+	const trace: ProbeTrace | undefined = events && {
+		schema: 1, protocol: before.version, start, measuredStart, measuredEnd,
+		botIds: [...paths.keys()], fps: config.fps, events
+	};
+	const result = {
 		schema: 1,
 		startedAt,
 		url: url.href,
@@ -245,6 +264,7 @@ export async function runProbe(config: Config, signal: AbortSignal) {
 		cleanup,
 		observers: renderers.map(({ fps, metrics }) => ({ fps, ...metrics!.summary() }))
 	};
+	return { result, trace };
 }
 
-export type Result = Awaited<ReturnType<typeof runProbe>>;
+export type Result = Awaited<ReturnType<typeof runProbe>>['result'];

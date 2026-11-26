@@ -1,17 +1,25 @@
 import type { Adapter, Rendered } from './adapter.ts';
 import { decodeSnapshot, encodeState, withTeleportSeq, type NetState } from '@surf/shared';
-import { ServerClock } from '../../apps/web/src/lib/net/clock.ts';
+import { ServerClock, type SnapshotClockObs } from '../../apps/web/src/lib/net/clock.ts';
 import { AdaptiveDelay } from '../../apps/web/src/lib/net/adaptive.ts';
-import { SnapshotBuffer, emptySample } from '../../apps/web/src/lib/net/interp.ts';
+import { SnapshotBuffer, emptySample, MAX_EXTRAP_MS } from '../../apps/web/src/lib/net/interp.ts';
 
-export function loadV2Adapter(): Adapter {
+interface DelayController extends Pick<AdaptiveDelay, 'reset' | 'update' | 'currentMs'> {
+	observeSnapshot(nowMs: number, timing: SnapshotClockObs & { jitterMs: number; rttMs: number }): void;
+	observeUnderrun(nowMs: number, overrunMs: number, rttMs: number): void;
+}
+
+export function loadV2Adapter(
+	makeDelay: () => DelayController = () => new AdaptiveDelay(),
+	maxExtrapMs = MAX_EXTRAP_MS
+): Adapter {
 	return {
 		encode(state, teleportCount) {
 			return encodeState({ ...state, flags: withTeleportSeq(state.flags, teleportCount) } as NetState);
 		},
 		observer(botIds) {
 			const clock = new ServerClock();
-			const delay = new AdaptiveDelay();
+			const delay = makeDelay();
 			const rendered = new Map<number, Rendered>();
 			const buffers = new Map<number, SnapshotBuffer>();
 			const pose = emptySample();
@@ -34,7 +42,11 @@ export function loadV2Adapter(): Adapter {
 					for (const entry of frame.entries) {
 						if (!botIds.has(entry.id)) continue;
 						let buffer = buffers.get(entry.id);
-						if (!buffer) buffers.set(entry.id, (buffer = new SnapshotBuffer()));
+						if (!buffer) {
+							buffer = new SnapshotBuffer();
+							buffer.maxExtrapMs = maxExtrapMs;
+							buffers.set(entry.id, buffer);
+						}
 						buffer.push(entry, frame.serverTimeMs, arrivalMs);
 					}
 					return true;

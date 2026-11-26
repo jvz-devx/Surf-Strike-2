@@ -4,7 +4,7 @@
  * proxy (no sudo, no OS firewall/netem changes) and prints per-scenario stats.
  *
  * Usage:
- *   pnpm --filter server exec tsx ../../tools/net-bench.ts [--duration 6] [--json] [--scenario fiber]
+ *   pnpm --filter server exec tsx ../../tools/net-bench.ts [--duration 6] [--json] [--scenario fiber] [--replay]
  */
 import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
@@ -31,6 +31,8 @@ import { AdaptiveDelay } from '../apps/web/src/lib/net/adaptive.ts';
 import { ServerClock } from '../apps/web/src/lib/net/clock.ts';
 import { emptySample, SnapshotBuffer } from '../apps/web/src/lib/net/interp.ts';
 import { NetStats } from '../apps/web/src/lib/net/stats.ts';
+import { replayProbe, type TraceEvent } from './netprobe/trace.ts';
+import type { TruthPath } from './netprobe/metrics.ts';
 
 const serverRequire = createRequire(new URL('../apps/server/package.json', import.meta.url));
 const { WebSocket, WebSocketServer } = serverRequire('ws') as {
@@ -328,6 +330,44 @@ function evalTrajectory(kind: TrajectoryKind, elapsedSec: number, prevElapsedSec
 	};
 }
 
+function benchTruth(kind: TrajectoryKind): TruthPath {
+	const at = (ms: number) => evalTrajectory(kind, Math.max(0, ms) / 1000, -1);
+	return {
+		at,
+		teleports: () => [],
+		project(now, point, delay) {
+			if (kind === 'teleport400') {
+				// Each branch repeats every second, so recover path error but report no delay.
+				let closest = { ms: now - delay, error: Infinity, identifiable: false };
+				for (let from = Math.max(0, Math.floor((now - 2000) / 500)) * 500; from <= now; from += 500) {
+					const origin = at(from);
+					const lo = Math.max(0, now - 2000 - from);
+					const hi = Math.min(500, now - from);
+					if (lo > hi) continue;
+					const age = Math.max(lo, Math.min(hi, (point.x - origin.x) * 1000 / origin.vx));
+					const error = Math.hypot(point.x - (origin.x + origin.vx * age / 1000), point.y - origin.y, point.z - origin.z);
+					if (error < closest.error || (error === closest.error &&
+						Math.abs(now - delay - from - age) < Math.abs(now - delay - closest.ms))) {
+						closest = { ms: from + age, error, identifiable: false };
+					}
+				}
+				return closest;
+			}
+			let ms: number;
+			if (kind === 'surf1200') {
+				const phaseMs = Math.atan2(point.y, point.x) * 500;
+				const periodMs = Math.PI * 1000;
+				ms = phaseMs + periodMs * Math.floor((now - phaseMs) / periodMs);
+			} else {
+				ms = point.x * 1000 / 265;
+			}
+			const truth = at(ms);
+			const error = Math.hypot(point.x - truth.x, point.y - truth.y, point.z - truth.z);
+			return { ms, error, identifiable: ms >= 0 && ms <= now };
+		}
+	};
+}
+
 // ---------------------------------------------------------------------------
 // Headless bots and scenario runner
 
@@ -339,6 +379,7 @@ interface ScenarioDef {
 }
 
 interface ScenarioResult {
+	replay?: ReturnType<typeof replayProbe>[number]['controllers'];
 	scenario: string;
 	players: number;
 	snapBytes: number;
@@ -459,7 +500,7 @@ async function connectClient(
 	return { ws, ...welcome };
 }
 
-async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz = SNAPSHOT_HZ): Promise<ScenarioResult> {
+async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz: number, replay: boolean): Promise<ScenarioResult> {
 	const server = await startServer({
 		port: 0,
 		host: '127.0.0.1',
@@ -530,6 +571,10 @@ async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz = S
 		if (observer.snapshotHz) stats.setNominalSnapHz(observer.snapshotHz);
 		stats.setInterpDelay(adaptive.currentMs);
 		const sample = emptySample();
+		const events: TraceEvent[] | undefined = replay ? [[observer.welcomeArrival, 'timing', {
+			type: 'welcome', selfId: observer.selfId, map: 'surf_bench',
+			serverTime: observer.serverTime, snapshotHz: observer.snapshotHz
+		}]] : undefined;
 
 		const gaps: number[] = [];
 		let lastSnapArr = -Infinity;
@@ -553,6 +598,7 @@ async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz = S
 			if (!isBinary) {
 				const msg = JSON.parse(Buffer.from(data as ArrayBuffer).toString('utf8')) as ServerMessage;
 				if (msg.type === 'pong') {
+					events?.push([arr, 'timing', msg]);
 					const rtt = clock.observePong(msg.t, arr, msg.serverTime);
 					if (rtt >= 0) stats.recordRtt(rtt);
 				} else if (msg.type === 'scoreboard') {
@@ -565,6 +611,7 @@ async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz = S
 			if (ab.byteLength < 1 || new Uint8Array(ab, 0, 1)[0] !== BIN_SNAPSHOT) return;
 			const frame = decodeSnapshot(ab);
 			if (!frame) return;
+			events?.push([arr, 'snapshot', Buffer.from(ab).toString('base64')]);
 			totalSnapBytes += ab.byteLength;
 			snapCount++;
 			if (Number.isFinite(lastSnapArr)) gaps.push(arr - lastSnapArr);
@@ -578,11 +625,7 @@ async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz = S
 			});
 			if (!obs.accepted) return;
 			adaptive.observeSnapshot(arr, {
-				jitterMs: clock.jitter,
-				rttMs: clock.rtt,
-				arrivalGapMs: obs.arrivalGapMs,
-				transitExcessMs: obs.transitExcessMs,
-				seqGap: obs.seqGap
+				...obs, jitterMs: clock.jitter, rttMs: clock.rtt
 			});
 			const te = frame.entries.find((e) => e.id === target.selfId);
 			if (te) buf.push(te, frame.serverTimeMs, arr);
@@ -652,14 +695,15 @@ async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz = S
 			const now = performance.now();
 			const dt = now - lastObsFrame;
 			lastObsFrame = now;
+			events?.push([now, 'frame', 60, dt]);
 			const interpMs = adaptive.update(now, dt);
 			stats.setInterpDelay(interpMs);
-			const renderAt = clock.serverTime(now) - interpMs;
+			const renderAt = clock.renderTime(now, interpMs);
 			const ok = buf.sample(renderAt, sample);
 			if (!ok) return;
 			const underrun = buf.lastUnderrun;
 			const extrapolating = buf.lastExtrapMs > 0;
-			if (underrun) adaptive.observeUnderrun(now, buf.lastOverrunMs, clock.rtt);
+			if (underrun && !buf.sourceIdle) adaptive.observeUnderrun(now, buf.lastOverrunMs, clock.rtt);
 			stats.recordFrame(now, dt, underrun, extrapolating);
 			if (now - startMs >= warmupMs) {
 				frames.push({
@@ -768,7 +812,12 @@ async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz = S
 				: 0;
 		const sortedGaps = [...gaps].sort((a, b) => a - b);
 
+		const replayed = events && replayProbe({
+			schema: 1, protocol: PROTOCOL_VERSION, start: startMs, measuredStart: startMs + warmupMs,
+			measuredEnd: endMs, botIds: [target.selfId], fps: [60], events
+		}, new Map([[target.selfId, benchTruth(def.trajectory)]]));
 		return {
+			replay: replayed?.[0].controllers,
 			scenario: def.name,
 			players: def.players,
 			snapBytes: snapCount > 0 ? Math.round(totalSnapBytes / snapCount) : 0,
@@ -802,11 +851,13 @@ async function main(): Promise<void> {
 	const args = process.argv.slice(2);
 	let duration = 5;
 	let json = false;
+	let replay = false;
 	let filter: string | null = null;
 	let snapshotHz = SNAPSHOT_HZ;
 	for (let i = 0; i < args.length; i++) {
 		if (args[i] === '--duration' && args[i + 1]) duration = Math.max(1, Number(args[++i]));
 		else if (args[i] === '--json') json = true;
+		else if (args[i] === '--replay') replay = true;
 		else if (args[i] === '--scenario' && args[i + 1]) filter = args[++i]!;
 		else if (args[i] === '--hz' && args[i + 1]) snapshotHz = Math.max(1, Math.min(128, Math.round(Number(args[++i]))));
 	}
@@ -814,7 +865,7 @@ async function main(): Promise<void> {
 	const list = filter ? DEFAULT_SCENARIOS.filter((s) => s.name.includes(filter!)) : DEFAULT_SCENARIOS;
 	const results: ScenarioResult[] = [];
 	for (const sc of list) {
-		results.push(await runScenario(sc, duration, snapshotHz));
+		results.push(await runScenario(sc, duration, snapshotHz, replay));
 	}
 
 	if (json) {
@@ -869,6 +920,18 @@ async function main(): Promise<void> {
 				String(r.teleportLerpFrames).padStart(5)
 			].join(' ')
 		);
+	}
+	if (replay) {
+		console.log('\nSnapshot replay at 60 Hz (effective delay p50/p95 ms, freeze seconds, position error RMS u)');
+		for (const result of results) {
+			for (const [name, metrics] of Object.entries(result.replay ?? {})) {
+				const { p50, p95 } = metrics.effectiveDelayMs;
+				console.log(
+					`${result.scenario} ${name}: ${p50?.toFixed(1) ?? 'n/a'}/${p95?.toFixed(1) ?? 'n/a'}, ` +
+					`${(metrics.freezes.totalMs / 1000).toFixed(3)}, ${metrics.positionErrorU.rms?.toFixed(1) ?? 'n/a'}`
+				);
+			}
+		}
 	}
 }
 
