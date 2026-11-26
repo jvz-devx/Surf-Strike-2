@@ -9,6 +9,8 @@ import { DUCK_HULL_MAX, FLAG_DUCKED, FLAG_TELEPORTED, HULL_MAX, HULL_MIN, INTERP
 export { INTERP_DELAY_MS };
 /** Max velocity extrapolation horizon (ms) when a stall outruns the interpolation buffer. */
 export const MAX_EXTRAP_MS = 90;
+/** Limit spatial error at surf speeds while keeping more time for slower movement. */
+export const MAX_EXTRAP_DISTANCE = 80;
 const CAPACITY = 32;
 const CORRECTION_MS = 80;
 const CONTACT_SLIDE_MS = 24;
@@ -143,18 +145,19 @@ export class SnapshotBuffer {
 		return newest.t + this.predict(newest, this.buf.at(-2), renderMs - newest.t, this.predicted, world);
 	}
 
-	private predict(newest: Entry, prev: Entry | undefined, overMs: number, out: Vec3, world?: CollisionWorld): number {
-		const { s } = newest;
+	private predict(entry: Entry, prev: Entry | undefined, overMs: number, out: Vec3, world?: CollisionWorld): number {
+		const { s } = entry;
 		out.x = s.x;
 		out.y = s.y;
 		out.z = s.z;
 		if (this.sourceIdle) return 0;
-		let cap = this.maxExtrapMs;
+		const speed = Math.hypot(s.vx, s.vy, s.vz);
+		let cap = Math.min(this.maxExtrapMs, 1000 * MAX_EXTRAP_DISTANCE / speed);
 		if (prev) {
 			const p = prev.s;
 			const velocityChange = Math.hypot(s.vx - p.vx, s.vy - p.vy, s.vz - p.vz);
-			const speed = Math.max(Math.hypot(s.vx, s.vy, s.vz), Math.hypot(p.vx, p.vy, p.vz));
-			if (prev.epoch !== newest.epoch || velocityChange > Math.max(160, speed * 0.4)) {
+			const pairSpeed = Math.max(speed, Math.hypot(p.vx, p.vy, p.vz));
+			if (prev.epoch !== entry.epoch || velocityChange > Math.max(160, pairSpeed * 0.4)) {
 				cap = Math.min(cap, UNSTEADY_EXTRAP_MS);
 			}
 		}

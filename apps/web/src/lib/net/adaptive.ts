@@ -9,7 +9,7 @@ const WINDOW_MS = 6000;
 const BUCKET_MS = 500;
 const BUCKET_COUNT = WINDOW_MS / BUCKET_MS;
 /** Bound the steady delay on links with frequent stalls. */
-const MAX_SUSTAINED_MS = 115;
+const MAX_SUSTAINED_MS = 62.5;
 /** Allow for pose age behind the snapshot header and for display-frame quantization. */
 const BUFFER_MARGIN_MS = 16;
 /** Budget only part of the extrapolation horizon in the sustained estimate. */

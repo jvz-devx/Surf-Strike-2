@@ -118,7 +118,7 @@ vi.mock('./modes/index.js', () => ({
 	}
 }));
 
-import { MAX_EXTRAP_MS } from '../net/interp.js';
+import { MAX_EXTRAP_DISTANCE } from '../net/interp.js';
 import { Game } from './game.js';
 import { memoryStore, type KeyValueStore } from './storage.js';
 
@@ -332,9 +332,9 @@ it('sends the held combat frame timestamp and samples other targets on that time
 	] }, clock);
 	s.frames(2);
 	const host = mode().host;
-	const held = at + MAX_EXTRAP_MS;
-	expect(host.remotes.get(2)?.sample.x).toBeCloseTo(MAX_EXTRAP_MS);
-	expect(host.remotes.get(3)?.sample.x).toBeCloseTo(MAX_EXTRAP_MS);
+	const held = at + MAX_EXTRAP_DISTANCE;
+	expect(host.remotes.get(2)?.sample.x).toBeCloseTo(MAX_EXTRAP_DISTANCE);
+	expect(host.remotes.get(3)?.sample.x).toBeCloseTo(MAX_EXTRAP_DISTANCE);
 	expect(host.renderServerTimeMs).toBe(held);
 	expect(decodeState(s.states.at(-1)!)?.renderServerTimeMs).toBe(held);
 	host.send({ type: 'knife', origin: { x: 0, y: 0, z: 0 }, dir: { x: 1, y: 0, z: 0 } });

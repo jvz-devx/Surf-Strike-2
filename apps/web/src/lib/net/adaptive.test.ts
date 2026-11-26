@@ -24,7 +24,7 @@ describe('AdaptiveDelay', () => {
 	});
 
 	it('adds sustained delay for repeated late arrivals, then drops it within a second of the window expiring', () => {
-		const delay = new AdaptiveDelay();
+		const delay = new AdaptiveDelay({ snapshotHz: 64 });
 		delay.observeSnapshot(1000, late);
 		delay.observeSnapshot(1600, late);
 		let prevRender = 1600 - delay.currentMs;
@@ -34,12 +34,12 @@ describe('AdaptiveDelay', () => {
 			expect(render).toBeGreaterThan(prevRender);
 			prevRender = render;
 		}
-		expect(delay.currentMs).toBe(115);
+		expect(delay.currentMs).toBe(62.5);
 		for (let now = 7000; now < 8000; now += 16) {
 			delay.observeSnapshot(now, clean);
 			delay.update(now, 16);
 		}
-		expect(delay.currentMs).toBe(62.5);
+		expect(delay.currentMs).toBe(ADAPTIVE_MIN_MS);
 	});
 
 	it('starts slowing after the next snapshot is overdue and recovers as snapshots resume', () => {
