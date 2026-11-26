@@ -14,9 +14,10 @@ const MAX_SUSTAINED_MS = 62.5;
 const BUFFER_MARGIN_MS = 16;
 /** Budget only part of the extrapolation horizon in the sustained estimate. */
 const SUSTAINED_EXTRAP_MS = 50;
-/** Start slowing playback once the next snapshot is clearly overdue. */
+/** Allow for delivery variation before treating an arrival as overdue. */
 const STALL_LATE_MS = 12;
 const STALL_MAX_MS = 500;
+const RECURRING_GAP_COUNT = 3;
 
 export interface AdaptiveDelayOptions {
 	minMs?: number;
@@ -34,6 +35,7 @@ export class AdaptiveDelay {
 	private target: number;
 	private lastArrivalMs = -Infinity;
 	private lastTransitExcessMs = 0;
+	private consecutiveBufferedGaps = 0;
 	private readonly peaks = Array.from({ length: BUCKET_COUNT }, () => ({ bucket: -Infinity, ageMs: 0 }));
 
 	constructor(opts: AdaptiveDelayOptions = {}) {
@@ -52,6 +54,7 @@ export class AdaptiveDelay {
 		this.delayMs = this.target = this.cleanFloor();
 		this.lastArrivalMs = -Infinity;
 		this.lastTransitExcessMs = 0;
+		this.consecutiveBufferedGaps = 0;
 		for (const peak of this.peaks) peak.bucket = -Infinity;
 	}
 
@@ -69,6 +72,13 @@ export class AdaptiveDelay {
 		const ageMs = arrivalGapMs + this.lastTransitExcessMs;
 		this.lastTransitExcessMs = transitExcessMs;
 		this.lastArrivalMs = nowMs;
+		// Ignore packets in a TCP flush when recognizing a regular late cadence.
+		if (arrivalGapMs >= this.snapMs / 2) {
+			const sustainedLimit = Math.max(this.cleanFloor(), Math.min(MAX_SUSTAINED_MS, this.maxMs));
+			const buffered = arrivalGapMs >= this.snapMs + STALL_LATE_MS
+				&& ageMs <= sustainedLimit + SUSTAINED_EXTRAP_MS;
+			this.consecutiveBufferedGaps = buffered ? this.consecutiveBufferedGaps + 1 : 0;
+		}
 		if (arrivalGapMs < this.snapMs) return;
 
 		const bucket = Math.floor(nowMs / BUCKET_MS);
@@ -98,8 +108,13 @@ export class AdaptiveDelay {
 		// An isolated high bucket cannot set the sustained delay. Extrapolation supplies some of the headroom.
 		const bufferedAge = second + BUFFER_MARGIN_MS - SUSTAINED_EXTRAP_MS;
 		const sustained = Math.max(this.cleanFloor(), Math.min(MAX_SUSTAINED_MS, bufferedAge));
+		// Let extrapolation cover recurrent gaps within its budget. Slow playback
+		// sooner for unexpected gaps and for gaps beyond that budget.
+		const expectedGap = this.consecutiveBufferedGaps >= RECURRING_GAP_COUNT
+			? Math.min(second, sustained + SUSTAINED_EXTRAP_MS)
+			: this.snapMs;
 		const gap = nowMs - this.lastArrivalMs;
-		const stalled = gap >= this.snapMs + STALL_LATE_MS && gap < STALL_MAX_MS;
+		const stalled = gap >= Math.max(this.snapMs, expectedGap) + STALL_LATE_MS && gap < STALL_MAX_MS;
 		this.target = stalled ? this.maxMs : Math.min(this.maxMs, sustained);
 
 		const dt = Math.max(0, Math.min(250, dtMs));

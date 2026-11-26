@@ -42,6 +42,28 @@ describe('AdaptiveDelay', () => {
 		expect(delay.currentMs).toBe(ADAPTIVE_MIN_MS);
 	});
 
+	it.each([32, 64])('settles through recurring 100 ms gaps at %d Hz and reacts when a gap outlasts them', (snapshotHz) => {
+		const delay = new AdaptiveDelay({ snapshotHz });
+		const values: number[] = [];
+		let arrival = 0;
+		let gap = 100;
+		let next = gap;
+		delay.observeSnapshot(0, clean);
+		for (let now = 5; now <= 8000; now += 5) {
+			if (now === next) {
+				delay.observeSnapshot(now, { arrivalGapMs: now - arrival, transitExcessMs: 0 });
+				arrival = now;
+				gap = gap === 105 ? 95 : 105;
+				next += gap;
+			}
+			const ms = delay.update(now, 5);
+			if (now >= 7000) values.push(ms);
+		}
+		expect(Math.max(...values) - Math.min(...values)).toBeLessThan(0.1);
+		expect(delay.currentMs).toBe(62.5);
+		expect(delay.update(arrival + 150, 5)).toBeGreaterThan(62.5);
+	});
+
 	it('starts slowing after the next snapshot is overdue and recovers as snapshots resume', () => {
 		const delay = new AdaptiveDelay();
 		delay.observeSnapshot(1000, clean);
