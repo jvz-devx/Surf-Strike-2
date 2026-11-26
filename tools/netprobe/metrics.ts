@@ -72,6 +72,7 @@ interface BotMetrics {
 
 const TELEPORT_TOLERANCE = 3;
 const TELEPORT_WINDOW_MS = 2000;
+const TELEPORT_ERROR_WINDOW_MS = 200;
 
 function trackTeleport(bot: BotMetrics, ms: number, point: Point | null, totals: TeleportTotals): void {
 	while (bot.pending.length > 0) {
@@ -119,6 +120,7 @@ function sumRuns(runs: Runs[]) {
 export class ObserverMetrics {
 	private readonly bots = new Map<number, BotMetrics>();
 	private readonly error = new Series();
+	private readonly errorOutsideTeleports = new Series();
 	private readonly shapeError = new Series();
 	private readonly nominalDelay = new Series();
 	private readonly effectiveDelay = new Series();
@@ -161,7 +163,13 @@ export class ObserverMetrics {
 			}
 			this.rendered++;
 			this.nominalDelay.add(delayMs);
-			this.error.add(distance(point, bot.path.at(ms - delayMs)));
+			const targetMs = ms - delayMs;
+			const error = distance(point, bot.path.at(targetMs));
+			this.error.add(error);
+			// A small timing miss at a discontinuity can otherwise dominate the spatial error.
+			if (bot.path.teleports(targetMs - TELEPORT_ERROR_WINDOW_MS, targetMs + TELEPORT_ERROR_WINDOW_MS).length === 0) {
+				this.errorOutsideTeleports.add(error);
+			}
 			const projected = bot.path.project(ms, point, delayMs);
 			this.shapeError.add(projected.error);
 			bot.previous = { poseMs: projected.ms, point };
@@ -201,6 +209,7 @@ export class ObserverMetrics {
 			measuredBotMs: this.measuredBotMs,
 			frameIntervalsMs: this.frameIntervals.summary(),
 			positionErrorU: this.error.summary(),
+			positionErrorOutsideTeleportsU: this.errorOutsideTeleports.summary(),
 			pathErrorU: this.shapeError.summary(),
 			configuredDelayMs: this.nominalDelay.summary(),
 			effectiveDelayMs: this.effectiveDelay.summary(),

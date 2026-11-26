@@ -29,7 +29,7 @@ On v2 and v3 captures, replay compares three controllers on the same received po
 
 ## Metrics
 
-- **Position error** compares each rendered pose with the true pose at the observer's target delay. It includes transport and relay age, buffer timing error, and the effect of teleport timing. **Path error** is the remaining spatial error at the closest point on the known path within the last two seconds.
+- **Target-time error outside teleports** compares the rendered pose with the bot's true pose at frame time minus configured delay. It excludes target times within 200 ms of a scripted teleport and still includes the effect of transport, relay and buffer timing on continuous motion. **All-frame target-time error** includes those frames. A small error in teleport timing can yield the full jump distance there. **Path error** measures the spatial distance to the closest point on the known path within the last two seconds.
 - **Effective delay** is the age of that closest point. Netprobe omits ambiguous times at stops and on retraced sections, poses more than 8 u off the path, and estimates that hit the search bound.
 - **Speed wobble** is the RMS difference between speed measured from successive rendered positions and speed over an equal duration on the path at the estimated pose time. It excludes teleport jumps.
 - **Underrun** counts frames that need data newer than the buffer has. **Freeze** counts pairs of rendered frames where the pose moves less than 0.01 u while the known path moves. The reported duration sums across bots, and the count over 100 ms is per bot per episode. Missing poses, scripted stops and teleport level changes are excluded.

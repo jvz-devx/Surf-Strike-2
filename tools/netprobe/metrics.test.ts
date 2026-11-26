@@ -25,11 +25,27 @@ test('position error, effective delay and speed wobble match known translations'
 	}
 	const data = metrics.summary();
 	near(data.positionErrorU.rms, Math.hypot(0.05 * 265, 3));
+	assert.deepEqual(data.positionErrorOutsideTeleportsU, data.positionErrorU);
 	near(data.pathErrorU.rms, 3);
 	near(data.effectiveDelayMs.p50, 150);
 	near(data.speedWobbleUps.rms, 0);
 	assert.equal(data.botFrames, 3);
 	assert.equal(data.measuredBotMs, 40);
+});
+
+test('filters teleport windows by target time while preserving the all-frame series', () => {
+	const path = new BotPath(0);
+	const metrics = new ObserverMetrics(new Map([[1, path]]), 5900, 7000);
+	for (const [target, error] of [[5799, 3], [5900, 384], [6010, 384], [6201, 4]]) {
+		const point = path.at(target);
+		metrics.frame(target + 200, () => ({ point: { ...point, z: point.z + error }, delayMs: 200, underrun: false }));
+	}
+	const data = metrics.summary();
+	assert.equal(data.positionErrorU.count, 4);
+	assert.equal(data.positionErrorU.p99, 384);
+	assert.equal(data.positionErrorOutsideTeleportsU.count, 2);
+	near(data.positionErrorOutsideTeleportsU.rms, Math.sqrt((3 ** 2 + 4 ** 2) / 2));
+	assert.equal(data.positionErrorOutsideTeleportsU.p99, 4);
 });
 
 test('counts underrun and freeze episodes separately and measures speed during a hold', () => {

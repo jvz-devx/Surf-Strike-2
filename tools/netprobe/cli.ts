@@ -93,7 +93,8 @@ function rows(o: Observer, run: Result): Record<string, string> {
 	const stalls = (episodes: Observer['freezes']) =>
 		`${fmt(episodes.totalMs, 0)} / ${pct(episodes.totalMs)}% / ${episodes.over100Ms}`;
 	return {
-		'Position error RMS / p99 (u)': `${fmt(o.positionErrorU.rms)} / ${fmt(o.positionErrorU.p99)}`,
+		'Target-time error outside teleports RMS / p99 (u)': `${fmt(o.positionErrorOutsideTeleportsU?.rms ?? null)} / ${fmt(o.positionErrorOutsideTeleportsU?.p99 ?? null)}`,
+		'All-frame target-time error RMS / p99 (u)': `${fmt(o.positionErrorU.rms)} / ${fmt(o.positionErrorU.p99)}`,
 		'Path error RMS (u)': fmt(o.pathErrorU.rms),
 		'Target delay p50 (ms)': fmt(o.configuredDelayMs.p50),
 		'Effective delay p50 / p95 (ms)': `${fmt(o.effectiveDelayMs.p50)} / ${fmt(o.effectiveDelayMs.p95)}`,
@@ -143,7 +144,8 @@ async function main(): Promise<void> {
 					'Freeze (bot-s)': fmt(metrics.freezes.totalMs / 1000, 3),
 					'Held frames': String(metrics.freezes.frames),
 					'Correction jump p99 / max (u)': `${fmt(metrics.correctionJumpU.p99)} / ${fmt(metrics.correctionJumpU.max)}`,
-					'Position error RMS (u)': fmt(metrics.positionErrorU.rms)
+					'Target-time error outside teleports RMS (u)': fmt(metrics.positionErrorOutsideTeleportsU.rms),
+					'All-frame target-time error RMS (u)': fmt(metrics.positionErrorU.rms)
 				}])));
 			}
 		}
