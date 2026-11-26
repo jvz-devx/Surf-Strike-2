@@ -79,14 +79,14 @@ Visitor IPs drive guest bans and per-IP connection limits. When traffic enters t
 - `loopback` (default): trust `CF-Connecting-IP` and `X-Forwarded-For` only from `127.0.0.0/8` and `::1`. Matches local `./start.sh` with `cloudflared`.
 - `none`: ignore forwarded headers and use direct socket addresses only.
 - `private`: trust loopback, RFC1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), CGNAT (`100.64.0.0/10`), link-local, and IPv6 ULA (`fc00::/7`). Use only on a network where every address in those ranges is trusted to supply forwarding headers.
-- `cf:<list>`: trust only `CF-Connecting-IP` from explicit peer IPs or CIDRs. Use `TRUST_PROXY=cf:10.52.0.0/16` when cloudflared pods are in that range. A trusted peer with a missing or invalid visitor IP receives HTTP 403 at the WebSocket upgrade. Any direct peer outside the list is identified by its socket address.
+- `cf:<list>`: trust only `CF-Connecting-IP` from explicit peer IPs or CIDRs. Use `TRUST_PROXY=cf:10.42.0.0/16` when cloudflared pods are in that range. A trusted peer with a missing or invalid visitor IP receives HTTP 403 at the WebSocket upgrade. Any direct peer outside the list is identified by its socket address.
 - Explicit IP or CIDR list: comma-separated entries such as `10.42.0.0/16,127.0.0.1` or `loopback,fd00::/8`.
 
 When `X-Forwarded-For` is used, the server walks hops right-to-left and picks the first untrusted IP, ignoring client-spoofed entries on the left. Trusted proxy addresses and loopback addresses are never returned as visitor IPs. With the legacy trust modes, unknown visitor IPs share one bucket for the per-IP connection caps. In Kubernetes, apply a NetworkPolicy that limits ingress to cloudflared pods so other pods in the trusted CIDR cannot supply visitor headers.
 
 ### `ALLOWED_ORIGINS`
 
-Set `ALLOWED_ORIGINS=same-origin` when the game and page share an origin. Behind cloudflared, set `ORIGIN` to the public HTTPS origin, such as `https://surf-test.jensvanzutphen.com`. With `ORIGIN` unset, the server derives the origin from the request host and connection scheme. If the browser page is hosted separately, add its origin to `ALLOWED_ORIGINS`. For Vite, list `http://localhost:5173` and, if used, `http://127.0.0.1:5173` or the origin of your custom dev port. Disallowed or missing `Origin` headers receive HTTP 403. Leave the allow-list unset for local bot tools that omit `Origin`.
+Set `ALLOWED_ORIGINS=same-origin` when the game and page share an origin. Behind cloudflared, set `ORIGIN` to the public HTTPS origin, such as `https://surf.example.com`. With `ORIGIN` unset, the server derives the origin from the request host and connection scheme. If the browser page is hosted separately, add its origin to `ALLOWED_ORIGINS`. For Vite, list `http://localhost:5173` and, if used, `http://127.0.0.1:5173` or the origin of your custom dev port. Disallowed or missing `Origin` headers receive HTTP 403. Leave the allow-list unset for local bot tools that omit `Origin`.
 
 ### Admin accounts
 
@@ -128,5 +128,5 @@ To restore from a backup, stop the container, replace `/data/surf.db` with the c
 
 The Vercel deployment with `./start.sh` and Cloudflare quick tunnels continues to work as before. To prevent a local `./start.sh` run from overwriting or clearing a fixed self-hosted server in discovery:
 
-- Set `FIXED_SERVER_URL=https://surf-test.jensvanzutphen.com` as a server-side Vercel environment variable and redeploy the web app. The discovery route always returns the configured URL and refuses dynamic publishes and clears, even when the fixed server is down. Add the browser-facing Vercel site origin to the fixed server's `ALLOWED_ORIGINS` so those browsers can connect.
+- Set `FIXED_SERVER_URL=https://surf.example.com` as a server-side Vercel environment variable and redeploy the web app. The discovery route always returns the configured URL and refuses dynamic publishes and clears, even when the fixed server is down. Add the browser-facing Vercel site origin to the fixed server's `ALLOWED_ORIGINS` so those browsers can connect.
 - Set the same value in `apps/server/.env` for the local startup check. Both `./start.sh` and `pnpm host` check `/health` and refuse to start while the fixed server is healthy. If a host reaches the shutdown clear after discovery has changed, it sends `expectedUrl` and honors the route's `cleared: false` response.
