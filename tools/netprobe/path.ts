@@ -14,6 +14,8 @@ const ARC_END_X = 530 + RADIUS * Math.sin(6);
 const ARC_END_Y = RADIUS * (1 - Math.cos(6));
 const CYCLE_MS = 16_000;
 const DELAY_SEARCH_MS = 2_000;
+// The endpoint belongs to the next segment, which may start on a different level.
+const SEGMENT_END_EPSILON_MS = 1e-6;
 
 const segments: Segment[] = [
 	{ start: 0, end: 2000, z: 0, kind: 'line', x: 0, y: 0, vx: 265, vy: 0 },
@@ -108,7 +110,7 @@ export class BotPath {
 		for (let cycle = CYCLE_MS * Math.floor(start / CYCLE_MS); cycle <= end; cycle += CYCLE_MS) {
 			for (const segment of segments) {
 				const lo = Math.max(segment.start, start - cycle);
-				const hi = Math.min(segment.end, end - cycle);
+				const hi = Math.min(segment.end - SEGMENT_END_EPSILON_MS, end - cycle);
 				if (lo > hi) continue;
 				const at = closestMs(segment, localPoint, lo, hi);
 				const pose = poseAt(segment, at);

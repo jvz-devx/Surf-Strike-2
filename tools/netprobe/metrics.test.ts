@@ -20,7 +20,7 @@ test('position error, effective delay and speed wobble match known translations'
 	for (const ms of [500, 520, 540]) {
 		metrics.frame(ms, () => ({
 			point: { ...path.at(ms - 150), y: 3 },
-			delayMs: 100, underrun: false, held: false
+			delayMs: 100, underrun: false
 		}));
 	}
 	const data = metrics.summary();
@@ -39,13 +39,15 @@ test('counts underrun and freeze episodes separately and measures speed during a
 		const ms = 500 + i * 20;
 		metrics.frame(ms, () => ({
 			point: path.at(Math.min(ms, 520) - 100),
-			delayMs: 100, underrun: i > 0, held: i > 1
+			delayMs: 100, underrun: i > 0
 		}));
 	}
 	const data = metrics.summary();
 	assert.deepEqual(data.underruns, { frames: 10, totalMs: 200, episodes: 1, over100Ms: 1, maxMs: 200 });
 	assert.deepEqual(data.freezes, { frames: 9, totalMs: 180, episodes: 1, over100Ms: 1, maxMs: 180 });
 	near(data.speedWobbleUps.rms, 265 * Math.sqrt(0.9));
+	near(data.correctionJumpU.p99, 5.3);
+	near(data.correctionJumpU.max, 5.3);
 });
 
 test('classifies a short slide, a long snap and a missed teleport', () => {
@@ -59,7 +61,7 @@ test('classifies a short slide, a long snap and a missed teleport', () => {
 	for (const [ms, z] of samples) {
 		metrics.frame(ms, () => ({
 			point: { ...path.at(ms), z },
-			delayMs: 100, underrun: false, held: false
+			delayMs: 100, underrun: false
 		}));
 	}
 	assert.deepEqual(metrics.summary().teleports, { expected: 3, slides: 1, snaps: 1, missed: 1, unresolved: 0 });

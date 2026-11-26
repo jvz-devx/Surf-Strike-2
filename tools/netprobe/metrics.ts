@@ -51,7 +51,7 @@ class Runs {
 }
 
 interface Frame {
-	ms: number;
+	poseMs: number;
 	point: Point;
 }
 
@@ -123,6 +123,7 @@ export class ObserverMetrics {
 	private readonly nominalDelay = new Series();
 	private readonly effectiveDelay = new Series();
 	private readonly speedWobble = new Series();
+	private readonly correctionJump = new Series();
 	private readonly teleports: TeleportTotals = { expected: 0, slides: 0, snaps: 0, missed: 0 };
 	private frames = 0;
 	private rendered = 0;
@@ -149,28 +150,45 @@ export class ObserverMetrics {
 		this.frames++;
 		this.measuredBotMs += dt * this.bots.size;
 		for (const [id, bot] of this.bots) {
-			const { point, delayMs, underrun, held } = render(id);
+			const { point, delayMs, underrun } = render(id);
 			bot.underruns.add(underrun, dt);
-			bot.freezes.add(held, dt);
 			trackTeleport(bot, ms, point, this.teleports);
 			const previous = bot.previous;
-			bot.previous = point ? { ms, point } : null;
-			if (!point) continue;
+			bot.previous = null;
+			if (!point) {
+				bot.freezes.add(false, dt);
+				continue;
+			}
 			this.rendered++;
 			this.nominalDelay.add(delayMs);
 			this.error.add(distance(point, bot.path.at(ms - delayMs)));
 			const projected = bot.path.project(ms, point, delayMs);
 			this.shapeError.add(projected.error);
+			bot.previous = { poseMs: projected.ms, point };
 			// Mid-teleport poses and endpoints at the search bound cannot identify a delay.
 			if (projected.identifiable && projected.error <= 8 && ms - projected.ms < 1999) {
 				this.effectiveDelay.add(ms - projected.ms);
 			}
-			if (!previous || dt <= 0 || Math.abs(point.z - previous.point.z) > TELEPORT_TOLERANCE) continue;
-			const truth = bot.path.at(projected.ms);
-			const truthBefore = bot.path.at(projected.ms - dt);
-			if (truth.z !== truthBefore.z) continue;
-			const seconds = (ms - previous.ms) / 1000;
-			this.speedWobble.add((distance(point, previous.point) - distance(truth, truthBefore)) / seconds);
+			let held = false;
+			if (previous && dt > 0) {
+				const before = bot.path.at(previous.poseMs);
+				const expected = bot.path.at(previous.poseMs + dt);
+				const projectedPose = bot.path.at(projected.ms);
+				// Bot paths change levels by teleport. Measure ordinary motion within a level.
+				if (before.z === expected.z && before.z === projectedPose.z) {
+					held = distance(point, previous.point) < 0.01 && distance(before, expected) >= 0.01;
+					this.correctionJump.add(Math.hypot(
+						(point.x - previous.point.x) - (expected.x - before.x),
+						(point.y - previous.point.y) - (expected.y - before.y),
+						(point.z - previous.point.z) - (expected.z - before.z)
+					));
+				}
+				const truthBefore = bot.path.at(projected.ms - dt);
+				if (Math.abs(point.z - previous.point.z) <= TELEPORT_TOLERANCE && projectedPose.z === truthBefore.z) {
+					this.speedWobble.add((distance(point, previous.point) - distance(projectedPose, truthBefore)) * 1000 / dt);
+				}
+			}
+			bot.freezes.add(held, dt);
 		}
 	}
 
@@ -187,6 +205,7 @@ export class ObserverMetrics {
 			configuredDelayMs: this.nominalDelay.summary(),
 			effectiveDelayMs: this.effectiveDelay.summary(),
 			speedWobbleUps: this.speedWobble.summary(),
+			correctionJumpU: this.correctionJump.summary(),
 			underruns: sumRuns(bots.map(({ underruns }) => underruns)),
 			freezes: sumRuns(bots.map(({ freezes }) => freezes)),
 			teleports: { ...this.teleports, unresolved: bots.reduce((sum, bot) => sum + bot.pending.length, 0) },

@@ -65,3 +65,11 @@ test('a stationary or retraced pose cannot uniquely identify visual delay', () =
 	assert.equal(path.project(5550, path.at(5400), 100).identifiable, false);
 	assert.equal(path.project(14_400, path.at(13_750), 100).identifiable, false);
 });
+
+test('a projected pose at the end of a stop still belongs to the pre-teleport level', () => {
+	const path = new BotPath(7);
+	const point = path.at(5800);
+	const projection = path.project(5980, point, 120);
+	assert.equal(path.at(projection.ms).z, point.z);
+	assert.equal(path.at(projection.ms).vx, 0);
+});

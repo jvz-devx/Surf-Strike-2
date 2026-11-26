@@ -141,6 +141,8 @@ async function main(): Promise<void> {
 				table(Object.fromEntries(Object.entries(controllers).map(([name, metrics]) => [name, {
 					'Effective delay p50 / p95 (ms)': `${fmt(metrics.effectiveDelayMs.p50)} / ${fmt(metrics.effectiveDelayMs.p95)}`,
 					'Freeze (bot-s)': fmt(metrics.freezes.totalMs / 1000, 3),
+					'Held frames': String(metrics.freezes.frames),
+					'Correction jump p99 / max (u)': `${fmt(metrics.correctionJumpU.p99)} / ${fmt(metrics.correctionJumpU.max)}`,
 					'Position error RMS (u)': fmt(metrics.positionErrorU.rms)
 				}])));
 			}

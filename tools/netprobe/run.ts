@@ -139,7 +139,7 @@ export async function runProbe(config: Config, signal: AbortSignal, recordTrace 
 				}
 				if (message.type === 'leave' && ids.has(message.id)) left.add(message.id);
 				if (message.type === 'mapChange') {
-					if (events && arrival <= measuredEnd) events.push([arrival, 'clear']);
+					if (events && arrival <= measuredEnd) events.push([arrival, 'clear', message.map]);
 					if (Number.isFinite(measuredStart)) mapChanges.push({ elapsedMs: arrival - (measuredStart - WARMUP_MS), map: message.map });
 					for (const { observer } of renderers) observer.clear();
 				}

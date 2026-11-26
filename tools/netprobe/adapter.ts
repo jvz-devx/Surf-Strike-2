@@ -1,3 +1,4 @@
+import type { CollisionWorld } from '@surf/shared';
 import { decodeSnapshot, encodeState, INTERP_DELAY_MS, type NetState, type SnapshotEntry } from './wire-v1.ts';
 import { emptySample, SnapshotBuffer } from './interp-v1.ts';
 import type { Point } from './path.ts';
@@ -7,11 +8,10 @@ export interface Rendered {
 	point: Point | null;
 	delayMs: number;
 	underrun: boolean;
-	held: boolean;
 }
 
 export interface Observer {
-	beginFrame?(nowMs: number, dtMs: number): void;
+	beginFrame?(nowMs: number, dtMs: number, world?: CollisionWorld): void;
 	timingMessage?(message: Welcome | ClockPong, arrivalMs: number): void;
 	snapshot(data: ArrayBuffer, arrivalMs: number): boolean;
 	render(id: number, nowMs: number): Rendered;
@@ -47,7 +47,7 @@ export function arrivalObserver(
 			const underrun = !buffer || target > buffer.lastArrival;
 			const visible = buffer && nowMs - buffer.lastArrival < 3000 && buffer.sample(target, pose);
 			const point = visible ? { x: pose.x, y: pose.y, z: pose.z } : null;
-			return { point, delayMs: INTERP_DELAY_MS, underrun, held: underrun };
+			return { point, delayMs: INTERP_DELAY_MS, underrun };
 		},
 		clear() {
 			buffers.clear();

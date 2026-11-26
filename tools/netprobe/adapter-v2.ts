@@ -2,7 +2,9 @@ import type { Adapter, Rendered } from './adapter.ts';
 import { decodeSnapshot, encodeState, withTeleportSeq, type NetState } from '@surf/shared';
 import { ServerClock, type SnapshotClockObs } from '../../apps/web/src/lib/net/clock.ts';
 import { AdaptiveDelay } from '../../apps/web/src/lib/net/adaptive.ts';
-import { SnapshotBuffer, emptySample, MAX_EXTRAP_MS } from '../../apps/web/src/lib/net/interp.ts';
+import { SnapshotBuffer, emptySample } from '../../apps/web/src/lib/net/interp.ts';
+
+type ProbeBuffer = Pick<SnapshotBuffer, 'push' | 'sample' | 'lastArrival' | 'sourceIdle' | 'lastUnderrun' | 'lastOverrunMs'>;
 
 interface DelayController extends Pick<AdaptiveDelay, 'reset' | 'update' | 'currentMs'> {
 	observeSnapshot(nowMs: number, timing: SnapshotClockObs & { jitterMs: number; rttMs: number }): void;
@@ -11,7 +13,7 @@ interface DelayController extends Pick<AdaptiveDelay, 'reset' | 'update' | 'curr
 
 export function loadV2Adapter(
 	makeDelay: () => DelayController = () => new AdaptiveDelay(),
-	maxExtrapMs = MAX_EXTRAP_MS
+	makeBuffer: () => ProbeBuffer = () => new SnapshotBuffer()
 ): Adapter {
 	return {
 		encode(state, teleportCount) {
@@ -21,7 +23,7 @@ export function loadV2Adapter(
 			const clock = new ServerClock();
 			const delay = makeDelay();
 			const rendered = new Map<number, Rendered>();
-			const buffers = new Map<number, SnapshotBuffer>();
+			const buffers = new Map<number, ProbeBuffer>();
 			const pose = emptySample();
 			return {
 				timingMessage(message, arrivalMs) {
@@ -43,20 +45,19 @@ export function loadV2Adapter(
 						if (!botIds.has(entry.id)) continue;
 						let buffer = buffers.get(entry.id);
 						if (!buffer) {
-							buffer = new SnapshotBuffer();
-							buffer.maxExtrapMs = maxExtrapMs;
+							buffer = makeBuffer();
 							buffers.set(entry.id, buffer);
 						}
 						buffer.push(entry, frame.serverTimeMs, arrivalMs);
 					}
 					return true;
 				},
-				beginFrame(nowMs, dtMs) {
+				beginFrame(nowMs, dtMs, world) {
 					const delayMs = delay.update(nowMs, dtMs);
 					const target = clock.renderTime(nowMs, delayMs);
 					let maxOverrun = 0;
 					for (const [id, buffer] of buffers) {
-						const visible = buffer.sample(target, pose) && nowMs - buffer.lastArrival < 3000;
+						const visible = buffer.sample(target, pose, world, nowMs) && nowMs - buffer.lastArrival < 3000;
 						const underrun = !visible || buffer.lastUnderrun;
 						if (visible && !buffer.sourceIdle && buffer.lastUnderrun) {
 							maxOverrun = Math.max(maxOverrun, buffer.lastOverrunMs);
@@ -64,14 +65,13 @@ export function loadV2Adapter(
 						rendered.set(id, {
 							point: visible ? { x: pose.x, y: pose.y, z: pose.z } : null,
 							delayMs,
-							underrun,
-							held: !visible || (underrun && buffer.lastExtrapMs === 0)
+							underrun
 						});
 					}
 					if (maxOverrun > 0) delay.observeUnderrun?.(nowMs, maxOverrun, clock.rtt);
 				},
 				render(id) {
-					return rendered.get(id) ?? { point: null, delayMs: delay.currentMs, underrun: true, held: true };
+					return rendered.get(id) ?? { point: null, delayMs: delay.currentMs, underrun: true };
 				},
 				clear() {
 					buffers.clear();

@@ -697,7 +697,7 @@ async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz: nu
 			const interpMs = adaptive.update(now, dt);
 			stats.setInterpDelay(interpMs);
 			const renderAt = clock.renderTime(now, interpMs);
-			const ok = buf.sample(renderAt, sample);
+			const ok = buf.sample(renderAt, sample, undefined, now);
 			if (!ok) return;
 			const underrun = buf.lastUnderrun;
 			const extrapolating = buf.lastExtrapMs > 0;
@@ -812,7 +812,7 @@ async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz: nu
 		const replayed = events && replayProbe({
 			schema: 1, protocol: PROTOCOL_VERSION, start: startMs, measuredStart: startMs + warmupMs,
 			measuredEnd: endMs, botIds: [target.selfId], fps: [60], events
-		}, new Map([[target.selfId, benchTruth(def.trajectory)]]));
+		}, { truth: new Map([[target.selfId, benchTruth(def.trajectory)]]), map: benchMap() });
 		return {
 			replay: replayed?.[0].controllers,
 			scenario: def.name,
