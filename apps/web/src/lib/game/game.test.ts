@@ -118,6 +118,7 @@ vi.mock('./modes/index.js', () => ({
 	}
 }));
 
+import { MAX_EXTRAP_MS } from '../net/interp.js';
 import { Game } from './game.js';
 import { memoryStore, type KeyValueStore } from './storage.js';
 
@@ -163,10 +164,10 @@ function setup() {
 			for (let i = 0; i < n; i++) inside.frame((clock += 15.625));
 		},
 		/** Connected as player 7, with players 2 and 3. */
-		online(version: number | null = PROTOCOL_VERSION): void {
+		online(version: number | null = PROTOCOL_VERSION, map = 'tag_quayside'): void {
 			(T.connection as { client: unknown }).client = { url: 'x', send: (m: ClientMessage) => sent.push(m), sendBinary: (b: ArrayBuffer) => states.push(b), close: (code = 0) => conn.closed(true, 'x', code) };
 			conn.message({
-				type: 'welcome', ...(version === null ? {} : { version }), selfId: 7, map: 'tag_quayside', mode: 'tag', mapTimeLeft: 60, cvars: {}, account: null,
+				type: 'welcome', ...(version === null ? {} : { version }), selfId: 7, map, mode: getMap(map)!.kind, mapTimeLeft: 60, cvars: {}, account: null,
 				players: [2, 3].map((id) => ({ id, name: `P${id}`, spectating: false })),
 				records: { pbTicks: null, pbSplits: null, rank: null, recordTicks: null, recordName: null }
 			} as unknown as ServerMessage);
@@ -312,6 +313,33 @@ describe('a tick', () => {
 		s.frames(1);
 		expect(audio().update).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ active: true }));
 	});
+});
+
+it('sends the held combat frame timestamp and samples other targets on that timeline', () => {
+	const s = setup();
+	s.online(PROTOCOL_VERSION, 'zombies_lowtide');
+	mode().host.setWorld(buildCollisionWorld({ brushes: [] }));
+	mode().isDown = () => false;
+	const at = clock;
+	const state = { tick: 1, x: 0, y: 0, z: 512, vx: 1000, vy: 0, vz: 0, pitch: 0, yaw: 0, flags: 0, status: Status.Running, stage: 0, runTicks: 0 };
+	s.conn.snapshot({ seq: 1, serverTimeMs: at, entries: [
+		{ ...state, id: 2, sampleTimeMs: at },
+		{ ...state, id: 3, sampleTimeMs: at }
+	] }, clock);
+	s.frames(24);
+	s.conn.snapshot({ seq: 2, serverTimeMs: clock, entries: [
+		{ ...state, id: 3, tick: 24, x: clock - at, sampleTimeMs: clock }
+	] }, clock);
+	s.frames(2);
+	const host = mode().host;
+	const held = at + MAX_EXTRAP_MS;
+	expect(host.remotes.get(2)?.sample.x).toBeCloseTo(MAX_EXTRAP_MS);
+	expect(host.remotes.get(3)?.sample.x).toBeCloseTo(MAX_EXTRAP_MS);
+	expect(host.renderServerTimeMs).toBe(held);
+	expect(decodeState(s.states.at(-1)!)?.renderServerTimeMs).toBe(held);
+	host.send({ type: 'knife', origin: { x: 0, y: 0, z: 0 }, dir: { x: 1, y: 0, z: 0 } });
+	expect(s.sent.at(-1)).toMatchObject({ type: 'knife', renderServerTimeMs: held });
+	s.game.destroy();
 });
 
 describe('spectating', () => {

@@ -191,6 +191,8 @@ describe('snapshot interpolation', () => {
 		b.push(st(0), 0);
 		b.push(st(5000), 100);
 		b.sample(10, out);
+		expect(out.x).toBe(0);
+		b.sample(100, out);
 		expect(out.x).toBe(5000);
 
 		// Short 400 u teleport (< 1024 snapDistance) without FLAG_TELEPORTED bit, caught via teleport counter.
@@ -198,6 +200,8 @@ describe('snapshot interpolation', () => {
 		b2.push({ ...st(0), tick: 1, flags: withTeleportSeq(0, 0) }, 0);
 		b2.push({ ...st(400), tick: 3, flags: withTeleportSeq(0, 4) }, 31.25);
 		b2.sample(15, out);
+		expect(out.x).toBe(0);
+		b2.sample(31.25, out);
 		expect(out.x).toBe(400);
 	});
 	it('clamps extrapolation to map geometry and holds the confirmed pose for a stalled sender', () => {
@@ -217,6 +221,51 @@ describe('snapshot interpolation', () => {
 		b.push({ ...st(40), tick: 21, vx: 1200 }, 1312.5);
 		expect(b.sourceIdle).toBe(false);
 	});
+	it('slides along a contact plane, then holds at a reduced render timestamp', () => {
+		const world = buildCollisionWorld({ brushes: [{ type: 'box', min: { x: 60, y: -512, z: -128 }, max: { x: 70, y: 512, z: 128 }, material: 'concrete' }] });
+		const b = new SnapshotBuffer();
+		const out = emptySample();
+		b.push({ ...st(30), tick: 1, vx: 1000, vy: 500, sampleTimeMs: 1000 }, 1000);
+		b.sample(1200, out, world);
+		const held = b.lastRenderMs;
+		expect(held).toBeCloseTo(1000 + 13.96875 + 24);
+		expect(out.x).toBeCloseTo(43.96875);
+		expect(out.y).toBeCloseTo((held - 1000) * 0.5);
+		expect(b.renderLimit(1350, world)).toBeCloseTo(held);
+		b.sample(1350, out, world);
+		expect(b.lastRenderMs).toBeCloseTo(held);
+	});
+
+	it('eases a wrong stop prediction, then snaps across a teleport during the correction', () => {
+		const b = new SnapshotBuffer();
+		const out = emptySample();
+		b.push({ ...st(0), tick: 1, vx: 1000, sampleTimeMs: 1000 }, 1000);
+		b.sample(1100, out, undefined, 1300);
+		const extrapolated = out.x;
+		expect(extrapolated).toBeCloseTo(MAX_EXTRAP_MS);
+		b.push({ ...st(20), tick: 7, vx: 0, sampleTimeMs: 1100 }, 1100);
+		b.sample(1116, out, undefined, 1316);
+		expect(out.x).toBeCloseTo(20 + (extrapolated - 20 * MAX_EXTRAP_MS / 100) * 0.8);
+		expect(b.renderLimit(1200)).toBe(1125);
+		b.push({ ...st(400), tick: 8, vx: 0, flags: withTeleportSeq(0, 1), sampleTimeMs: 1130 }, 1130);
+		b.sample(1132, out, undefined, 1332);
+		expect(out.x).toBe(400);
+	});
+
+	it('finishes a prediction correction using frame time while the render timestamp holds', () => {
+		const b = new SnapshotBuffer();
+		const out = emptySample();
+		b.push({ ...st(0), tick: 1, vx: 1000, sampleTimeMs: 1000 }, 1000);
+		b.sample(1100, out, undefined, 1300);
+		b.push({ ...st(20), tick: 7, vx: 0, sampleTimeMs: 1100 }, 1100);
+		b.sample(1250, out, undefined, 1316);
+		expect(out.x).toBeGreaterThan(20);
+		expect(b.lastRenderMs).toBe(1125);
+		b.sample(1280, out, undefined, 1380);
+		expect(out.x).toBe(20);
+		expect(b.lastRenderMs).toBe(1125);
+	});
+
 	it('keeps arrival times monotonic', () => {
 		const b = new SnapshotBuffer();
 		const out = emptySample();

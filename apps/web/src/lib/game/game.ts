@@ -1287,9 +1287,7 @@ export class Game implements CommandContext {
 		const s = this.netState;
 		s.tick = this.tick;
 		s.spawnSeq = this.spawnSeq;
-		const mode = this.gameMode.id;
-		const combat = mode === 'infected' || mode === 'hns' || mode === 'zombies';
-		s.renderServerTimeMs = combat && this.serverClock.isSynced && this.lastRenderServerMs > 0 ? this.lastRenderServerMs : undefined;
+		s.renderServerTimeMs = this.usesRenderRewind && this.serverClock.isSynced && this.lastRenderServerMs > 0 ? this.lastRenderServerMs : undefined;
 		s.x = p.origin.x;
 		s.y = p.origin.y;
 		s.z = p.origin.z;
@@ -1422,18 +1420,32 @@ export class Game implements CommandContext {
 		return n.z > 0.1 && n.z < 0.7 ? n : null;
 	}
 
+	private get usesRenderRewind(): boolean {
+		const mode = this.gameMode.id;
+		return mode === 'infected' || mode === 'hns' || mode === 'zombies';
+	}
+
 	private updateRemotes(now: number, dtMs: number): void {
 		const delayMs = this.adaptiveDelay.update(now, dtMs);
-		const renderAt = this.serverClock.renderTime(now, delayMs);
+		const requestedAt = this.serverClock.renderTime(now, delayMs);
+		let renderAt = requestedAt;
+		if (this.usesRenderRewind) {
+			// Attacks carry one time for every target, including Zombie Run's AI.
+			for (const rm of this.remotes.values()) {
+				if (rm.spectating || rm.buf.sourceIdle || now - rm.buf.lastArrival >= 3000
+					|| (this.client.isDown?.(rm.id) ?? false)) continue;
+				renderAt = Math.min(renderAt, rm.buf.renderLimit(requestedAt, this.world));
+			}
+		}
 		this.lastRenderServerMs = renderAt;
 		this.netStats.setInterpDelay(delayMs);
 		if (this.remotes.size === 0) return;
 		const players = this.renderer?.players;
 		const specTarget = this.spec && !this.spec.freeFly ? this.spec.targetId : null;
-		let anyUnderrun = false;
+		let anyUnderrun = renderAt < requestedAt;
 		let anyExtrap = false;
 		for (const rm of this.remotes.values()) {
-			rm.hasSample = rm.buf.sample(renderAt, rm.sample, this.world);
+			rm.hasSample = rm.buf.sample(renderAt, rm.sample, this.world, now);
 			if (rm.hasSample && !rm.spectating && !rm.buf.sourceIdle && now - rm.buf.lastArrival < 3000) {
 				if (rm.buf.lastUnderrun) anyUnderrun = true;
 				if (rm.buf.lastExtrapMs > 0) anyExtrap = true;
