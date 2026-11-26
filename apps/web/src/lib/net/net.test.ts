@@ -174,12 +174,12 @@ describe('snapshot interpolation', () => {
 		b.sample(50, out);
 		expect(out.x).toBe(10);
 		expect(b.lastUnderrun).toBe(false);
-		// Within 50 ms cap: linearly extrapolates using vx = 20 u/s.
+		// Within the cap: linearly extrapolates using vx = 20 u/s.
 		b.sample(225, out);
 		expect(out.x).toBeCloseTo(20 + 20 * 0.025, 5);
 		expect(b.lastUnderrun).toBe(true);
 		expect(b.lastExtrapMs).toBeCloseTo(25, 5);
-		// Past 50 ms cap: holds at the capped pose and reports freeze (lastExtrapMs = 0).
+		// Past the cap: holds at the capped pose and reports freeze (lastExtrapMs = 0).
 		b.sample(500, out);
 		expect(out.x).toBeCloseTo(20 + 20 * (MAX_EXTRAP_MS / 1000), 5);
 		expect(b.lastUnderrun).toBe(true);
@@ -206,7 +206,7 @@ describe('snapshot interpolation', () => {
 		const out = emptySample();
 		b.push({ ...st(0), tick: 1, vx: 1200 }, 1000);
 		b.push({ ...st(37.5), tick: 3, vx: 1200 }, 1031.25);
-		b.sample(1081.25, out, world);
+		b.sample(1106.25, out, world);
 		expect(out.x).toBeCloseTo(43.96875);
 		for (let t = 1062.5; t <= 1250; t += 31.25) b.push({ ...st(37.5), tick: 3, vx: 1200 }, t);
 		b.sample(1250, out);

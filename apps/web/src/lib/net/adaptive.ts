@@ -1,21 +1,22 @@
-/**
- * Adaptive remote interpolation delay (docs/architecture.md#netcode).
- *
- * Keeps clean links responsive (near 2 snapshot intervals, clamped >= 50 ms),
- * grows with both RFC 3550 jitter and TCP loss/retransmit stalls (RTT-aware
- * headroom so a single fast retransmit or short Wi-Fi fade doesn't starve the
- * buffer), slews smoothly so remote render time stays strictly monotonic, and
- * shrinks slowly once the link stays clean.
- */
+/** Adaptive remote interpolation delay on the server clock. */
 import { MAX_RENDER_INTERPOLATION_MS, RENDER_DELAY_GROW_RATE, RENDER_DELAY_SHRINK_RATE, SNAPSHOT_HZ } from '@surf/shared';
+import type { SnapshotClockObs } from './clock.js';
 
 export const ADAPTIVE_MIN_MS = 50;
 export const ADAPTIVE_MAX_MS = MAX_RENDER_INTERPOLATION_MS;
 
-/** Clean time required before the stall headroom starts decaying. */
-const CLEAN_HOLD_MS = 3000;
-/** Rate at which stall headroom decays after CLEAN_HOLD_MS (ms per ms). */
-const STALL_DECAY_RATE = 0.006;
+const WINDOW_MS = 6000;
+const BUCKET_MS = 500;
+const BUCKET_COUNT = WINDOW_MS / BUCKET_MS;
+/** Bound the steady delay on links with frequent stalls. */
+const MAX_SUSTAINED_MS = 115;
+/** Allow for pose age behind the snapshot header and for display-frame quantization. */
+const BUFFER_MARGIN_MS = 16;
+/** Budget only part of the extrapolation horizon in the sustained estimate. */
+const SUSTAINED_EXTRAP_MS = 50;
+/** Start slowing playback once the next snapshot is clearly overdue. */
+const STALL_LATE_MS = 12;
+const STALL_MAX_MS = 500;
 
 export interface AdaptiveDelayOptions {
 	minMs?: number;
@@ -23,115 +24,86 @@ export interface AdaptiveDelayOptions {
 	snapshotHz?: number;
 }
 
-export interface AdaptiveSnapshotInput {
-	jitterMs: number;
-	/** Measured RTT (ms), or <0 if not yet known. */
-	rttMs: number;
-	/** Inter-arrival gap since the previous accepted snapshot (ms). */
-	arrivalGapMs: number;
-	/** Downlink transit delay above the minimum path (ms). */
-	transitExcessMs: number;
-	/** Missing snapshot sequence numbers before this frame. */
-	seqGap: number;
-}
-
-function clamp(v: number, lo: number, hi: number): number {
-	return v < lo ? lo : v > hi ? hi : v;
-}
+type ArrivalTiming = Pick<SnapshotClockObs, 'arrivalGapMs' | 'transitExcessMs'>;
 
 export class AdaptiveDelay {
 	private readonly minMs: number;
 	private readonly maxMs: number;
 	private snapMs: number;
 	private delayMs: number;
-	private jitterTargetMs: number;
-	private stallFloorMs = 0;
-	private lastStallMs = -Infinity;
+	private target: number;
+	private lastArrivalMs = -Infinity;
+	private lastTransitExcessMs = 0;
+	private readonly peaks = Array.from({ length: BUCKET_COUNT }, () => ({ bucket: -Infinity, ageMs: 0 }));
 
 	constructor(opts: AdaptiveDelayOptions = {}) {
 		this.minMs = opts.minMs ?? ADAPTIVE_MIN_MS;
 		this.maxMs = opts.maxMs ?? ADAPTIVE_MAX_MS;
 		this.snapMs = 1000 / (opts.snapshotHz ?? SNAPSHOT_HZ);
-		const floor = this.cleanFloor();
-		this.delayMs = floor;
-		this.jitterTargetMs = floor;
+		this.delayMs = this.target = this.cleanFloor();
 	}
 
 	private cleanFloor(): number {
-		// Two snapshot periods covers 1 interval + half-rAF/tick-anchor variance cleanly.
-		return clamp(this.snapMs * 2, this.minMs, this.maxMs);
+		return Math.min(this.maxMs, Math.max(this.minMs, this.snapMs * 2));
 	}
 
 	reset(snapshotHz = SNAPSHOT_HZ): void {
-		this.snapMs = Number.isFinite(snapshotHz) && snapshotHz > 0 ? 1000 / snapshotHz : 1000 / SNAPSHOT_HZ;
-		const floor = this.cleanFloor();
-		this.delayMs = floor;
-		this.jitterTargetMs = floor;
-		this.stallFloorMs = 0;
-		this.lastStallMs = -Infinity;
+		this.snapMs = 1000 / (Number.isFinite(snapshotHz) && snapshotHz > 0 ? snapshotHz : SNAPSHOT_HZ);
+		this.delayMs = this.target = this.cleanFloor();
+		this.lastArrivalMs = -Infinity;
+		this.lastTransitExcessMs = 0;
+		for (const peak of this.peaks) peak.bucket = -Infinity;
 	}
 
-	setSnapshotHz(hz: number): void {
-		if (!Number.isFinite(hz) || hz <= 0) return;
-		this.snapMs = 1000 / hz;
-		const floor = this.cleanFloor();
-		if (this.jitterTargetMs < floor) this.jitterTargetMs = floor;
-	}
-
-	/** Current active interpolation delay (ms). */
 	get currentMs(): number {
 		return this.delayMs;
 	}
 
-	/** Current target interpolation delay (ms) that `currentMs` is slewing toward. */
 	get targetMs(): number {
-		return clamp(Math.max(this.jitterTargetMs, this.stallFloorMs), this.minMs, this.maxMs);
+		return this.target;
 	}
 
-	/** Feed each accepted snapshot's clock telemetry. */
-	observeSnapshot(nowMs: number, input: AdaptiveSnapshotInput): void {
-		const jitter = Math.max(0, Number.isFinite(input.jitterMs) ? input.jitterMs : 0);
-		const floor = this.cleanFloor();
-		this.jitterTargetMs = clamp(floor + 4 * jitter, this.minMs, this.maxMs);
+	observeSnapshot(nowMs: number, { arrivalGapMs, transitExcessMs }: ArrivalTiming): void {
+		// Measure the age of the previous snapshot immediately before this arrival.
+		// A TCP flush contributes its long gap once instead of counting every queued frame as a stall.
+		const ageMs = arrivalGapMs + this.lastTransitExcessMs;
+		this.lastTransitExcessMs = transitExcessMs;
+		this.lastArrivalMs = nowMs;
+		if (arrivalGapMs < this.snapMs) return;
 
-		const gapStall = input.arrivalGapMs > this.snapMs * 2.2;
-		const excessStall = input.transitExcessMs > Math.max(25, 2.5 * jitter);
-		const seqLoss = input.seqGap > 0;
-		if (gapStall || excessStall || seqLoss) {
-			const retransmitMs = this.retransmitHeadroom(input.rttMs);
-			const observedMs = Math.max(input.arrivalGapMs, input.transitExcessMs + this.snapMs) * 0.95;
-			this.stallFloorMs = clamp(Math.max(this.stallFloorMs, retransmitMs, observedMs), this.minMs, this.maxMs);
-			this.lastStallMs = nowMs;
+		const bucket = Math.floor(nowMs / BUCKET_MS);
+		const peak = this.peaks[bucket % BUCKET_COUNT]!;
+		if (peak.bucket !== bucket) {
+			peak.bucket = bucket;
+			peak.ageMs = ageMs;
+		} else {
+			peak.ageMs = Math.max(peak.ageMs, ageMs);
 		}
 	}
 
-	/** Feed a remote buffer underrun (ignoring idle/paused sources). */
-	observeUnderrun(nowMs: number, overrunMs: number, rttMs: number): void {
-		if (!(overrunMs > 0)) return;
-		const retransmitMs = this.retransmitHeadroom(rttMs);
-		const needed = this.delayMs + Math.min(overrunMs, 90);
-		this.stallFloorMs = clamp(Math.max(this.stallFloorMs, retransmitMs, needed), this.minMs, this.maxMs);
-		this.lastStallMs = nowMs;
-	}
-
-	/** Advance the delay smoothly over `dtMs` elapsed wall time. Returns the updated delay (ms). */
 	update(nowMs: number, dtMs: number): number {
-		const dt = Math.max(0, Math.min(250, dtMs));
-		if (this.stallFloorMs > 0 && nowMs - this.lastStallMs >= CLEAN_HOLD_MS) {
-			this.stallFloorMs = Math.max(0, this.stallFloorMs - STALL_DECAY_RATE * dt);
+		const bucket = Math.floor(nowMs / BUCKET_MS);
+		let highest = 0;
+		let second = 0;
+		for (const peak of this.peaks) {
+			if (peak.bucket <= bucket - BUCKET_COUNT) continue;
+			if (peak.ageMs >= highest) {
+				second = highest;
+				highest = peak.ageMs;
+			} else {
+				second = Math.max(second, peak.ageMs);
+			}
 		}
-		const target = this.targetMs;
-		if (target > this.delayMs) {
-			this.delayMs = Math.min(target, this.delayMs + dt * RENDER_DELAY_GROW_RATE);
-		} else if (target < this.delayMs) {
-			this.delayMs = Math.max(target, this.delayMs - dt * RENDER_DELAY_SHRINK_RATE);
-		}
-		return this.delayMs;
-	}
 
-	/** TCP fast-retransmit headroom (~RTT + 60 ms + 1 snapshot) for a single lost segment. */
-	private retransmitHeadroom(rttMs: number): number {
-		const rtt = Number.isFinite(rttMs) && rttMs >= 0 ? rttMs : 40;
-		return clamp(rtt + 60, 45, 145) + this.snapMs;
+		// An isolated high bucket cannot set the sustained delay. Extrapolation supplies some of the headroom.
+		const bufferedAge = second + BUFFER_MARGIN_MS - SUSTAINED_EXTRAP_MS;
+		const sustained = Math.max(this.cleanFloor(), Math.min(MAX_SUSTAINED_MS, bufferedAge));
+		const gap = nowMs - this.lastArrivalMs;
+		const stalled = gap >= this.snapMs + STALL_LATE_MS && gap < STALL_MAX_MS;
+		this.target = stalled ? this.maxMs : Math.min(this.maxMs, sustained);
+
+		const dt = Math.max(0, Math.min(250, dtMs));
+		this.delayMs += Math.max(-dt * RENDER_DELAY_SHRINK_RATE, Math.min(dt * RENDER_DELAY_GROW_RATE, this.target - this.delayMs));
+		return this.delayMs;
 	}
 }

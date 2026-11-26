@@ -624,9 +624,7 @@ async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz: nu
 				entries: obs.accepted ? frame.entries : undefined
 			});
 			if (!obs.accepted) return;
-			adaptive.observeSnapshot(arr, {
-				...obs, jitterMs: clock.jitter, rttMs: clock.rtt
-			});
+			adaptive.observeSnapshot(arr, obs);
 			const te = frame.entries.find((e) => e.id === target.selfId);
 			if (te) buf.push(te, frame.serverTimeMs, arr);
 		});
@@ -703,7 +701,6 @@ async function runScenario(def: ScenarioDef, durationSec: number, snapshotHz: nu
 			if (!ok) return;
 			const underrun = buf.lastUnderrun;
 			const extrapolating = buf.lastExtrapMs > 0;
-			if (underrun && !buf.sourceIdle) adaptive.observeUnderrun(now, buf.lastOverrunMs, clock.rtt);
 			stats.recordFrame(now, dt, underrun, extrapolating);
 			if (now - startMs >= warmupMs) {
 				frames.push({

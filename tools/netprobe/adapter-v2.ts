@@ -6,7 +6,7 @@ import { SnapshotBuffer, emptySample, MAX_EXTRAP_MS } from '../../apps/web/src/l
 
 interface DelayController extends Pick<AdaptiveDelay, 'reset' | 'update' | 'currentMs'> {
 	observeSnapshot(nowMs: number, timing: SnapshotClockObs & { jitterMs: number; rttMs: number }): void;
-	observeUnderrun(nowMs: number, overrunMs: number, rttMs: number): void;
+	observeUnderrun?(nowMs: number, overrunMs: number, rttMs: number): void;
 }
 
 export function loadV2Adapter(
@@ -68,7 +68,7 @@ export function loadV2Adapter(
 							held: !visible || (underrun && buffer.lastExtrapMs === 0)
 						});
 					}
-					if (maxOverrun > 0) delay.observeUnderrun(nowMs, maxOverrun, clock.rtt);
+					if (maxOverrun > 0) delay.observeUnderrun?.(nowMs, maxOverrun, clock.rtt);
 				},
 				render(id) {
 					return rendered.get(id) ?? { point: null, delayMs: delay.currentMs, underrun: true, held: true };

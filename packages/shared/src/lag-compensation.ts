@@ -4,8 +4,8 @@ export const MAX_RENDER_INTERPOLATION_MS = 200;
 export const RENDER_TIME_SLACK_MS = 32;
 
 /** Maximum growth and shrink of the adaptive client delay per ms of wall time. */
-export const RENDER_DELAY_GROW_RATE = 0.35;
-export const RENDER_DELAY_SHRINK_RATE = 0.006;
+export const RENDER_DELAY_GROW_RATE = 0.45;
+export const RENDER_DELAY_SHRINK_RATE = 0.12;
 
 export function renderTimeBudgetMs(rttMs: number): number {
 	return rttMs + MAX_RENDER_INTERPOLATION_MS + RENDER_TIME_SLACK_MS;

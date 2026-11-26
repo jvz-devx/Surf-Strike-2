@@ -1432,14 +1432,10 @@ export class Game implements CommandContext {
 		const specTarget = this.spec && !this.spec.freeFly ? this.spec.targetId : null;
 		let anyUnderrun = false;
 		let anyExtrap = false;
-		let maxOverrun = 0;
 		for (const rm of this.remotes.values()) {
 			rm.hasSample = rm.buf.sample(renderAt, rm.sample, this.world);
 			if (rm.hasSample && !rm.spectating && !rm.buf.sourceIdle && now - rm.buf.lastArrival < 3000) {
-				if (rm.buf.lastUnderrun) {
-					anyUnderrun = true;
-					if (rm.buf.lastOverrunMs > maxOverrun) maxOverrun = rm.buf.lastOverrunMs;
-				}
+				if (rm.buf.lastUnderrun) anyUnderrun = true;
 				if (rm.buf.lastExtrapMs > 0) anyExtrap = true;
 			}
 			if (!players) continue;
@@ -1468,7 +1464,6 @@ export class Game implements CommandContext {
 			players.setPose(rm.id, pose, visible);
 			this.client.dress?.(players, rm, visible, now);
 		}
-		if (maxOverrun > 0) this.adaptiveDelay.observeUnderrun(now, maxOverrun, this.serverClock.rtt);
 		this.netStats.recordFrame(now, dtMs, anyUnderrun, anyExtrap);
 	}
 
@@ -2156,13 +2151,7 @@ export class Game implements CommandContext {
 			entries: obs.accepted ? frame.entries : undefined
 		});
 		if (!obs.accepted) return;
-		this.adaptiveDelay.observeSnapshot(arrival, {
-			jitterMs: this.serverClock.jitter,
-			rttMs: this.serverClock.rtt,
-			arrivalGapMs: obs.arrivalGapMs,
-			transitExcessMs: obs.transitExcessMs,
-			seqGap: obs.seqGap
-		});
+		this.adaptiveDelay.observeSnapshot(arrival, obs);
 		for (const e of frame.entries) {
 			if (e.id === this.selfId) continue;
 			this.remote(e.id).buf.push(e, frame.serverTimeMs, arrival);

@@ -48,7 +48,7 @@ it('reanchors rewind after a 130 ms to 10 ms downlink correction', () => {
 		const downlink = i < 64 ? 130 : 10;
 		if (i % 2 === 0) {
 			const obs = clock.observeSnapshot(local, local - downlink, ++seq);
-			delay.observeSnapshot(local, { ...obs, jitterMs: clock.jitter, rttMs: downlink + uplink });
+			delay.observeSnapshot(local, obs);
 		}
 		const claim = clock.renderTime(local, delay.update(local, step));
 		const now = local + uplink;
@@ -58,6 +58,28 @@ it('reanchors rewind after a 130 ms to 10 ms downlink correction', () => {
 		if (i >= 64 + 20) maxSettledError = Math.max(maxSettledError, Math.abs(rewind - (now - claim)));
 	}
 	assert.ok(maxSettledError < 2, `rewind still differs by ${maxSettledError} ms after 313 ms`);
+});
+
+it('follows the client delay as it grows and recovers between combat states', () => {
+	const p = peer();
+	const clock = new ServerClock();
+	const delay = new AdaptiveDelay();
+	const step = 1000 / 64;
+	clock.seed(1000, 970);
+	const initialDelay = delay.currentMs;
+	let peakDelay = initialDelay;
+	for (let i = 0; i < 128; i++) {
+		const local = 1000 + i * step;
+		if (i === 0 || (i >= 32 && i % 2 === 0)) delay.observeSnapshot(local, { arrivalGapMs: 31.25, transitExcessMs: 0 });
+		const claim = clock.renderTime(local, delay.update(local, step));
+		const now = local + 20 + [0, 6, 0, 8][i % 4]!;
+		// Shots can use a newer render timestamp than the latest state.
+		assert.ok(Math.abs(renderRewindMs(claim, now, p, history, 0) - (now - claim)) < 0.01);
+		observeRenderTime(claim, now, p);
+		peakDelay = Math.max(peakDelay, delay.currentMs);
+	}
+	assert.ok(peakDelay >= 190);
+	assert.equal(delay.currentMs, initialDelay);
 });
 
 it('discards the old rewind window after a gap in combat states', () => {

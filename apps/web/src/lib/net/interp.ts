@@ -8,7 +8,7 @@ import { DUCK_HULL_MAX, FLAG_DUCKED, FLAG_TELEPORTED, HULL_MAX, HULL_MIN, INTERP
 /** Shared with the server's lag compensation (packages/shared protocol.ts). */
 export { INTERP_DELAY_MS };
 /** Max velocity extrapolation horizon (ms) when a stall outruns the interpolation buffer. */
-export const MAX_EXTRAP_MS = 50;
+export const MAX_EXTRAP_MS = 90;
 const CAPACITY = 32;
 
 export interface Sample {

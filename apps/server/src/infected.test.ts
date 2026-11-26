@@ -616,7 +616,7 @@ describe('infected soak on infected_outpost: 3 rounds, 4 players + a late joiner
 		};
 		await reportView(10, 41);
 		await moveTo(a!, -400, 1500);
-		delay.observeSnapshot(clock, { jitterMs: 24, rttMs: simulatedRtt, arrivalGapMs: 180, transitExcessMs: 160, seqGap: 2 });
+		delay.observeSnapshot(clock - 62.5, { arrivalGapMs: 31.25, transitExcessMs: 0 });
 		await reportView(42, 57);
 		assert.ok(delay.currentMs > 140 && delay.currentMs < delay.targetMs, 'the client is still increasing its delay');
 		const m = b!.c.messages.length;

@@ -25,6 +25,7 @@ test('replays the same arrivals at each recorded frame rate', () => {
 	assert.equal(slow.controllers.fixed.configuredDelayMs.p50, 100);
 	assert.equal(slow.controllers.fixed.freezes.totalMs, 130);
 	assert.equal(slow.controllers.previous.freezes.totalMs, 130);
+	assert.equal(slow.controllers.tuned.freezes.totalMs, 0);
 	assert.equal(fast.controllers.fixed.frames, 1);
 	assert.equal(fast.controllers.tuned.frames, 1);
 });
