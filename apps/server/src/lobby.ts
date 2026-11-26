@@ -74,6 +74,8 @@ export const MODE_TICK_HZ = TAG_TICK_HZ;
 export const SCOREBOARD_MS = 1000;
 export const ROTATION_MS = 100;
 export const PING_MS = 500;
+const PONG_TIMEOUT_MS = 10_000;
+const CLIENT_IDLE_TIMEOUT_MS = 10_000;
 export const TIME_LEFT_MS = 5000;
 export const HELLO_TIMEOUT_MS = 5_000;
 /** Maximum open sockets awaiting `hello` (separate from the 32 player slots). */
@@ -183,6 +185,8 @@ interface Client {
 	readonly hasRttSample: boolean;
 	ping: number;
 	rtt: PeerRtt;
+	lastPongAt: number;
+	lastMessageAt: number;
 	/** Worn cosmetics (docs/economy.md#shop); the default look for guests. */
 	loadout: Loadout;
 	rate: { state: Window; spawnAck: Window; chat: Window; json: Window; shop: Window; casino: Window };
@@ -578,6 +582,8 @@ export class Lobby {
 				return Math.min(MAX_REWIND_RTT_MS, this.rtt.estimate(performance.now()));
 			},
 			rtt: new PeerRtt(),
+			lastPongAt: 0,
+			lastMessageAt: 0,
 			loadout: emptyLoadout(),
 			rate: { state: new Window(), spawnAck: new Window(), chat: new Window(), json: new Window(), shop: new Window(), casino: new Window() },
 			helloTimer: null,
@@ -593,7 +599,8 @@ export class Lobby {
 			}
 		});
 		transport.onPong?.((challenge) => {
-			if (c.helloed) c.rtt.pong(challenge, performance.now());
+			const now = performance.now();
+			if (c.helloed && c.rtt.pong(challenge, now) !== null) c.lastPongAt = now;
 		});
 		transport.onClose(() => this.onClose(c));
 		transport.onError(() => transport.terminate());
@@ -647,6 +654,7 @@ export class Lobby {
 			const s = this.combatState(c, received);
 			if (!s) return;
 			c.state = s;
+			c.lastMessageAt = t;
 			if (s.renderServerTimeMs !== undefined) observeRenderTime(s.renderServerTimeMs, this.serverClock(), c);
 			this.economy.state(c, received);
 			this.mode.state(c, s);
@@ -666,6 +674,7 @@ export class Lobby {
 			if (msg.type === 'hello') this.onHello(c, msg);
 			return;
 		}
+		c.lastMessageAt = t;
 		switch (msg.type) {
 			case 'spawnAck': {
 				const k = c.rate.spawnAck.hit(t);
@@ -804,6 +813,7 @@ export class Lobby {
 		c.sessionHash = resumed?.hash ?? null;
 		c.admin = admin;
 		c.helloed = true;
+		c.lastPongAt = c.lastMessageAt = performance.now();
 		c.loadout = this.shop.loadoutOf(c.accountId);
 		if (c.accountId !== null) this.stats.join(c.accountId, c);
 		if (c.helloTimer) clearTimeout(c.helloTimer);
@@ -1349,7 +1359,17 @@ export class Lobby {
 
 	sendPings(): void {
 		const now = performance.now();
-		for (const c of this.clients) if (c.helloed) this.ping(c, now);
+		for (const c of this.clients) {
+			if (!c.helloed || !c.transport.open) continue;
+			const noPong = c.transport.ping && c.transport.onPong && now - c.lastPongAt >= PONG_TIMEOUT_MS;
+			const idle = !c.spectating && now - c.lastMessageAt >= CLIENT_IDLE_TIMEOUT_MS;
+			if (noPong || idle) {
+				this.log(`timeout #${c.id} ${c.name}: ${noPong ? 'no WebSocket pong' : 'no game traffic'}`);
+				c.transport.terminate();
+				continue;
+			}
+			this.ping(c, now);
+		}
 	}
 
 	private ping(c: Client, now: number): void {
