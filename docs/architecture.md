@@ -107,6 +107,8 @@ The client sends `renderServerTimeMs` in combat states and with `fire`, `knife`,
 
 Infected uses rewind for gun and melee hits and the immediate segment of a thrown knife. The knife then flies on the live server simulation. Hide and Seek checks current and rewound poses. Zombie Run maps server time to the AI simulation tick and uses the same sender-tick sample timing as the renderer to rewind relayed player poses.
 
+Protocol v3 carries one rewind timestamp per attack. When targets are drawn at different times, the oldest active hold can shift the server's hit test for another target.
+
 ## Protocol sketch
 
 | Direction | Message | Encoding |
@@ -120,7 +122,7 @@ Infected uses rewind for gun and melee hits and the immediate segment of a throw
 | S→C | `auth { ok: true, username, token?, records?, admin? }` / `auth { ok: false, error }` (`username: null` = logged out; also sent with `ok: false` after a `welcome` whose hello token was rejected) | JSON |
 | C→S | `BIN_STATE` (type 1, 47 B base, with an optional 8 B combat render timestamp) | binary, 64 Hz |
 | C→S | `spawnAck { seq }` (acknowledges a server spawn independently of the movement rate limit) | JSON |
-| S→C | `BIN_SNAPSHOT` v2 (type 2: 13 B header with `seq` + `serverTimeMs`, then 28 B/player combat or 32 B/player race quantized entries; ≤ 1,037 B for 32 players, droppable under backlog) | binary, 32 Hz (or 64 Hz) |
+| S→C | `BIN_SNAPSHOT` v3 (type 2: 13 B header with `seq` and `serverTimeMs`, then 31 B/player combat or 35 B/player race entries with sample time offsets, up to 1,133 B for 32 players, droppable under backlog) | binary, 32 Hz (or 64 Hz) |
 | C→S | `zone { kind, index, tick }` | JSON |
 | S→C | `runResult { ticks, rank, pb, record, splits, records }` (`records`: the runner's PB, rank and map record after the run, PB or not) | JSON |
 | S→C | `ghostLook { map, loadout }`: what the record ghost's holder wears, with the ghost frame | JSON |
